@@ -935,6 +935,7 @@ ${settings.company||""}`;
             {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
             {id:"quotes",   label:"Quotes",  d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
             {id:"orders",   label:"Orders",  d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
+            {id:"settings", label:"More",    d:"M4 6h16M4 12h16M4 18h16"},
           ].map(tab=>(
             <button key={tab.id}
               onClick={()=>{
