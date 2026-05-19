@@ -296,22 +296,7 @@ export default function App() {
   const showToast = (msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),4000); };
 
   // Requests
-  const [requests, setRequests] = useState([
-    { id:"RFQ-001", jobRef:"JOB-2024-047", site:"Unit 4, Riverside Industrial", trade:"Plumbing",   status:"approved", created:"2025-05-14", items:[
-      {id:1,description:"22mm copper pipe",quantity:10,unit:"metres",category:"Plumbing"},
-      {id:2,description:"22mm compression elbow",quantity:8,unit:"pcs",category:"Plumbing"},
-      {id:3,description:"15mm isolation valve",quantity:4,unit:"pcs",category:"Plumbing"},
-    ]},
-    { id:"RFQ-002", jobRef:"JOB-2024-051", site:"Office Block B, Crown St", trade:"Electrical", status:"pending", created:"2025-05-16", items:[
-      {id:1,description:"2.5mm twin & earth cable",quantity:50,unit:"metres",category:"Electrical"},
-      {id:2,description:"13A double socket outlet",quantity:12,unit:"pcs",category:"Electrical"},
-    ]},
-    { id:"RFQ-003", jobRef:"JOB-2024-055", site:"Hillside Primary School", trade:"HVAC", status:"received", created:"2025-05-17", items:[
-      {id:1,description:"150mm circular duct",quantity:6,unit:"metres",category:"HVAC"},
-      {id:2,description:"150mm backdraft damper",quantity:3,unit:"pcs",category:"HVAC"},
-      {id:3,description:"Extractor fan 100mm",quantity:4,unit:"pcs",category:"HVAC"},
-    ]},
-  ]);
+  const [requests, setRequests] = useState([]);
 
   // Wizard state
   const [step,     setStep]     = useState(1);
@@ -535,29 +520,38 @@ export default function App() {
                 <span style={{fontWeight:500,fontSize:15}}>Recent requests</span>
                 <Btn onClick={()=>setView("new")}>+ New request</Btn>
               </div>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr style={{background:"#F9FAFB"}}>
-                  {["Request","Job ref","Site","Trade","Items","Status","Created",""].map(h=>(
-                    <th key={h} style={{padding:"10px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>{requests.map(r=>{const sc=STATUS[r.status];return(
-                  <tr key={r.id} style={{borderTop:"1px solid #F3F4F6"}}>
-                    <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'DM Mono',monospace",color:"#2563EB"}}>{r.id}</td>
-                    <td style={{padding:"13px 16px",fontSize:13}}>{r.jobRef}</td>
-                    <td style={{padding:"13px 16px",fontSize:13,color:"#6B7280"}}>{r.site}</td>
-                    <td style={{padding:"13px 16px",fontSize:13}}>{r.trade}</td>
-                    <td style={{padding:"13px 16px",fontSize:13}}>{r.items.length}</td>
-                    <td style={{padding:"13px 16px"}}><Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge></td>
-                    <td style={{padding:"13px 16px",fontSize:12,color:"#9CA3AF"}}>{r.created}</td>
-                    <td style={{padding:"13px 16px"}}>
-                      <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>
-                        {r.status==="received"?"Analyse →":"View →"}
-                      </button>
-                    </td>
-                  </tr>
-                )})}</tbody>
-              </table>
+              {requests.length===0?(
+                <div style={{padding:"60px 24px",textAlign:"center"}}>
+                  <div style={{fontSize:40,marginBottom:12}}>📋</div>
+                  <div style={{fontSize:15,fontWeight:500,color:"#1E293B",marginBottom:6}}>No requests yet</div>
+                  <div style={{fontSize:13,color:"#94A3B8",marginBottom:20}}>Create your first material request to get started</div>
+                  <Btn onClick={()=>setView("new")}>+ Create first request</Btn>
+                </div>
+              ):(
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr style={{background:"#F9FAFB"}}>
+                    {["Request","Job ref","Site","Trade","Items","Status","Created",""].map(h=>(
+                      <th key={h} style={{padding:"10px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>{requests.map(r=>{const sc=STATUS[r.status];return(
+                    <tr key={r.id} style={{borderTop:"1px solid #F3F4F6"}}>
+                      <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'DM Mono',monospace",color:"#2563EB"}}>{r.id}</td>
+                      <td style={{padding:"13px 16px",fontSize:13}}>{r.jobRef}</td>
+                      <td style={{padding:"13px 16px",fontSize:13,color:"#6B7280"}}>{r.site}</td>
+                      <td style={{padding:"13px 16px",fontSize:13}}>{r.trade}</td>
+                      <td style={{padding:"13px 16px",fontSize:13}}>{r.items.length}</td>
+                      <td style={{padding:"13px 16px"}}><Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge></td>
+                      <td style={{padding:"13px 16px",fontSize:12,color:"#9CA3AF"}}>{r.created}</td>
+                      <td style={{padding:"13px 16px"}}>
+                        <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>
+                          {r.status==="received"?"Analyse →":"View →"}
+                        </button>
+                      </td>
+                    </tr>
+                  )})}</tbody>
+                </table>
+              )}
             </Card>
           </div>
         )}
