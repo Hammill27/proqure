@@ -79,10 +79,10 @@ Format: {"items":[{"id":1,"description":"...","quantity":N,"unit":"...","categor
   const txt = await callAI(sys, `Parse this material request: ${raw}`);
   try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
 }
-async function generateRFQ(items, jobRef, company) {
-  const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown.`;
+async function generateRFQ(items, jobRef, company, contactName, fromEmail) {
+  const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown. Sign off with the real contact name and company provided, not placeholders.`;
   const list = items.map(i=>`- ${i.quantity} ${i.unit} ${i.description}`).join("\n");
-  return callAI(sys, `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, for:\n${list}\nAsk for unit prices, availability, and delivery lead time. Keep it concise and professional.`);
+  return callAI(sys, `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact name: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}, for:\n${list}\nAsk for unit prices, availability, and delivery lead time. Keep it concise and professional. Sign off with the real name and company, no placeholder brackets.`);
 }
 async function analyseQuote(items, quoteText) {
   const sys = `You are an AI procurement analyst for UK trades. Compare a supplier quote against the original request. Return ONLY valid JSON, no markdown.
@@ -121,7 +121,7 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail) {
 }
 
 // ─── PDF generation via jsPDF (loaded from CDN on demand) ────────────────────
-async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, company, date }) {
+async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, company, contactName, contactEmail, date }) {
   if (!window.jspdf) {
     await new Promise((res,rej) => {
       const s = document.createElement("script");
@@ -132,69 +132,124 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:"mm", format:"a4" });
-  const W = 210, M = 20;
+  const W = 210, M = 18;
 
-  // Header
-  doc.setFillColor(37,99,235); doc.rect(0,0,W,34,"F");
-  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(20);
-  doc.text("PURCHASE ORDER", M, 14);
-  doc.setFontSize(9); doc.setFont("helvetica","normal");
-  doc.text(`${company||"Your Company"}  ·  ProcureIQ`, M, 22);
-  doc.text(`PO: ${poNumber}`, W-M, 14, {align:"right"});
-  doc.text(`Date: ${date}`, W-M, 22, {align:"right"});
+  // ── Deep navy header bar ──
+  doc.setFillColor(15,23,42);
+  doc.rect(0,0,W,42,"F");
 
-  // Details
-  doc.setTextColor(30,30,30); let y = 44;
-  doc.setFont("helvetica","bold"); doc.setFontSize(9);
-  doc.text("SUPPLIER", M, y); doc.text("DELIVERY ADDRESS", 110, y); y+=5;
-  doc.setFont("helvetica","normal");
-  doc.text(supplier?.name||"—", M, y); doc.text(site||"—", 110, y); y+=5;
-  doc.text(supplier?.email||"—", M, y); doc.text(`Job Ref: ${jobRef||"TBC"}`, 110, y);
+  // Accent stripe
+  doc.setFillColor(59,130,246);
+  doc.rect(0,42,W,3,"F");
 
-  // Divider
-  y+=14; doc.setDrawColor(229,231,235); doc.setLineWidth(0.3); doc.line(M,y,W-M,y); y+=8;
+  // Company & PO title
+  doc.setTextColor(255,255,255);
+  doc.setFont("helvetica","bold"); doc.setFontSize(22);
+  doc.text("PURCHASE ORDER", M, 18);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9);
+  doc.setTextColor(148,163,184);
+  doc.text(company||"Your Company", M, 27);
+  doc.text("Powered by ProcureIQ", M, 33);
 
-  // Table head
-  doc.setFillColor(249,250,251); doc.rect(M,y-4,W-M*2,10,"F");
-  doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.setTextColor(107,114,128);
-  doc.text("#",M+2,y+2); doc.text("Description",M+10,y+2); doc.text("Qty",128,y+2);
-  doc.text("Unit",144,y+2); doc.text("Unit price",160,y+2); doc.text("Total",W-M,y+2,{align:"right"});
-  y+=10;
+  // PO number & date — right aligned
+  doc.setTextColor(255,255,255);
+  doc.setFont("helvetica","bold"); doc.setFontSize(11);
+  doc.text(poNumber, W-M, 18, {align:"right"});
+  doc.setFont("helvetica","normal"); doc.setFontSize(9);
+  doc.setTextColor(148,163,184);
+  doc.text(`Issued: ${date}`, W-M, 27, {align:"right"});
 
-  // Rows
-  doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(30,30,30);
-  let grandTotal = 0;
+  // ── Info boxes ──
+  let y = 54;
+  // Box backgrounds
+  doc.setFillColor(248,250,252); doc.roundedRect(M, y, 80, 32, 2, 2, "F");
+  doc.setFillColor(248,250,252); doc.roundedRect(M+86, y, 80, 32, 2, 2, "F");
+
+  // Supplier box
+  doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
+  doc.text("SUPPLIER", M+4, y+7);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(15,23,42);
+  doc.text(supplier?.name||"—", M+4, y+14);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(71,85,105);
+  doc.text(supplier?.email||"—", M+4, y+20);
+
+  // Job box
+  doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
+  doc.text("JOB DETAILS", M+90, y+7);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(15,23,42);
+  doc.text(`Ref: ${jobRef||"TBC"}`, M+90, y+14);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(71,85,105);
+  doc.text(site||"—", M+90, y+20);
+  if(contactName) doc.text(`Contact: ${contactName}`, M+90, y+26);
+
+  y += 42;
+
+  // ── Table header ──
+  doc.setFillColor(15,23,42);
+  doc.rect(M, y, W-M*2, 10, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(148,163,184);
+  doc.text("#",    M+3,  y+6.5);
+  doc.text("DESCRIPTION", M+12, y+6.5);
+  doc.text("QTY",  122,  y+6.5);
+  doc.text("UNIT", 136,  y+6.5);
+  doc.text("UNIT PRICE", 152, y+6.5);
+  doc.text("TOTAL", W-M, y+6.5, {align:"right"});
+  y += 10;
+
+  // ── Table rows ──
   const rows = analysis?.matched?.length
     ? analysis.matched
     : items.map(i=>({ item:i.description, requestedQty:i.quantity, requestedUnit:i.unit, quotedPrice:"TBC" }));
 
+  let grandTotal = 0;
   rows.forEach((row,idx) => {
-    if (y>265) { doc.addPage(); y=20; }
-    doc.setFillColor(...(idx%2===0?[255,255,255]:[249,250,251]));
-    doc.rect(M,y-3,W-M*2,8,"F");
+    if (y > 255) { doc.addPage(); y = 20; }
+    // Alternating rows
+    doc.setFillColor(...(idx%2===0?[255,255,255]:[248,250,252]));
+    doc.rect(M, y, W-M*2, 9, "F");
+    // Left border accent on even rows
+    if(idx%2===0){ doc.setFillColor(59,130,246); doc.rect(M,y,1,9,"F"); }
+
     const price = parseFloat((row.quotedPrice||"").replace(/[^0-9.]/g,""))||0;
     const qty   = row.requestedQty||0;
     const line  = price&&qty ? `£${(price*qty).toFixed(2)}` : "TBC";
     if (line!=="TBC") grandTotal += price*qty;
-    doc.text(String(idx+1), M+2, y+2);
-    doc.text(String(row.item||"").slice(0,46), M+10, y+2);
-    doc.text(String(qty), 128, y+2);
-    doc.text(String(row.requestedUnit||""), 144, y+2);
-    doc.text(row.quotedPrice||"TBC", 160, y+2);
-    doc.text(line, W-M, y+2, {align:"right"});
-    y+=9;
+
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(71,85,105);
+    doc.text(String(idx+1), M+3, y+6);
+    doc.setTextColor(15,23,42); doc.setFont("helvetica","normal");
+    doc.text(String(row.item||"").slice(0,50), M+12, y+6);
+    doc.setTextColor(71,85,105);
+    doc.text(String(qty), 122, y+6);
+    doc.text(String(row.requestedUnit||""), 136, y+6);
+    doc.setFont("helvetica","bold"); doc.setTextColor(15,23,42);
+    doc.text(row.quotedPrice||"TBC", 152, y+6);
+    doc.setTextColor(59,130,246);
+    doc.text(line, W-M, y+6, {align:"right"});
+    y += 9;
   });
 
-  // Total
-  y+=4; doc.line(M,y,W-M,y); y+=6;
-  doc.setFont("helvetica","bold"); doc.setFontSize(10);
-  doc.text("TOTAL", 128, y);
-  doc.text(grandTotal?`£${grandTotal.toFixed(2)}`:"TBC", W-M, y, {align:"right"});
+  // ── Total bar ──
+  y += 4;
+  doc.setFillColor(15,23,42);
+  doc.rect(M, y, W-M*2, 12, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(255,255,255);
+  doc.text("TOTAL DUE", M+3, y+8);
+  doc.setTextColor(59,130,246);
+  doc.text(grandTotal?`£${grandTotal.toFixed(2)}`:"TBC", W-M, y+8, {align:"right"});
+  y += 20;
 
-  // Footer
-  y+=14; doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(150,150,150);
-  doc.text("This purchase order is subject to standard terms and conditions. Please confirm receipt.", M, y);
-  doc.text("Generated by ProcureIQ · AI-powered procurement for trades", M, y+5);
+  // ── VAT note ──
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(100,116,139);
+  doc.text("All prices shown exclude VAT unless otherwise stated.", M, y);
+  y += 10;
+
+  // ── Footer ──
+  doc.setDrawColor(226,232,240); doc.setLineWidth(0.3);
+  doc.line(M, 275, W-M, 275);
+  doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(148,163,184);
+  doc.text(`${company||"Your Company"}  ·  ${contactEmail||""}  ·  PO ${poNumber}`, M, 280);
+  doc.text("Generated by ProcureIQ — AI-powered procurement for trades", W-M, 280, {align:"right"});
 
   doc.save(`PO-${poNumber}.pdf`);
 }
@@ -214,7 +269,7 @@ const Badge = ({ children, bg, text }) => (
   <span style={{ background:bg, color:text, fontSize:11, fontWeight:500, padding:"3px 10px", borderRadius:20, whiteSpace:"nowrap" }}>{children}</span>
 );
 const Card = ({ children, style={} }) => (
-  <div style={{ background:"white", border:"1px solid #E5E7EB", borderRadius:12, padding:"20px 24px", ...style }}>{children}</div>
+  <div style={{ background:"white", border:"1px solid #E2E8F0", borderRadius:16, padding:"22px 26px", boxShadow:"0 1px 4px rgba(0,0,0,0.04)", ...style }}>{children}</div>
 );
 const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
@@ -267,7 +322,7 @@ export default function App() {
   const [site,     setSite]     = useState("");
   const [trade,    setTrade]    = useState("Plumbing");
   const [rfqEmail, setRfqEmail] = useState("");
-  const [selSup,   setSelSup]   = useState([1,2,3]);
+  const [selSup,   setSelSup]   = useState([]);
   const [loading,  setLoading]  = useState(false);
   const [loadMsg,  setLoadMsg]  = useState("");
   const [emailRes, setEmailRes] = useState(null);
@@ -278,7 +333,7 @@ export default function App() {
   const [quoteAnalysis, setQuoteAnalysis] = useState(null);
 
   // Settings form
-  const [sForm, setSForm] = useState({company:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings});
+  const [sForm, setSForm] = useState({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings});
 
   // Supplier form
   const [newSup, setNewSup] = useState({name:"",email:"",categories:""});
@@ -308,6 +363,11 @@ export default function App() {
       const data = await parseMaterialList(rawInput);
       setParsed(data);
       if (data?.jobRef && !jobRef) setJobRef(data.jobRef);
+      // Auto-select all suppliers matching the current trade
+      const matchingIds = suppliers
+        .filter(s=>s.categories.some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()))
+        .map(s=>s.id);
+      setSelSup(matchingIds);
       setStep(2);
     } catch(e) {
       showToast("AI error: "+e.message,"warn");
@@ -319,7 +379,7 @@ export default function App() {
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Generating RFQ email…");
     try {
-      const email = await generateRFQ(parsed.items, jobRef, settings.company);
+      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail);
       setRfqEmail(email);
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
@@ -336,6 +396,18 @@ export default function App() {
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
     showToast(`${ok} of ${results.length} emails sent`);
+    // Auto-save the request after sending
+    if (ok > 0) {
+      const r = {
+        id:`RFQ-${String(requests.length+1).padStart(3,"0")}`,
+        jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
+        status:"pending",
+        created: new Date().toISOString().split("T")[0],
+        items: parsed.items
+      };
+      setRequests(p=>[r,...p]);
+      showToast(`Emails sent & request saved as ${r.id}`);
+    }
   }
 
   function handleFinalise() {
@@ -368,14 +440,14 @@ export default function App() {
   async function handleApprovePO() {
     const sup = suppliers.find(s=>selSup.includes(s.id))||suppliers[0];
     const poNum = `PO-${Date.now().toString().slice(-6)}`;
-    await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis:quoteAnalysis, company:settings.company||"Your Company", date:new Date().toLocaleDateString("en-GB") });
+    await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis:quoteAnalysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:new Date().toLocaleDateString("en-GB") });
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved"}:r));
     showToast(`PO ${poNum} downloaded`);
   }
 
   // ── Render ──
   return (
-    <div style={{fontFamily:"'DM Sans','Helvetica Neue',sans-serif",background:"#F8F7F4",minHeight:"100vh",color:"#1A1A1A"}}>
+    <div style={{fontFamily:"'DM Sans','Helvetica Neue',sans-serif",background:"#F1F5F9",minHeight:"100vh",color:"#1A1A1A"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
       <style>{`*{box-sizing:border-box} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
@@ -387,19 +459,19 @@ export default function App() {
       )}
 
       {/* Sidebar */}
-      <div style={{position:"fixed",left:0,top:0,width:220,height:"100vh",background:"#111827",display:"flex",flexDirection:"column",zIndex:100}}>
-        <div style={{padding:"24px 20px 20px",borderBottom:"1px solid #1F2937"}}>
+      <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0F172A 0%,#1E293B 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 24px rgba(0,0,0,0.15)"}}>
+        <div style={{padding:"28px 24px 24px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:32,height:32,background:"#2563EB",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{width:36,height:36,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(59,130,246,0.4)"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
             </div>
             <div>
-              <div style={{fontSize:15,fontWeight:600,color:"#F9FAFB",letterSpacing:"-0.3px"}}>ProcureIQ</div>
-              <div style={{fontSize:10,color:"#6B7280",marginTop:1}}>Procurement Platform</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#F9FAFB",letterSpacing:"-0.5px"}}>ProcureIQ</div>
+              <div style={{fontSize:10,color:"#64748B",marginTop:2,letterSpacing:"0.05em",textTransform:"uppercase"}}>Procurement Platform</div>
             </div>
           </div>
         </div>
-        <nav style={{padding:"16px 12px",flex:1}}>
+        <nav style={{padding:"20px 16px",flex:1}}>
           {[
             {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
             {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
@@ -409,14 +481,14 @@ export default function App() {
             {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
           ].map(item=>(
             <button key={item.id} onClick={()=>{setView(item.id);if(item.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);}}
-              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:"none",background:view===item.id?"#1F2937":"transparent",color:view===item.id?"#F9FAFB":"#9CA3AF",cursor:"pointer",fontSize:13,fontWeight:view===item.id?500:400,marginBottom:2,textAlign:"left"}}>
+              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"rgba(59,130,246,0.15)":"transparent",color:view===item.id?"#93C5FD":"#64748B",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:3,textAlign:"left",borderLeft:view===item.id?"3px solid #3B82F6":"3px solid transparent"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
               {item.label}
             </button>
           ))}
         </nav>
-        <div style={{padding:"14px 20px",borderTop:"1px solid #1F2937"}}>
-          <div style={{fontSize:11,background:"#1F2937",borderRadius:6,padding:"6px 10px"}}>
+        <div style={{padding:"16px 24px",borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+          <div style={{fontSize:11,background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"8px 12px",display:"flex",alignItems:"center",gap:6}}>
             <span style={{color:settings.openRouterKey?"#10B981":"#F59E0B",marginRight:6}}>●</span>
             <span style={{color:settings.openRouterKey?"#10B981":"#F59E0B"}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · no email"):"Setup needed"}</span>
           </div>
@@ -424,26 +496,26 @@ export default function App() {
       </div>
 
       {/* Main content */}
-      <div style={{marginLeft:220,padding:"32px 36px",maxWidth:1100}}>
+      <div style={{marginLeft:240,padding:"36px 40px",maxWidth:1140}}>
 
         {/* ══ DASHBOARD ══ */}
         {view==="dashboard"&&(
           <div>
             <div style={{marginBottom:28}}>
-              <h1 style={{fontSize:26,fontWeight:600,letterSpacing:"-0.5px",margin:0}}>Dashboard</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#1E293B,#3B82F6)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Dashboard</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:24}}>
               {[
-                {label:"Total requests",value:stats.total,   color:"#2563EB"},
-                {label:"Pending quotes", value:stats.pending, color:"#7C3AED"},
-                {label:"Quotes received",value:stats.received,color:"#D97706"},
-                {label:"Approved",       value:stats.approved,color:"#059669"},
+                {label:"Total requests",value:stats.total,   color:"#2563EB",bg:"linear-gradient(135deg,#EFF6FF,#DBEAFE)",icon:"📋"},
+                {label:"Pending quotes", value:stats.pending, color:"#7C3AED",bg:"linear-gradient(135deg,#F5F3FF,#EDE9FE)",icon:"⏳"},
+                {label:"Quotes received",value:stats.received,color:"#D97706",bg:"linear-gradient(135deg,#FFFBEB,#FEF3C7)",icon:"📬"},
+                {label:"Approved",       value:stats.approved,color:"#059669",bg:"linear-gradient(135deg,#ECFDF5,#D1FAE5)",icon:"✅"},
               ].map(s=>(
-                <Card key={s.label}>
-                  <div style={{fontSize:32,fontWeight:600,color:s.color,fontFamily:"'DM Mono',monospace"}}>{s.value}</div>
-                  <div style={{fontSize:13,color:"#6B7280",marginTop:4}}>{s.label}</div>
-                </Card>
+                <div key={s.label} style={{background:s.bg,border:"1px solid rgba(0,0,0,0.06)",borderRadius:16,padding:"20px 24px",position:"relative",overflow:"hidden"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:s.color,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{s.icon} {s.label}</div>
+                  <div style={{fontSize:36,fontWeight:700,color:s.color,fontFamily:"'DM Mono',monospace",lineHeight:1}}>{s.value}</div>
+                </div>
               ))}
             </div>
             {!settings.openRouterKey&&(
@@ -875,8 +947,16 @@ export default function App() {
             <Card style={{marginBottom:20}}>
               <div style={{fontSize:14,fontWeight:500,marginBottom:16}}>Company details</div>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Company name (appears on POs)</label>
-                <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Smith Mechanical Ltd" style={{width:"50%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                  <div>
+                    <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Company name (appears on POs)</label>
+                    <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Initial Mechanical Ltd" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                  </div>
+                  <div>
+                    <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Your name (appears on emails)</label>
+                    <input value={sForm.contactName||""} onChange={e=>setSForm(p=>({...p,contactName:e.target.value}))} placeholder="e.g. Andy Smith" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                  </div>
+                </div>
               </div>
             </Card>
 
@@ -927,7 +1007,7 @@ export default function App() {
 
             <div style={{display:"flex",gap:10}}>
               <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}}>Save settings</Btn>
-              <Btn outline onClick={()=>setSForm({company:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings})}>Reset</Btn>
+              <Btn outline onClick={()=>setSForm({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings})}>Reset</Btn>
             </div>
           </div>
         )}
