@@ -821,6 +821,7 @@ ${settings.company||""}`;
   }
 
   const isMobile = useIsMobile();
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
   // ── Render ──
   return (
@@ -866,7 +867,7 @@ ${settings.company||""}`;
           {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
           {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
         ];
-        const handleNav = (id) => { setView(id); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); };
+        const handleNav = (id) => { setView(id); setMoreMenuOpen(false); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); };
         const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
         return (<>
 
@@ -934,17 +935,63 @@ ${settings.company||""}`;
             {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
             {id:"quotes",   label:"Quotes",  d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
             {id:"orders",   label:"Orders",  d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
-            {id:"settings", label:"More",    d:"M4 6h16M4 12h16M4 18h16"},
           ].map(tab=>(
-            <button key={tab.id} onClick={()=>{setView(tab.id);if(tab.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"8px 14px",borderRadius:10,minWidth:56,position:"relative",flex:1}}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={view===tab.id?"#22C55E":"#64748B"} strokeWidth={view===tab.id?2.2:1.8} strokeLinecap="round" strokeLinejoin="round"><path d={tab.d}/></svg>
-              <span style={{fontSize:10,fontWeight:view===tab.id?700:400,color:view===tab.id?"#22C55E":"#64748B"}}>{tab.label}</span>
+            <button key={tab.id}
+              onClick={()=>{
+                if(tab.id==="settings"){ setMoreMenuOpen(p=>!p); return; }
+                setMoreMenuOpen(false);
+                setView(tab.id);
+                if(tab.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);
+              }}
+              style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"8px 14px",borderRadius:10,minWidth:56,position:"relative",flex:1}}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                stroke={tab.id==="settings"?moreMenuOpen?"#22C55E":"#64748B":view===tab.id?"#22C55E":"#64748B"}
+                strokeWidth={tab.id==="settings"?moreMenuOpen?2.2:1.8:view===tab.id?2.2:1.8}
+                strokeLinecap="round" strokeLinejoin="round"><path d={tab.d}/></svg>
+              <span style={{fontSize:10,fontWeight:(tab.id==="settings"?moreMenuOpen:view===tab.id)?700:400,color:(tab.id==="settings"?moreMenuOpen:view===tab.id)?"#22C55E":"#64748B"}}>{tab.label}</span>
               {tab.id==="orders"&&orders.filter(o=>o.status==="pending-send").length>0&&(
                 <span style={{position:"absolute",top:4,right:"20%",background:"#22C55E",color:"white",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:99}}>{orders.filter(o=>o.status==="pending-send").length}</span>
               )}
-              {view===tab.id&&<div style={{position:"absolute",bottom:-1,width:24,height:3,background:"#22C55E",borderRadius:"3px 3px 0 0"}}/>}
+              {(tab.id==="settings"?moreMenuOpen:view===tab.id)&&<div style={{position:"absolute",bottom:-1,width:24,height:3,background:"#22C55E",borderRadius:"3px 3px 0 0"}}/>}
             </button>
           ))}
+
+          {/* ── More menu overlay ── */}
+          {moreMenuOpen&&(
+            <div style={{position:"fixed",bottom:68,left:0,right:0,zIndex:200,animation:"fadeIn 0.15s ease"}}>
+              {/* Backdrop */}
+              <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,bottom:68,background:"rgba(10,15,30,0.6)",backdropFilter:"blur(4px)",zIndex:198}}/>
+              {/* Menu sheet */}
+              <div style={{position:"relative",zIndex:199,background:"#111827",borderRadius:"20px 20px 0 0",padding:"8px 0 12px",boxShadow:"0 -8px 40px rgba(0,0,0,0.4)"}}>
+                {/* Handle bar */}
+                <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
+                <div style={{padding:"0 8px"}}>
+                  {[
+                    {id:"requests", label:"All requests",   sub:"View and manage all RFQs",        icon:"📋", d:"M4 6h16M4 12h10M4 18h6"},
+                    {id:"suppliers",label:"Suppliers",      sub:"Manage your supplier accounts",   icon:"🏢", d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
+                    {id:"library",  label:"Quote library",  sub:"Price history and supplier scores",icon:"📚", d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
+                    {id:"settings", label:"Settings",       sub:"API keys, email, company details", icon:"⚙️", d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
+                  ].map(item=>(
+                    <button key={item.id} onClick={()=>{ setView(item.id); setMoreMenuOpen(false); }} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:view===item.id?"rgba(34,197,94,0.12)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
+                      <div style={{width:44,height:44,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{item.icon}</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:15,fontWeight:600,color:view===item.id?"#22C55E":"white"}}>{item.label}</div>
+                        <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{item.sub}</div>
+                      </div>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={view===item.id?"#22C55E":"#374151"} strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
+                  ))}
+                </div>
+                {/* Status strip */}
+                <div style={{margin:"12px 16px 0",padding:"10px 14px",background:"rgba(255,255,255,0.04)",borderRadius:10,display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"#22C55E":"#F59E0B",flexShrink:0}}/>
+                  <span style={{fontSize:12,color:settings.openRouterKey?"#22C55E":"#F59E0B"}}>
+                    {settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · email not set"):"Setup needed — tap Settings"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
