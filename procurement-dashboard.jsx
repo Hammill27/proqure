@@ -92,26 +92,26 @@ Format: {"matched":[{"item":"...","requestedQty":N,"requestedUnit":"...","quoted
   try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); } catch { return {error:true}; }
 }
 
-// ─── Email via Resend ────────────────────────────────────────────────────────
+// ─── Email via Vercel serverless function (no CORS) ──────────────────────────
 async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail) {
   const results = [];
   for (const s of suppliers) {
     try {
-      const res = await fetch("https://api.resend.com/emails", {
+      const res = await fetch("/api/send-email", {
         method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
+        headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          from: fromEmail||"onboarding@resend.dev",
+          from: fromEmail||"andy@initialmechanical.co.uk",
           to:   [s.email],
           subject,
           text: body
         })
       });
       const d = await res.json();
-      if (res.ok && d.id) {
+      if (res.ok && d.success) {
         results.push({ supplier:s.name, success:true, id:d.id });
       } else {
-        results.push({ supplier:s.name, success:false, error:d.message||d.error||JSON.stringify(d), statusCode:res.status });
+        results.push({ supplier:s.name, success:false, error:d.error||JSON.stringify(d), statusCode:res.status });
       }
     } catch(e) {
       results.push({ supplier:s.name, success:false, error:"Network error: "+e.message });
@@ -296,7 +296,7 @@ export default function App() {
     approved: requests.filter(r=>r.status==="approved").length,
   };
 
-  const filteredSup = suppliers.filter(s=>s.categories.includes(trade));
+  const filteredSup = suppliers.filter(s=>s.categories.some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
 
   // ── Handlers ──
   async function handleParse() {
@@ -823,7 +823,7 @@ export default function App() {
                 ))}
                 <Btn onClick={()=>{
                   if(!newSup.name||!newSup.email)return;
-                  const cats=newSup.categories.split(",").map(c=>c.trim()).filter(Boolean);
+                  const cats=newSup.categories.split(",").map(c=>c.trim()).filter(Boolean).map(c=>c.charAt(0).toUpperCase()+c.slice(1));
                   saveSuppliers([...suppliers,{id:Date.now(),name:newSup.name,email:newSup.email,categories:cats.length?cats:["Plumbing"]}]);
                   setNewSup({name:"",email:"",categories:""});
                   showToast("Supplier added");
