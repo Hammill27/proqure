@@ -525,13 +525,52 @@ export default function App() {
     showToast(`Analysis complete — ${results.length} quote${results.length!==1?"s":""} compared`);
   }
 
-  async function handleApprovePO() {
-    const sup = suppliers.find(s=>selSup.includes(s.id))||suppliers[0];
+  async function handleApprovePO(qa) {
+    const analysis = qa || quoteAnalysis;
+    const sup = suppliers.find(s=>s.name===analysis?.supplierName) || suppliers[0];
     const poNum = `PO-${Date.now().toString().slice(-6)}`;
-    await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis:quoteAnalysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:new Date().toLocaleDateString("en-GB") });
-    const poEntry = { ts:new Date().toISOString(), action:"PO approved", detail:`PO ${poNum} generated and downloaded`, user:settings.contactName||"You" };
-    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",activity:[...(r.activity||[]),poEntry]}:r));
-    showToast(`PO ${poNum} downloaded`);
+    const dateStr = new Date().toLocaleDateString("en-GB");
+    await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:dateStr });
+    const doc = { id:poNum, type:"generated", label:`PO ${poNum}`, supplier:sup?.name||"", date:dateStr, status:"approved" };
+    const poEntry = { ts:new Date().toISOString(), action:"PO approved & generated", detail:`PO ${poNum} for ${sup?.name||"supplier"} — generated and downloaded`, user:settings.contactName||"You" };
+    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
+    setActiveReq(prev=>({...prev,status:"approved",documents:[...(prev.documents||[]),doc]}));
+    showToast(`PO ${poNum} generated and downloaded`);
+  }
+
+  async function handleSaveDraftQuote(qa) {
+    const poNum = `DRAFT-${Date.now().toString().slice(-6)}`;
+    const dateStr = new Date().toLocaleDateString("en-GB");
+    const sup = suppliers.find(s=>s.name===qa?.supplierName) || {name:qa?.supplierName||"Supplier"};
+    await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis:qa, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:dateStr });
+    const doc = { id:poNum, type:"draft", label:`Draft — ${sup.name}`, supplier:sup.name, date:dateStr, status:"draft" };
+    const entry = { ts:new Date().toISOString(), action:"Draft quote saved", detail:`Draft PDF saved for ${sup.name} — not yet approved`, user:settings.contactName||"You" };
+    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),entry]}:r));
+    setActiveReq(prev=>({...prev,documents:[...(prev.documents||[]),doc]}));
+    showToast(`Draft saved for ${sup.name}`);
+  }
+
+  function handleUploadDocument(file) {
+    if (!file||!activeReq) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const doc = {
+        id:`UPLOAD-${Date.now()}`,
+        type:"uploaded",
+        label:file.name,
+        supplier:"",
+        date:new Date().toLocaleDateString("en-GB"),
+        status:"uploaded",
+        dataUrl: e.target.result,
+        fileType: file.type,
+        fileSize: `${(file.size/1024).toFixed(1)} KB`
+      };
+      const entry = { ts:new Date().toISOString(), action:"Document uploaded", detail:`${file.name} (${doc.fileSize}) uploaded`, user:settings.contactName||"You" };
+      setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),entry]}:r));
+      setActiveReq(prev=>({...prev,documents:[...(prev.documents||[]),doc]}));
+      showToast(`${file.name} uploaded to job`);
+    };
+    reader.readAsDataURL(file);
   }
 
   // ── Render ──
@@ -1153,16 +1192,70 @@ export default function App() {
                             {/* VAT note */}
                             {qa.vatNote&&<div style={{fontSize:12,color:"#94A3B8",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
 
-                            {/* Approve button */}
-                            <div style={{display:"flex",gap:10,paddingTop:12,borderTop:"1px solid #F1F5F9"}}>
-                              <Btn onClick={()=>{setQuoteAnalysis(qa);handleApprovePO();}} color="#059669">Approve &amp; download PO</Btn>
-                              <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove this quote</Btn>
+                            {/* Action buttons */}
+                            <div style={{paddingTop:16,borderTop:"1px solid #F1F5F9"}}>
+                              <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+                                <Btn onClick={()=>handleApprovePO(qa)} color="#059669">✓ Approve &amp; generate PO</Btn>
+                                <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft PDF</Btn>
+                                <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove quote</Btn>
+                              </div>
+                              <div style={{fontSize:12,color:"#94A3B8"}}>
+                                <span style={{marginRight:16}}>✓ Approve &amp; generate PO — marks job approved, downloads PO, stores record</span>
+                                <span>Save as draft — downloads PDF for review, not yet approved</span>
+                              </div>
                             </div>
                           </Card>
                           );
                         })}
                       </div>
                     )}
+                    {/* ── Document store ── */}
+                    <Card style={{marginTop:8}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>📎 Documents</div>
+                          <div style={{fontSize:12,color:"#64748B",marginTop:2}}>Generated POs, draft quotes, and uploaded third-party documents</div>
+                        </div>
+                        <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"#EFF6FF",color:"#2563EB",fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,cursor:"pointer",border:"1px solid #BFDBFE"}}>
+                          ↑ Upload document
+                          <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) handleUploadDocument(e.target.files[0]); e.target.value=""; }}/>
+                        </label>
+                      </div>
+
+                      {(!activeReq.documents||activeReq.documents.length===0)?(
+                        <div style={{textAlign:"center",padding:"30px 0",color:"#94A3B8",fontSize:13}}>
+                          <div style={{fontSize:28,marginBottom:8}}>📄</div>
+                          No documents yet — approve a quote to generate a PO, save a draft, or upload a third-party document
+                        </div>
+                      ):(
+                        <div>
+                          {activeReq.documents.map((doc,i)=>{
+                            const typeConfig = {
+                              generated:{ bg:"#D1FAE5", text:"#065F46", icon:"✓", label:"Approved PO" },
+                              draft:    { bg:"#EDE9FE", text:"#5B21B6", icon:"◎", label:"Draft PDF" },
+                              uploaded: { bg:"#DBEAFE", text:"#1E40AF", icon:"↑", label:"Uploaded" },
+                            }[doc.type]||{ bg:"#F1F5F9", text:"#475569", icon:"📄", label:"Document" };
+                            return(
+                              <div key={doc.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:"1px solid #F1F5F9"}}>
+                                <div style={{width:38,height:38,background:typeConfig.bg,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:typeConfig.text,flexShrink:0}}>{typeConfig.icon}</div>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{fontSize:13,fontWeight:500,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.label}</div>
+                                  <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{doc.supplier&&`${doc.supplier} · `}{doc.date}{doc.fileSize&&` · ${doc.fileSize}`}</div>
+                                </div>
+                                <span style={{background:typeConfig.bg,color:typeConfig.text,fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:12,flexShrink:0}}>{typeConfig.label}</span>
+                                {doc.dataUrl&&(
+                                  <a href={doc.dataUrl} download={doc.label} style={{fontSize:12,color:"#3B82F6",textDecoration:"none",fontWeight:500,flexShrink:0,padding:"5px 10px",border:"1px solid #BFDBFE",borderRadius:6}}>Download</a>
+                                )}
+                                <button onClick={()=>{
+                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,documents:r.documents.filter((_,di)=>di!==i)}:r));
+                                  setActiveReq(prev=>({...prev,documents:prev.documents.filter((_,di)=>di!==i)}));
+                                }} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer",flexShrink:0}}>Remove</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </Card>
                   </>
                 ):(
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:200,color:"#9CA3AF",fontSize:14}}>Select a request from the left</div>
