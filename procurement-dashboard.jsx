@@ -1114,11 +1114,17 @@ export default function App() {
                   <Btn outline onClick={()=>setStep(2)}>← Back</Btn>
                   <div style={{display:"flex",gap:10}}>
                     {settings.resendKey&&!emailRes&&(
-                      <Btn onClick={handleSendEmails} disabled={loading} color="#7C3AED">
+                      <Btn onClick={handleSendEmails} disabled={loading} color="#16A34A">
                         {loading?<><Spinner/>{loadMsg}</>:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""} →`}
                       </Btn>
                     )}
-                    <Btn onClick={handleFinalise} color="#059669">Save request ✓</Btn>
+                    {!settings.resendKey&&(
+                      <div style={{fontSize:13,color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}>
+                        <span>Configure Resend in</span>
+                        <button onClick={()=>setView("settings")} style={{color:"#6366F1",background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:13,padding:0}}>Settings</button>
+                        <span>to send emails</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </Card>
