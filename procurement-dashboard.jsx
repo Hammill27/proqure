@@ -124,6 +124,82 @@ Rules:
   try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); } catch { return {error:true, raw}; }
 }
 
+// ─── Extract quote text from uploaded file using AI ──────────────────────────
+async function extractQuoteFromFile(fileContent, fileName, fileType) {
+  const sys = `You are a procurement data extraction specialist. A supplier has sent a quote document. Extract ALL pricing information, stock availability, delivery charges, lead times, and any other relevant procurement data from the document content provided. Return the extracted information as clean, structured plain text that clearly lists each item with its price, availability, and any other details. Preserve all numbers and prices exactly. If the document appears to be a table or spreadsheet, convert it to a clear line-by-line format. Start directly with the extracted data, no preamble.`;
+  const prompt = `File name: ${fileName}
+File type: ${fileType}
+
+Document content:
+${fileContent}
+
+Extract all quote/pricing information as clean structured text.`;
+  return callAI(sys, prompt);
+}
+
+// ─── Read file content for AI extraction ─────────────────────────────────────
+async function readFileForExtraction(file) {
+  return new Promise((resolve, reject) => {
+    const ext = file.name.split(".").pop().toLowerCase();
+    // For text-based files read directly
+    if (["txt","csv","html","htm"].includes(ext)) {
+      const reader = new FileReader();
+      reader.onload = e => resolve({ content: e.target.result, type: "text" });
+      reader.onerror = reject;
+      reader.readAsText(file);
+      return;
+    }
+    // For Excel files use SheetJS via CDN
+    if (["xlsx","xls","ods"].includes(ext)) {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          if (!window.XLSX) {
+            await new Promise((res,rej)=>{
+              const s=document.createElement("script");
+              s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+              s.onload=res; s.onerror=rej;
+              document.head.appendChild(s);
+            });
+          }
+          const wb = window.XLSX.read(e.target.result, {type:"binary"});
+          let text = "";
+          wb.SheetNames.forEach(name => {
+            const ws = wb.Sheets[name];
+            text += `Sheet: ${name}\n`;
+            text += window.XLSX.utils.sheet_to_csv(ws);
+            text += "\n\n";
+          });
+          resolve({ content: text, type: "excel" });
+        } catch(err) { reject(err); }
+      };
+      reader.onerror = reject;
+      reader.readAsBinaryString(file);
+      return;
+    }
+    // For PDF and Word — read as base64 and send to AI with note
+    // (AI will do its best with the text it can extract)
+    const reader = new FileReader();
+    reader.onload = e => {
+      // For PDFs we extract the raw text portions
+      if (ext === "pdf") {
+        const text = e.target.result;
+        // Try to extract readable text from PDF binary
+        const matches = text.match(/\((.*?)\)/g)||[];
+        const extracted = matches
+          .map(m=>m.slice(1,-1))
+          .filter(s=>s.length>1&&/[a-zA-Z0-9£$€.,]/.test(s))
+          .join(" ");
+        resolve({ content: extracted||text.slice(0,5000), type:"pdf" });
+      } else {
+        resolve({ content: e.target.result.slice(0,8000), type:"binary" });
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsBinaryString(file);
+  });
+}
+
 // ─── Email via Vercel serverless function (no CORS) ──────────────────────────
 async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail) {
   const results = [];
@@ -356,6 +432,8 @@ export default function App() {
   const [quoteSupplierName, setQuoteSupplierName] = useState("");
   const [quoteAnalysis, setQuoteAnalysis] = useState(null);
   const [allAnalyses, setAllAnalyses] = useState([]);
+  const [fileExtracting, setFileExtracting] = useState({}); // {supplierIndex: bool}
+  const [dragOver, setDragOver] = useState({}); // {supplierIndex: bool}
 
   // Settings form
   const [sForm, setSForm] = useState({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings});
@@ -957,6 +1035,88 @@ export default function App() {
                                 : <span style={{background:"#FEF3C7",color:"#92400E",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>Awaiting quote</span>
                               }
                             </div>
+                            {/* Drag and drop + file upload zone */}
+                            {(()=>{
+                              const processFile = async(file) => {
+                                if (!file) return;
+                                if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
+                                window.__piq_or_key__ = settings.openRouterKey;
+                                setFileExtracting(prev=>({...prev,[si]:true}));
+                                showToast(`Reading ${file.name}…`);
+                                try {
+                                  const { content, type } = await readFileForExtraction(file);
+                                  showToast(`AI extracting data from ${file.name}…`);
+                                  const extracted = await extractQuoteFromFile(content, file.name, type);
+                                  const newQuote = sup.quote?.trim()
+                                    ? sup.quote + "\n\n--- From " + file.name + " ---\n" + extracted
+                                    : "--- Extracted from " + file.name + " ---\n" + extracted;
+                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:newQuote,saved:false}:s)}:r));
+                                  setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:newQuote,saved:false}:s)}));
+                                  showToast(`✓ ${file.name} extracted — review and save`);
+                                } catch(err) {
+                                  showToast(`Could not read ${file.name}: ${err.message}`,"warn");
+                                }
+                                setFileExtracting(prev=>({...prev,[si]:false}));
+                              };
+                              return (
+                                <div
+                                  onDragOver={e=>{e.preventDefault();setDragOver(prev=>({...prev,[si]:true}));}}
+                                  onDragLeave={e=>{e.preventDefault();setDragOver(prev=>({...prev,[si]:false}));}}
+                                  onDrop={e=>{
+                                    e.preventDefault();
+                                    setDragOver(prev=>({...prev,[si]:false}));
+                                    const file = e.dataTransfer.files[0];
+                                    if (file) processFile(file);
+                                  }}
+                                  style={{
+                                    marginBottom:10,
+                                    padding:"14px 16px",
+                                    background: dragOver[si]?"#EFF6FF":fileExtracting[si]?"#F0F9FF":"#F8FAFC",
+                                    borderRadius:10,
+                                    border: dragOver[si]?"2px dashed #3B82F6":fileExtracting[si]?"2px dashed #93C5FD":"2px dashed #CBD5E1",
+                                    display:"flex",
+                                    alignItems:"center",
+                                    justifyContent:"space-between",
+                                    gap:12,
+                                    transition:"all 0.15s"
+                                  }}
+                                >
+                                  <div>
+                                    {fileExtracting[si]?(
+                                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                        <Spinner/>
+                                        <div>
+                                          <div style={{fontSize:12,fontWeight:500,color:"#3B82F6"}}>AI reading document…</div>
+                                          <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>Extracting pricing and availability data</div>
+                                        </div>
+                                      </div>
+                                    ):dragOver[si]?(
+                                      <div>
+                                        <div style={{fontSize:12,fontWeight:600,color:"#3B82F6"}}>Drop to upload</div>
+                                        <div style={{fontSize:11,color:"#60A5FA",marginTop:1}}>Release to let AI read this document</div>
+                                      </div>
+                                    ):(
+                                      <div>
+                                        <div style={{fontSize:12,fontWeight:500,color:"#334155"}}>📎 Drag & drop supplier document here</div>
+                                        <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>PDF · Word · Excel · CSV — AI reads it and fills the box below</div>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <label style={{
+                                    display:"inline-flex",alignItems:"center",gap:6,
+                                    background:fileExtracting[si]?"#DBEAFE":"white",
+                                    color:fileExtracting[si]?"#93C5FD":"#3B82F6",
+                                    fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,
+                                    cursor:fileExtracting[si]?"not-allowed":"pointer",
+                                    border:"1px solid #BFDBFE",whiteSpace:"nowrap",flexShrink:0
+                                  }}>
+                                    {fileExtracting[si]?"Reading…":"Browse file"}
+                                    <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt,.ods" disabled={fileExtracting[si]} style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) processFile(e.target.files[0]); e.target.value=""; }}/>
+                                  </label>
+                                </div>
+                              );
+                            })()}
+
                             <textarea
                               value={sup.quote||""}
                               onChange={e=>{
@@ -966,25 +1126,36 @@ export default function App() {
                                 }:r));
                                 setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value,saved:false}:s)}));
                               }}
-                              placeholder={`Paste ${sup.name}'s quote here — prices, availability, delivery charges, lead times, any notes they included...`}
-                              style={{width:"100%",height:120,padding:"10px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit",background:sup.saved?"#F0FDF4":"white"}}
+                              placeholder={`Option 1: Paste ${sup.name}'s quote email directly here\nOption 2: Upload their PDF/Excel above — AI reads it and fills this box automatically\n\nEither way, review the content then click Save quote`}
+                              style={{width:"100%",height:140,padding:"10px 12px",border:`1px solid ${sup.quote?.trim()?"#93C5FD":"#E5E7EB"}`,borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit",background:sup.saved?"#F0FDF4":sup.quote?.trim()?"#FAFBFF":"white"}}
                             />
-                            <div style={{marginTop:8,display:"flex",justifyContent:"flex-end",gap:8}}>
-                              {sup.saved&&(
-                                <button onClick={()=>{
-                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}:r));
-                                  setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}));
-                                }} style={{fontSize:12,color:"#64748B",background:"none",border:"1px solid #E2E8F0",borderRadius:6,padding:"6px 12px",cursor:"pointer"}}>Edit</button>
-                              )}
-                              <Btn
-                                disabled={!sup.quote?.trim()}
-                                color={sup.saved?"#059669":"#3B82F6"}
-                                onClick={()=>{
-                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}:r));
-                                  setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}));
-                                  showToast(`${sup.name} quote saved`);
-                                }}
-                              >{sup.saved?"✓ Saved":"Save quote"}</Btn>
+                            <div style={{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                              <div style={{fontSize:11,color:"#94A3B8"}}>
+                                {sup.quote?.trim()?`${sup.quote.trim().split(/\s+/).length} words entered`:"No quote entered yet"}
+                              </div>
+                              <div style={{display:"flex",gap:8}}>
+                                {sup.quote?.trim()&&(
+                                  <button onClick={()=>{
+                                    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:"",saved:false}:s)}:r));
+                                    setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:"",saved:false}:s)}));
+                                  }} style={{fontSize:12,color:"#94A3B8",background:"none",border:"none",cursor:"pointer"}}>Clear</button>
+                                )}
+                                {sup.saved&&(
+                                  <button onClick={()=>{
+                                    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}:r));
+                                    setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}));
+                                  }} style={{fontSize:12,color:"#64748B",background:"none",border:"1px solid #E2E8F0",borderRadius:6,padding:"6px 12px",cursor:"pointer"}}>Edit</button>
+                                )}
+                                <Btn
+                                  disabled={!sup.quote?.trim()}
+                                  color={sup.saved?"#059669":"#3B82F6"}
+                                  onClick={()=>{
+                                    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}:r));
+                                    setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}));
+                                    showToast(`${sup.name} quote saved`);
+                                  }}
+                                >{sup.saved?"✓ Saved":"Save quote"}</Btn>
+                              </div>
                             </div>
                           </Card>
                         ))}
