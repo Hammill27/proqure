@@ -40,10 +40,10 @@ const DEFAULT_SUPPLIERS = [
   { id:5, name:"Graham",                  categories:["HVAC","Plumbing","Ventilation"], email:"rfq@grahamplumbingheating.co.uk" },
 ];
 const STATUS = {
-  draft:    { bg:"#FEF3C7", text:"#92400E",  label:"Draft" },
-  pending:  { bg:"#DBEAFE", text:"#1E40AF",  label:"Pending quotes" },
-  received: { bg:"#F3E8FF", text:"#6B21A8",  label:"Quotes received" },
-  approved: { bg:"#D1FAE5", text:"#065F46",  label:"Approved" },
+  draft:    { bg:"#FEF9C3", text:"#854D0E",  label:"Draft" },
+  pending:  { bg:"#EEF2FF", text:"#3730A3",  label:"Pending quotes" },
+  received: { bg:"#FAF5FF", text:"#6B21A8",  label:"Quotes received" },
+  approved: { bg:"#DCFCE7", text:"#166534",  label:"Approved" },
 };
 
 // ─── AI helpers ───────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ async function callAI(system, user) {
     try {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://procureiq.app","X-Title":"ProcureIQ"},
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://quotient.app","X-Title":"Quotient"},
         body: JSON.stringify({ model, messages:[{role:"system",content:system},{role:"user",content:user}] })
       });
       const d = await res.json();
@@ -373,21 +373,23 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
 }
 
 // ─── Tiny shared components ───────────────────────────────────────────────────
-const Btn = ({ onClick, disabled, color="#2563EB", outline=false, children }) => (
+const Btn = ({ onClick, disabled, color="#6366F1", outline=false, children }) => (
   <button onClick={onClick} disabled={disabled} style={{
-    background: outline?"transparent": disabled?"#93C5FD":color,
-    color: outline?"#374151":"white",
-    border: outline?"1px solid #E5E7EB":"none",
-    borderRadius:8, padding:"10px 20px", fontSize:13, fontWeight:500,
-    cursor: disabled?"not-allowed":"pointer", opacity: disabled?0.7:1,
-    display:"inline-flex", alignItems:"center", gap:6
+    background: outline?"transparent": disabled?"#C7D2FE":color,
+    color: outline?"#475569":"white",
+    border: outline?"1px solid #E2E8F0":"none",
+    borderRadius:10, padding:"10px 22px", fontSize:13, fontWeight:600,
+    cursor: disabled?"not-allowed":"pointer", opacity: disabled?0.85:1,
+    display:"inline-flex", alignItems:"center", gap:7,
+    boxShadow: outline?"none": disabled?"none":"0 2px 8px rgba(99,102,241,0.25)",
+    letterSpacing:"-0.1px"
   }}>{children}</button>
 );
 const Badge = ({ children, bg, text }) => (
-  <span style={{ background:bg, color:text, fontSize:11, fontWeight:500, padding:"3px 10px", borderRadius:20, whiteSpace:"nowrap" }}>{children}</span>
+  <span style={{ background:bg, color:text, fontSize:11, fontWeight:600, padding:"3px 11px", borderRadius:20, whiteSpace:"nowrap", letterSpacing:"0.01em" }}>{children}</span>
 );
 const Card = ({ children, style={} }) => (
-  <div style={{ background:"white", border:"1px solid #E2E8F0", borderRadius:16, padding:"22px 26px", boxShadow:"0 1px 4px rgba(0,0,0,0.04)", ...style }}>{children}</div>
+  <div style={{ background:"rgba(255,255,255,0.85)", backdropFilter:"blur(8px)", border:"1px solid rgba(226,232,240,0.8)", borderRadius:20, padding:"24px 28px", boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.04)", ...style }}>{children}</div>
 );
 const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
@@ -667,31 +669,42 @@ export default function App() {
 
   // ── Render ──
   return (
-    <div style={{fontFamily:"'DM Sans','Helvetica Neue',sans-serif",background:"#F1F5F9",minHeight:"100vh",color:"#1A1A1A"}}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-      <style>{`*{box-sizing:border-box} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    <div style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"linear-gradient(160deg,#F8FAFC 0%,#EFF6FF 50%,#F5F3FF 100%)",minHeight:"100vh",color:"#0F172A",backgroundAttachment:"fixed"}}>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+      <style>{`*{box-sizing:border-box;-webkit-font-smoothing:antialiased}
+      @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+      ::-webkit-scrollbar{width:5px;height:5px}
+      ::-webkit-scrollbar-track{background:transparent}
+      ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:99px}
+      ::selection{background:#DBEAFE;color:#1E40AF}
+      input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important}
+      button{transition:all 0.15s ease!important}`}</style>
 
       {/* Toast notification */}
       {toast && (
-        <div style={{position:"fixed",top:20,right:20,zIndex:9999,background:toast.type==="warn"?"#FFFBEB":"#ECFDF5",border:`1px solid ${toast.type==="warn"?"#FDE68A":"#A7F3D0"}`,color:toast.type==="warn"?"#92400E":"#065F46",borderRadius:10,padding:"12px 18px",fontSize:13,fontWeight:500,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}>
-          {toast.type==="warn"?"⚠ ":"✓ "}{toast.msg}
+        <div style={{position:"fixed",top:24,right:24,zIndex:9999,background:toast.type==="warn"?"rgba(255,251,235,0.95)":"rgba(240,253,244,0.95)",backdropFilter:"blur(12px)",border:`1px solid ${toast.type==="warn"?"#FDE68A":"#A7F3D0"}`,color:toast.type==="warn"?"#92400E":"#065F46",borderRadius:14,padding:"14px 20px",fontSize:13,fontWeight:500,boxShadow:"0 8px 32px rgba(0,0,0,0.12),0 2px 8px rgba(0,0,0,0.08)",display:"flex",alignItems:"center",gap:10,animation:"fadeIn 0.2s ease",maxWidth:360}}>
+          <span style={{fontSize:16}}>{toast.type==="warn"?"⚠️":"✅"}</span>
+          <span>{toast.msg}</span>
         </div>
       )}
 
       {/* Sidebar */}
-      <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0F172A 0%,#1E293B 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 24px rgba(0,0,0,0.15)"}}>
+      <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0A0F1E 0%,#111827 60%,#0F172A 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 40px rgba(0,0,0,0.25)"}}>
         <div style={{padding:"28px 24px 24px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:36,height:36,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(59,130,246,0.4)"}}>
+            <div style={{width:36,height:36,background:"linear-gradient(135deg,#6366F1,#4F46E5)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 20px rgba(99,102,241,0.5)"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
             </div>
             <div>
-              <div style={{fontSize:16,fontWeight:700,color:"#F9FAFB",letterSpacing:"-0.5px"}}>ProcureIQ</div>
-              <div style={{fontSize:10,color:"#64748B",marginTop:2,letterSpacing:"0.05em",textTransform:"uppercase"}}>Procurement Platform</div>
+              <div style={{fontSize:17,fontWeight:700,color:"white",letterSpacing:"-0.8px",fontFamily:"'Inter',sans-serif"}}>Quotient<span style={{color:"#818CF8"}}>.</span></div>
+              <div style={{fontSize:10,color:"#475569",marginTop:3,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:500}}>Smart Procurement</div>
             </div>
           </div>
         </div>
-        <nav style={{padding:"20px 16px",flex:1}}>
+        <nav style={{padding:"20px 16px",flex:1}}><div style={{fontSize:10,color:"#334155",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4}}>Navigation</div>
           {[
             {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
             {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
@@ -701,14 +714,14 @@ export default function App() {
             {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
           ].map(item=>(
             <button key={item.id} onClick={()=>{setView(item.id);if(item.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);}}
-              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"rgba(59,130,246,0.15)":"transparent",color:view===item.id?"#93C5FD":"#64748B",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:3,textAlign:"left",borderLeft:view===item.id?"3px solid #3B82F6":"3px solid transparent"}}>
+              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"rgba(99,102,241,0.18)":"transparent",color:view===item.id?"#A5B4FC":"#64748B",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:2,textAlign:"left",borderLeft:view===item.id?"3px solid #818CF8":"3px solid transparent",transition:"all 0.15s"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
               {item.label}
             </button>
           ))}
         </nav>
         <div style={{padding:"16px 24px",borderTop:"1px solid rgba(255,255,255,0.06)"}}>
-          <div style={{fontSize:11,background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"8px 12px",display:"flex",alignItems:"center",gap:6}}>
+          <div style={{fontSize:11,background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid rgba(255,255,255,0.06)"}}>
             <span style={{color:settings.openRouterKey?"#10B981":"#F59E0B",marginRight:6}}>●</span>
             <span style={{color:settings.openRouterKey?"#10B981":"#F59E0B"}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · no email"):"Setup needed"}</span>
           </div>
@@ -716,25 +729,25 @@ export default function App() {
       </div>
 
       {/* Main content */}
-      <div style={{marginLeft:240,padding:"36px 40px",maxWidth:1140}}>
+      <div style={{marginLeft:240,padding:"40px 48px",maxWidth:1160,animation:"fadeIn 0.2s ease"}}>
 
         {/* ══ DASHBOARD ══ */}
         {view==="dashboard"&&(
           <div>
             <div style={{marginBottom:28}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#1E293B,#3B82F6)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Dashboard</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A 0%,#6366F1 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Dashboard</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:24}}>
               {[
-                {label:"Total requests",value:stats.total,   color:"#2563EB",bg:"linear-gradient(135deg,#EFF6FF,#DBEAFE)",icon:"📋"},
-                {label:"Pending quotes", value:stats.pending, color:"#7C3AED",bg:"linear-gradient(135deg,#F5F3FF,#EDE9FE)",icon:"⏳"},
-                {label:"Quotes received",value:stats.received,color:"#D97706",bg:"linear-gradient(135deg,#FFFBEB,#FEF3C7)",icon:"📬"},
-                {label:"Approved",       value:stats.approved,color:"#059669",bg:"linear-gradient(135deg,#ECFDF5,#D1FAE5)",icon:"✅"},
+                {label:"Total requests",value:stats.total,   color:"#6366F1",bg:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",icon:"📋",border:"rgba(99,102,241,0.15)"},
+                {label:"Pending quotes", value:stats.pending, color:"#7C3AED",bg:"linear-gradient(135deg,#F5F3FF,#EDE9FE)",icon:"⏳",border:"rgba(124,58,237,0.15)"},
+                {label:"Quotes received",value:stats.received,color:"#D97706",bg:"linear-gradient(135deg,#FFFBEB,#FEF3C7)",icon:"📬",border:"rgba(217,119,6,0.15)"},
+                {label:"Approved",       value:stats.approved,color:"#059669",bg:"linear-gradient(135deg,#ECFDF5,#D1FAE5)",icon:"✅",border:"rgba(5,150,105,0.15)"},
               ].map(s=>(
                 <div key={s.label} style={{background:s.bg,border:"1px solid rgba(0,0,0,0.06)",borderRadius:16,padding:"20px 24px",position:"relative",overflow:"hidden"}}>
                   <div style={{fontSize:11,fontWeight:600,color:s.color,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{s.icon} {s.label}</div>
-                  <div style={{fontSize:36,fontWeight:700,color:s.color,fontFamily:"'DM Mono',monospace",lineHeight:1}}>{s.value}</div>
+                  <div style={{fontSize:36,fontWeight:700,color:s.color,fontFamily:"'JetBrains Mono',monospace",lineHeight:1}}>{s.value}</div>
                 </div>
               ))}
             </div>
@@ -751,27 +764,27 @@ export default function App() {
               </div>
             )}
             <Card style={{padding:0,overflow:"hidden"}}>
-              <div style={{padding:"16px 24px",borderBottom:"1px solid #F3F4F6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{padding:"18px 28px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{fontWeight:500,fontSize:15}}>Recent requests</span>
                 <Btn onClick={()=>setView("new")}>+ New request</Btn>
               </div>
               {requests.length===0?(
-                <div style={{padding:"60px 24px",textAlign:"center"}}>
-                  <div style={{fontSize:40,marginBottom:12}}>📋</div>
-                  <div style={{fontSize:15,fontWeight:500,color:"#1E293B",marginBottom:6}}>No requests yet</div>
-                  <div style={{fontSize:13,color:"#94A3B8",marginBottom:20}}>Create your first material request to get started</div>
+                <div style={{padding:"80px 24px",textAlign:"center"}}>
+                  <div style={{fontSize:56,marginBottom:16}}>📋</div>
+                  <div style={{fontSize:18,fontWeight:700,color:"#1E293B",marginBottom:8,letterSpacing:"-0.3px"}}>No requests yet</div>
+                  <div style={{fontSize:14,color:"#94A3B8",marginBottom:24,maxWidth:320,margin:"0 auto 24px"}}>Create your first material request to start getting quotes from suppliers</div>
                   <Btn onClick={()=>setView("new")}>+ Create first request</Btn>
                 </div>
               ):(
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead><tr style={{background:"#F9FAFB"}}>
+                  <thead><tr style={{background:"#F8FAFF"}}>
                     {["Request","Job ref","Site","Trade","Items","Status","Created",""].map(h=>(
                       <th key={h} style={{padding:"10px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>{requests.map(r=>{const sc=STATUS[r.status];return(
                     <tr key={r.id} style={{borderTop:"1px solid #F3F4F6"}}>
-                      <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'DM Mono',monospace",color:"#2563EB"}}>{r.id}</td>
+                      <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'JetBrains Mono',monospace",color:"#2563EB"}}>{r.id}</td>
                       <td style={{padding:"13px 16px",fontSize:13}}>{r.jobRef}</td>
                       <td style={{padding:"13px 16px",fontSize:13,color:"#6B7280"}}>{r.site}</td>
                       <td style={{padding:"13px 16px",fontSize:13}}>{r.trade}</td>
@@ -795,13 +808,13 @@ export default function App() {
         {view==="new"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:26,fontWeight:600,letterSpacing:"-0.5px",margin:0}}>New material request</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>New material request</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Speak or type your list — AI structures it and sends RFQs to suppliers</p>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:28,alignItems:"center"}}>
               {["Describe materials","Review & configure","Send RFQs"].map((s,i)=>(
                 <div key={s} style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,background:step>i+1?"#2563EB":step===i+1?"#2563EB":"#E5E7EB",color:step>=i+1?"white":"#9CA3AF"}}>{step>i+1?"✓":i+1}</div>
+                  <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,background:step>i+1?"#6366F1":step===i+1?"#6366F1":"#E5E7EB",color:step>=i+1?"white":"#9CA3AF",boxShadow:step===i+1?"0 4px 12px rgba(99,102,241,0.35)":"none"}}>{step>i+1?"✓":i+1}</div>
                   <span style={{fontSize:13,color:step===i+1?"#111827":"#9CA3AF",fontWeight:step===i+1?500:400}}>{s}</span>
                   {i<2&&<div style={{width:36,height:1,background:"#E5E7EB"}}/>}
                 </div>
@@ -815,7 +828,7 @@ export default function App() {
                   {[{label:"Job reference",val:jobRef,set:setJobRef,ph:"e.g. JOB-2024-056"},{label:"Site / location",val:site,set:setSite,ph:"e.g. Unit 7, High Street"}].map(f=>(
                     <div key={f.label}>
                       <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
-                      <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                      <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                     </div>
                   ))}
                   <div>
@@ -829,7 +842,7 @@ export default function App() {
                   <label style={{fontSize:12,fontWeight:500,color:"#374151"}}>Material requirements <span style={{color:"#9CA3AF",fontWeight:400}}>(speak or type naturally)</span></label>
                   {voiceOk?(
                     <button onClick={()=>listening?micStop():micStart()}
-                      style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${listening?"#DC2626":"#2563EB"}`,background:listening?"#FEF2F2":"#EFF6FF",color:listening?"#DC2626":"#2563EB",fontSize:12,fontWeight:500,cursor:"pointer"}}>
+                      style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${listening?"#DC2626":"#6366F1"}`,background:listening?"#FEF2F2":"#EEF2FF",color:listening?"#DC2626":"#6366F1",boxShadow:listening?"none":"0 2px 8px rgba(99,102,241,0.2)",fontSize:12,fontWeight:500,cursor:"pointer"}}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         {listening?<rect x="6" y="6" width="12" height="12" rx="2"/>:<><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>}
                       </svg>
@@ -848,10 +861,10 @@ export default function App() {
                 )}
                 <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)}
                   placeholder={"Plumbing: \"I need 20 metres of 22mm copper pipe, 12 compression elbows, 6 isolation valves for the plant room.\"\n\nElectrical: \"100m of 2.5mm twin and earth, 20 double sockets, a 10-way consumer unit and 20mm conduit.\""}
-                  style={{width:"100%",height:150,padding:"12px 14px",border:`1px solid ${listening?"#FECACA":"#E5E7EB"}`,borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit",background:listening?"#FFFBFB":"white"}}/>
+                  style={{width:"100%",height:150,padding:"12px 14px",border:`1.5px solid ${listening?"#FECACA":"#E2E8F0"}`,borderRadius:12,fontSize:13,lineHeight:1.7,resize:"vertical",outline:"none",fontFamily:"inherit",background:listening?"#FFFBFB":"white",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}/>
                 <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
                   <Btn onClick={handleParse} disabled={!rawInput.trim()||loading}>
-                    {loading?<><Spinner/>{loadMsg}</>:"Parse with AI →"}
+                    {loading?<><Spinner/>{loadMsg}</>:"✦ Parse with AI"}
                   </Btn>
                 </div>
               </Card>
@@ -868,21 +881,21 @@ export default function App() {
                   {parsed.urgency&&<Badge bg={parsed.urgency==="urgent"?"#FEF3C7":"#F0FDF4"} text={parsed.urgency==="urgent"?"#92400E":"#166534"}>{parsed.urgency}</Badge>}
                 </div>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead><tr style={{background:"#F9FAFB"}}>
+                  <thead><tr style={{background:"#F8FAFF"}}>
                     {["#","Description","Qty","Unit","Category","Notes"].map(h=><th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>)}
                   </tr></thead>
                   <tbody>{parsed.items?.map((item,i)=>(
                     <tr key={item.id} style={{borderTop:"1px solid #F3F4F6"}}>
                       <td style={{padding:"11px 14px",fontSize:12,color:"#9CA3AF"}}>{i+1}</td>
                       <td style={{padding:"11px 14px",fontSize:13,fontWeight:500}}>{item.description}</td>
-                      <td style={{padding:"11px 14px",fontSize:13,fontFamily:"'DM Mono',monospace"}}>{item.quantity}</td>
+                      <td style={{padding:"11px 14px",fontSize:13,fontFamily:"'JetBrains Mono',monospace"}}>{item.quantity}</td>
                       <td style={{padding:"11px 14px",fontSize:13,color:"#6B7280"}}>{item.unit}</td>
                       <td style={{padding:"11px 14px"}}><Badge bg="#EFF6FF" text="#1D4ED8">{item.category}</Badge></td>
                       <td style={{padding:"11px 14px",fontSize:12,color:"#9CA3AF"}}>{item.notes||"—"}</td>
                     </tr>
                   ))}</tbody>
                 </table>
-                <div style={{marginTop:20,padding:16,background:"#F9FAFB",borderRadius:8}}>
+                <div style={{marginTop:20,padding:16,background:"#F8FAFF",borderRadius:8}}>
                   <div style={{fontSize:13,fontWeight:500,marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"#6B7280",fontWeight:400}}>({trade})</span></div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                     {filteredSup.map(s=>(
@@ -960,7 +973,7 @@ export default function App() {
               <Card>
                 <div style={{fontSize:15,fontWeight:500,marginBottom:4}}>RFQ email ready</div>
                 <div style={{fontSize:13,color:"#6B7280",marginBottom:16}}>Will be sent to: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.name).join(", ")}</div>
-                <div style={{background:"#F9FAFB",border:"1px solid #E5E7EB",borderRadius:8,padding:20,marginBottom:16}}>
+                <div style={{background:"#F8FAFF",border:"1px solid #E5E7EB",borderRadius:8,padding:20,marginBottom:16}}>
                   <div style={{fontSize:12,color:"#9CA3AF",marginBottom:4}}>To: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.email).join(", ")}</div>
                   <div style={{fontSize:12,color:"#9CA3AF",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #E5E7EB"}}>Subject: Request for Quotation — {jobRef||parsed?.jobRef||"TBC"}</div>
                   <pre style={{fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0,color:"#374151"}}>{rfqEmail}</pre>
@@ -1022,7 +1035,7 @@ export default function App() {
         {view==="quotes"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#1E293B,#3B82F6)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Quote analysis</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Quote analysis</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Select a request, enter each supplier quote, then run AI analysis</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:20}}>
@@ -1035,7 +1048,7 @@ export default function App() {
                   return(
                   <button key={r.id} onClick={()=>{setActiveReq(r);setQuoteAnalysis(null);setAllAnalyses([]);}}
                     style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${activeReq?.id===r.id?"#3B82F6":"#E5E7EB"}`,background:activeReq?.id===r.id?"#EFF6FF":"white",cursor:"pointer",marginBottom:8,transition:"all 0.15s"}}>
-                    <div style={{fontSize:12,fontWeight:600,fontFamily:"'DM Mono',monospace",color:"#3B82F6"}}>{r.id}</div>
+                    <div style={{fontSize:12,fontWeight:600,fontFamily:"'JetBrains Mono',monospace",color:"#3B82F6"}}>{r.id}</div>
                     <div style={{fontSize:13,fontWeight:500,color:"#1E293B",marginTop:3}}>{r.jobRef}</div>
                     <div style={{fontSize:12,color:"#64748B",marginTop:1}}>{r.trade} · {r.items.length} items</div>
                     <div style={{marginTop:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1272,7 +1285,7 @@ export default function App() {
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                           <div>
                             <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Supplier name</label>
-                            <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                            <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                           </div>
                         </div>
                         <textarea value={quoteInput} onChange={e=>setQuoteInput(e.target.value)}
@@ -1526,14 +1539,14 @@ export default function App() {
         {view==="suppliers"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:26,fontWeight:600,letterSpacing:"-0.5px",margin:0}}>Suppliers</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Suppliers</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Your supplier accounts — add your real ones here</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:24}}>
               {suppliers.map(s=>(
                 <Card key={s.id}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                    <div style={{width:40,height:40,background:"#EFF6FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#2563EB"}}>{s.name.charAt(0)}</div>
+                    <div style={{width:44,height:44,background:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:"#4F46E5",boxShadow:"0 2px 8px rgba(99,102,241,0.15)"}}>{s.name.charAt(0)}</div>
                     <div style={{display:"flex",gap:8,alignItems:"center"}}>
                       <Badge bg="#F0FDF4" text="#166534">Active</Badge>
                       <button onClick={()=>saveSuppliers(suppliers.filter(x=>x.id!==s.id))} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
@@ -1553,7 +1566,7 @@ export default function App() {
                 {[{label:"Company name",val:"name",ph:"e.g. BSS Industrial"},{label:"Quote email",val:"email",ph:"quotes@supplier.co.uk"},{label:"Categories",val:"categories",ph:"Plumbing, HVAC"}].map(f=>(
                   <div key={f.val}>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
-                    <input value={newSup[f.val]} onChange={e=>setNewSup(p=>({...p,[f.val]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                    <input value={newSup[f.val]} onChange={e=>setNewSup(p=>({...p,[f.val]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                 ))}
                 <Btn onClick={()=>{
@@ -1572,18 +1585,18 @@ export default function App() {
         {view==="requests"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:26,fontWeight:600,letterSpacing:"-0.5px",margin:0}}>All requests</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>All requests</h1>
             </div>
             <Card style={{padding:0,overflow:"hidden"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr style={{background:"#F9FAFB"}}>
+                <thead><tr style={{background:"#F8FAFF"}}>
                   {["Request","Job ref","Site","Trade","Items","Status","Created","Action"].map(h=>(
                     <th key={h} style={{padding:"12px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>{requests.map(r=>{const sc=STATUS[r.status];return(
                   <tr key={r.id} style={{borderTop:"1px solid #F3F4F6"}}>
-                    <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'DM Mono',monospace",color:"#2563EB"}}>{r.id}</td>
+                    <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'JetBrains Mono',monospace",color:"#2563EB"}}>{r.id}</td>
                     <td style={{padding:"13px 16px",fontSize:13}}>{r.jobRef}</td>
                     <td style={{padding:"13px 16px",fontSize:13,color:"#6B7280"}}>{r.site}</td>
                     <td style={{padding:"13px 16px",fontSize:13}}>{r.trade}</td>
@@ -1609,7 +1622,7 @@ export default function App() {
         {view==="settings"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:26,fontWeight:600,letterSpacing:"-0.5px",margin:0}}>Settings</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Settings</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Configure your company and email sending</p>
             </div>
             <Card style={{marginBottom:20}}>
@@ -1618,11 +1631,11 @@ export default function App() {
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
                   <div>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Company name (appears on POs)</label>
-                    <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Initial Mechanical Ltd" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                    <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Initial Mechanical Ltd" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                   <div>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Your name (appears on emails)</label>
-                    <input value={sForm.contactName||""} onChange={e=>setSForm(p=>({...p,contactName:e.target.value}))} placeholder="e.g. Andy Smith" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                    <input value={sForm.contactName||""} onChange={e=>setSForm(p=>({...p,contactName:e.target.value}))} placeholder="e.g. Andy Smith" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                 </div>
               </div>
@@ -1667,14 +1680,14 @@ export default function App() {
                 </div>
                 <div>
                   <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>From email address</label>
-                  <input value={sForm.fromEmail||""} onChange={e=>setSForm(p=>({...p,fromEmail:e.target.value}))} placeholder="onboarding@resend.dev" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                  <input value={sForm.fromEmail||""} onChange={e=>setSForm(p=>({...p,fromEmail:e.target.value}))} placeholder="onboarding@resend.dev" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>Use onboarding@resend.dev for now. Add your own domain in Resend later.</div>
                 </div>
               </div>
             </Card>
 
             <div style={{display:"flex",gap:10}}>
-              <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}}>Save settings</Btn>
+              <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}} color="#6366F1">Save settings</Btn>
               <Btn outline onClick={()=>setSForm({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings})}>Reset</Btn>
             </div>
           </div>
@@ -1684,8 +1697,8 @@ export default function App() {
 
       {/* ══ DELETE CONFIRM MODAL ══ */}
       {deleteConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:"white",borderRadius:16,padding:"28px 32px",maxWidth:420,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"white",borderRadius:24,padding:"32px 36px",maxWidth:420,width:"90%",boxShadow:"0 24px 80px rgba(0,0,0,0.2)",border:"1px solid rgba(226,232,240,0.8)"}}>
             <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>🗑️</div>
             <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center"}}>Delete this request?</div>
             <div style={{fontSize:13,color:"#6B7280",marginBottom:24,textAlign:"center"}}>This cannot be undone. The request and all its activity will be permanently removed.</div>
@@ -1699,17 +1712,17 @@ export default function App() {
 
       {/* ══ EDIT MODAL ══ */}
       {editModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:"white",borderRadius:16,padding:"28px 32px",maxWidth:540,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"white",borderRadius:24,padding:"32px 36px",maxWidth:540,width:"90%",boxShadow:"0 24px 80px rgba(0,0,0,0.2)",border:"1px solid rgba(226,232,240,0.8)"}}>
             <div style={{fontSize:16,fontWeight:600,marginBottom:20}}>Edit request — {editModal.id}</div>
             <div style={{display:"grid",gap:14}}>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Job reference</label>
-                <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
               </div>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Site / location</label>
-                <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
               </div>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Status</label>
@@ -1735,8 +1748,8 @@ export default function App() {
 
       {/* ══ ACTIVITY LOG MODAL ══ */}
       {activityModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:"white",borderRadius:16,padding:"28px 32px",maxWidth:560,width:"90%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"white",borderRadius:24,padding:"32px 36px",maxWidth:560,width:"90%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.2)",border:"1px solid rgba(226,232,240,0.8)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
                 <div style={{fontSize:16,fontWeight:600}}>{activityModal.id} — Activity log</div>
