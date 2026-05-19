@@ -733,74 +733,169 @@ export default function App() {
 
         {/* ══ DASHBOARD ══ */}
         {view==="dashboard"&&(
-          <div>
-            <div style={{marginBottom:28}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A 0%,#6366F1 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Dashboard</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</p>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:24}}>
-              {[
-                {label:"Total requests",value:stats.total,   color:"#6366F1",bg:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",icon:"📋",border:"rgba(99,102,241,0.15)"},
-                {label:"Pending quotes", value:stats.pending, color:"#7C3AED",bg:"linear-gradient(135deg,#F5F3FF,#EDE9FE)",icon:"⏳",border:"rgba(124,58,237,0.15)"},
-                {label:"Quotes received",value:stats.received,color:"#D97706",bg:"linear-gradient(135deg,#FFFBEB,#FEF3C7)",icon:"📬",border:"rgba(217,119,6,0.15)"},
-                {label:"Approved",       value:stats.approved,color:"#059669",bg:"linear-gradient(135deg,#ECFDF5,#D1FAE5)",icon:"✅",border:"rgba(5,150,105,0.15)"},
-              ].map(s=>(
-                <div key={s.label} style={{background:s.bg,border:"1px solid rgba(0,0,0,0.06)",borderRadius:16,padding:"20px 24px",position:"relative",overflow:"hidden"}}>
-                  <div style={{fontSize:11,fontWeight:600,color:s.color,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{s.icon} {s.label}</div>
-                  <div style={{fontSize:36,fontWeight:700,color:s.color,fontFamily:"'JetBrains Mono',monospace",lineHeight:1}}>{s.value}</div>
+          <div style={{animation:"fadeIn 0.25s ease"}}>
+
+            {/* ── Top header bar ── */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>
+                  {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
                 </div>
-              ))}
+                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"#0A0F1E",lineHeight:1}}>
+                  Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"} 👋
+                </h1>
+                <p style={{fontSize:15,color:"#64748B",marginTop:6,fontWeight:400}}>
+                  {requests.length===0?"Ready to create your first procurement request."
+                    :`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} and ${stats.received} ready to analyse.`}
+                </p>
+              </div>
+              <button onClick={()=>setView("new")} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:12,padding:"12px 22px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(34,197,94,0.35)",letterSpacing:"-0.2px",whiteSpace:"nowrap"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New request
+              </button>
             </div>
+
+            {/* ── Setup warnings ── */}
             {!settings.openRouterKey&&(
-              <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{fontSize:13,color:"#991B1B"}}>⚠ <strong>AI needs a free key to work</strong> — sign up free at openrouter.ai (no card), paste your key in Settings. 2 minutes.</div>
-                <button onClick={()=>setView("settings")} style={{background:"#DC2626",color:"white",border:"none",borderRadius:7,padding:"7px 16px",fontSize:12,fontWeight:500,cursor:"pointer",marginLeft:16,whiteSpace:"nowrap"}}>Add key →</button>
+              <div style={{background:"#FFF1F2",border:"1px solid #FDA4AF",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:32,height:32,background:"#FEE2E2",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>⚠️</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:"#9F1239"}}>AI key required</div>
+                    <div style={{fontSize:12,color:"#BE123C",marginTop:1}}>Add your free OpenRouter key in Settings to enable AI features</div>
+                  </div>
+                </div>
+                <button onClick={()=>setView("settings")} style={{background:"#9F1239",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure →</button>
               </div>
             )}
             {settings.openRouterKey&&!settings.resendKey&&(
-              <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{fontSize:13,color:"#92400E"}}>⚠ Email sending not configured — add your Resend API key in <strong>Settings</strong> to send RFQs to suppliers.</div>
-                <button onClick={()=>setView("settings")} style={{background:"#F59E0B",color:"white",border:"none",borderRadius:7,padding:"7px 16px",fontSize:12,fontWeight:500,cursor:"pointer",marginLeft:16,whiteSpace:"nowrap"}}>Open Settings →</button>
+              <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:32,height:32,background:"#FEF3C7",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>📧</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:"#92400E"}}>Email not configured</div>
+                    <div style={{fontSize:12,color:"#A16207",marginTop:1}}>Add your Resend API key to send RFQs directly to suppliers</div>
+                  </div>
+                </div>
+                <button onClick={()=>setView("settings")} style={{background:"#D97706",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure →</button>
               </div>
             )}
-            <Card style={{padding:0,overflow:"hidden"}}>
-              <div style={{padding:"18px 28px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontWeight:500,fontSize:15}}>Recent requests</span>
-                <Btn onClick={()=>setView("new")}>+ New request</Btn>
+
+            {/* ── Stat cards ── */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:28}}>
+              {[
+                {label:"Total requests",  value:stats.total,    color:"#6366F1", dark:"#4338CA", light:"#EEF2FF", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>},
+                {label:"Awaiting quotes",  value:stats.pending,  color:"#F59E0B", dark:"#D97706", light:"#FFFBEB", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>},
+                {label:"Quotes received", value:stats.received,  color:"#8B5CF6", dark:"#7C3AED", light:"#F5F3FF", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth="1.8" strokeLinecap="round"><path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0l-8 5-8-5"/></svg>},
+                {label:"Approved POs",    value:stats.approved,  color:"#22C55E", dark:"#16A34A", light:"#F0FDF4", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="1.8" strokeLinecap="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>},
+              ].map((s,i)=>(
+                <div key={s.label} style={{background:"white",borderRadius:20,padding:"22px 24px",border:"1px solid #F1F5F9",position:"relative",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)",cursor:"default"}}>
+                  {/* Top row */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+                    <div style={{width:40,height:40,background:s.light,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>{s.icon}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:s.value>0?s.color:"#CBD5E1",background:s.value>0?s.light:"#F8FAFC",padding:"3px 10px",borderRadius:20}}>{s.value>0?"Active":"—"}</div>
+                  </div>
+                  {/* Number */}
+                  <div style={{fontSize:44,fontWeight:800,color:s.value>0?s.dark:"#CBD5E1",fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",marginBottom:6}}>{s.value}</div>
+                  <div style={{fontSize:13,color:"#94A3B8",fontWeight:500}}>{s.label}</div>
+                  {/* Bottom accent bar */}
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:s.value>0?`linear-gradient(90deg,${s.color},${s.dark})`:"#F1F5F9",opacity:s.value>0?1:0.5}}/>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Quick actions ── */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:28}}>
+              {[
+                {label:"New material request",  sub:"Voice or type your list",        icon:"🎤", action:()=>setView("new"),      color:"#6366F1", light:"#EEF2FF"},
+                {label:"Analyse quotes",         sub:"Compare supplier responses",     icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, color:"#22C55E", light:"#F0FDF4"},
+                {label:"Manage suppliers",       sub:"Add or update supplier accounts",icon:"🏢", action:()=>setView("suppliers"), color:"#F59E0B", light:"#FFFBEB"},
+              ].map(q=>(
+                <button key={q.label} onClick={q.action} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 20px",background:"white",border:"1px solid #F1F5F9",borderRadius:16,cursor:"pointer",textAlign:"left",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.15s"}}>
+                  <div style={{width:44,height:44,background:q.light,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{q.icon}</div>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E",marginBottom:2}}>{q.label}</div>
+                    <div style={{fontSize:12,color:"#94A3B8"}}>{q.sub}</div>
+                  </div>
+                  <svg style={{marginLeft:"auto",flexShrink:0}} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              ))}
+            </div>
+
+            {/* ── Requests table ── */}
+            <div style={{background:"white",borderRadius:20,border:"1px solid #F1F5F9",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
+              <div style={{padding:"20px 28px",borderBottom:"1px solid #F8FAFC",display:"flex",justifyContent:"space-between",alignItems:"center",background:"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
+                <div>
+                  <div style={{fontSize:16,fontWeight:700,color:"#0A0F1E",letterSpacing:"-0.3px"}}>Recent requests</div>
+                  <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>{requests.length} total · sorted by most recent</div>
+                </div>
+                <button onClick={()=>setView("requests")} style={{fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>View all →</button>
               </div>
+
               {requests.length===0?(
                 <div style={{padding:"80px 24px",textAlign:"center"}}>
-                  <div style={{fontSize:56,marginBottom:16}}>📋</div>
-                  <div style={{fontSize:18,fontWeight:700,color:"#1E293B",marginBottom:8,letterSpacing:"-0.3px"}}>No requests yet</div>
-                  <div style={{fontSize:14,color:"#94A3B8",marginBottom:24,maxWidth:320,margin:"0 auto 24px"}}>Create your first material request to start getting quotes from suppliers</div>
-                  <Btn onClick={()=>setView("new")}>+ Create first request</Btn>
+                  <div style={{width:80,height:80,background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📋</div>
+                  <div style={{fontSize:20,fontWeight:700,color:"#0A0F1E",marginBottom:8,letterSpacing:"-0.5px"}}>No requests yet</div>
+                  <div style={{fontSize:14,color:"#94A3B8",marginBottom:28,maxWidth:340,margin:"0 auto 28px",lineHeight:1.6}}>Create your first material request — speak or type what you need, and we'll send RFQs to your suppliers automatically</div>
+                  <button onClick={()=>setView("new")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(34,197,94,0.35)"}}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Create first request
+                  </button>
                 </div>
               ):(
-                <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead><tr style={{background:"#F8FAFF"}}>
-                    {["Request","Job ref","Site","Trade","Items","Status","Created",""].map(h=>(
-                      <th key={h} style={{padding:"10px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>{requests.map(r=>{const sc=STATUS[r.status];return(
-                    <tr key={r.id} style={{borderTop:"1px solid #F3F4F6"}}>
-                      <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'JetBrains Mono',monospace",color:"#2563EB"}}>{r.id}</td>
-                      <td style={{padding:"13px 16px",fontSize:13}}>{r.jobRef}</td>
-                      <td style={{padding:"13px 16px",fontSize:13,color:"#6B7280"}}>{r.site}</td>
-                      <td style={{padding:"13px 16px",fontSize:13}}>{r.trade}</td>
-                      <td style={{padding:"13px 16px",fontSize:13}}>{r.items.length}</td>
-                      <td style={{padding:"13px 16px"}}><Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge></td>
-                      <td style={{padding:"13px 16px",fontSize:12,color:"#9CA3AF"}}>{r.created}</td>
-                      <td style={{padding:"13px 16px"}}>
-                        <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>
-                          {r.status==="received"?"Analyse →":"View →"}
-                        </button>
-                      </td>
-                    </tr>
-                  )})}</tbody>
-                </table>
+                <div>
+                  {requests.slice(0,8).map((r,idx)=>{
+                    const sc=STATUS[r.status];
+                    const savedCount=(r.sentTo||[]).filter(s=>s.saved).length;
+                    const totalCount=(r.sentTo||[]).length;
+                    return(
+                    <div key={r.id} onClick={()=>{setActiveReq(r);setView("quotes");}} style={{display:"flex",alignItems:"center",gap:0,padding:"0 28px",borderTop:idx===0?"none":"1px solid #F8FAFC",cursor:"pointer",transition:"background 0.1s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background="#FAFFFE"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      {/* Status bar */}
+                      <div style={{width:3,height:40,background:sc.text,borderRadius:99,marginRight:20,flexShrink:0,opacity:0.6}}/>
+                      {/* ID */}
+                      <div style={{width:100,flexShrink:0,padding:"16px 0"}}>
+                        <div style={{fontSize:12,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"#6366F1"}}>{r.id}</div>
+                        <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>{r.created}</div>
+                      </div>
+                      {/* Job & site */}
+                      <div style={{flex:1,padding:"16px 20px 16px 0"}}>
+                        <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E"}}>{r.jobRef}</div>
+                        <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{r.site}</div>
+                      </div>
+                      {/* Trade badge */}
+                      <div style={{width:110,padding:"16px 0",flexShrink:0}}>
+                        <span style={{background:"#F1F5F9",color:"#475569",fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:20}}>{r.trade}</span>
+                      </div>
+                      {/* Items count */}
+                      <div style={{width:80,padding:"16px 0",flexShrink:0,textAlign:"center"}}>
+                        <div style={{fontSize:15,fontWeight:700,color:"#0A0F1E"}}>{r.items.length}</div>
+                        <div style={{fontSize:11,color:"#94A3B8"}}>items</div>
+                      </div>
+                      {/* Quote progress */}
+                      {totalCount>0&&(
+                        <div style={{width:100,padding:"16px 0",flexShrink:0,textAlign:"center"}}>
+                          <div style={{fontSize:12,fontWeight:600,color:savedCount===totalCount?"#22C55E":"#F59E0B"}}>{savedCount}/{totalCount}</div>
+                          <div style={{fontSize:11,color:"#94A3B8"}}>quotes in</div>
+                        </div>
+                      )}
+                      {/* Status */}
+                      <div style={{width:130,padding:"16px 0",flexShrink:0}}>
+                        <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
+                      </div>
+                      {/* Arrow */}
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </div>
+                  )})}
+                  {requests.length>8&&(
+                    <div style={{padding:"14px 28px",borderTop:"1px solid #F8FAFC",textAlign:"center"}}>
+                      <button onClick={()=>setView("requests")} style={{fontSize:13,color:"#6366F1",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all {requests.length} requests →</button>
+                    </div>
+                  )}
+                </div>
               )}
-            </Card>
+            </div>
           </div>
         )}
 
