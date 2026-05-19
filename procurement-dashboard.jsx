@@ -2173,6 +2173,7 @@ ${settings.company||""}`;
                   </tr>
                 )})}</tbody>
               </table>
+            </div>
             </Card>
           </div>
         )}
@@ -2368,6 +2369,9 @@ ${settings.company||""}`;
         )}
 
       </div>
+
+      </>);
+      })()}
 
       {/* ══ DELETE CONFIRM MODAL ══ */}
       {deleteConfirm&&(
