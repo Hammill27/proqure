@@ -1,4 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(typeof window!=="undefined"?window.innerWidth<768:false);
+  useEffect(()=>{
+    const fn = ()=>setIsMobile(window.innerWidth<768);
+    window.addEventListener("resize",fn);
+    return ()=>window.removeEventListener("resize",fn);
+  },[]);
+  return isMobile;
+}
 
 // ─── Speech recognition hook ─────────────────────────────────────────────────
 function useSpeechRecognition({ onTranscript, onFinal }) {
@@ -810,6 +820,8 @@ ${settings.company||""}`;
     setSendingOrder(null);
   }
 
+  const isMobile = useIsMobile();
+
   // ── Render ──
   return (
     <div style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"linear-gradient(160deg,#F8FAFC 0%,#EFF6FF 50%,#F5F3FF 100%)",minHeight:"100vh",color:"#0F172A",backgroundAttachment:"fixed"}}>
@@ -824,17 +836,42 @@ ${settings.company||""}`;
       ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:99px}
       ::selection{background:#DBEAFE;color:#1E40AF}
       input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important}
-      button{transition:all 0.15s ease!important}`}</style>
+      button{transition:all 0.15s ease!important}
+      @media(max-width:768px){
+        .desktop-only{display:none!important}
+        .mobile-only{display:flex!important}
+      }
+      @media(min-width:769px){
+        .mobile-only{display:none!important}
+        .desktop-only{display:flex!important}
+      }`}</style>
 
       {/* Toast notification */}
       {toast && (
-        <div style={{position:"fixed",top:24,right:24,zIndex:9999,background:toast.type==="warn"?"rgba(255,251,235,0.95)":"rgba(240,253,244,0.95)",backdropFilter:"blur(12px)",border:`1px solid ${toast.type==="warn"?"#FDE68A":"#A7F3D0"}`,color:toast.type==="warn"?"#92400E":"#065F46",borderRadius:14,padding:"14px 20px",fontSize:13,fontWeight:500,boxShadow:"0 8px 32px rgba(0,0,0,0.12),0 2px 8px rgba(0,0,0,0.08)",display:"flex",alignItems:"center",gap:10,animation:"fadeIn 0.2s ease",maxWidth:360}}>
+        <div style={{position:"fixed",top:isMobile?16:24,right:isMobile?16:24,left:isMobile?16:"auto",zIndex:9999,background:toast.type==="warn"?"rgba(255,251,235,0.95)":"rgba(240,253,244,0.95)",backdropFilter:"blur(12px)",border:`1px solid ${toast.type==="warn"?"#FDE68A":"#A7F3D0"}`,color:toast.type==="warn"?"#92400E":"#065F46",borderRadius:14,padding:"14px 20px",fontSize:13,fontWeight:500,boxShadow:"0 8px 32px rgba(0,0,0,0.12),0 2px 8px rgba(0,0,0,0.08)",display:"flex",alignItems:"center",gap:10,animation:"fadeIn 0.2s ease",maxWidth:360}}>
           <span style={{fontSize:16}}>{toast.type==="warn"?"⚠️":"✅"}</span>
           <span>{toast.msg}</span>
         </div>
       )}
 
-      {/* Sidebar */}
+      {/* ── NAV ITEMS DATA ── */}
+      {(()=>{
+        const navItems = [
+          {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
+          {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
+          {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
+          {id:"quotes",   label:"Quotes",         d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
+          {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
+          {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
+          {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
+          {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
+        ];
+        const handleNav = (id) => { setView(id); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); };
+        const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
+        return (<>
+
+      {/* ── DESKTOP SIDEBAR ── */}
+      {!isMobile&&(
       <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0A0F1E 0%,#111827 60%,#0F172A 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 40px rgba(0,0,0,0.25)"}}>
         <div style={{padding:"28px 24px 24px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -847,23 +884,15 @@ ${settings.company||""}`;
             </div>
           </div>
         </div>
-        <nav style={{padding:"20px 16px",flex:1}}><div style={{fontSize:10,color:"#334155",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4}}>Navigation</div>
-          {[
-            {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
-            {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
-            {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
-            {id:"quotes",   label:"Quote analysis", d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
-            {id:"orders",   label:"Orders", d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
-            {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
-            {id:"library",  label:"Quote library",  d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
-            {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
-          ].map(item=>(
-            <button key={item.id} onClick={()=>{setView(item.id);if(item.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);}}
+        <nav style={{padding:"20px 16px",flex:1,overflowY:"auto"}}>
+          <div style={{fontSize:10,color:"#334155",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4}}>Navigation</div>
+          {navItems.map(item=>(
+            <button key={item.id} onClick={()=>handleNav(item.id)}
               style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"rgba(99,102,241,0.18)":"transparent",color:view===item.id?"#A5B4FC":"#64748B",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:2,textAlign:"left",borderLeft:view===item.id?"3px solid #818CF8":"3px solid transparent",transition:"all 0.15s"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
               <span style={{flex:1}}>{item.label}</span>
-              {item.id==="orders"&&orders.filter(o=>o.status==="pending-send").length>0&&(
-                <span style={{background:"#22C55E",color:"white",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:20,minWidth:20,textAlign:"center"}}>{orders.filter(o=>o.status==="pending-send").length}</span>
+              {item.id==="orders"&&pendingOrders>0&&(
+                <span style={{background:"#22C55E",color:"white",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:20}}>{pendingOrders}</span>
               )}
             </button>
           ))}
@@ -875,9 +904,57 @@ ${settings.company||""}`;
           </div>
         </div>
       </div>
+      )}
+
+      {/* ── MOBILE TOP HEADER ── */}
+      {isMobile&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"linear-gradient(135deg,#0A0F1E,#111827)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,boxShadow:"0 2px 20px rgba(0,0,0,0.3)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:32,height:32,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(34,197,94,0.4)"}}>
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
+            </div>
+            <span style={{fontSize:18,fontWeight:800,color:"white",letterSpacing:"-0.5px"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {orders.filter(o=>o.status==="pending-send").length>0&&(
+              <button onClick={()=>setView("orders")} style={{background:"#22C55E",color:"white",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                📦 {orders.filter(o=>o.status==="pending-send").length}
+              </button>
+            )}
+            <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"#22C55E":"#F59E0B"}}/>
+          </div>
+        </div>
+      )}
+
+      {/* ── MOBILE BOTTOM TAB BAR ── */}
+      {isMobile&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,height:68,background:"rgba(10,15,30,0.97)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(255,255,255,0.08)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
+          {[
+            {id:"dashboard",label:"Home",    d:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"},
+            {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
+            {id:"quotes",   label:"Quotes",  d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
+            {id:"orders",   label:"Orders",  d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
+            {id:"settings", label:"More",    d:"M4 6h16M4 12h16M4 18h16"},
+          ].map(tab=>(
+            <button key={tab.id} onClick={()=>{setView(tab.id);if(tab.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"8px 14px",borderRadius:10,minWidth:56,position:"relative",flex:1}}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={view===tab.id?"#22C55E":"#64748B"} strokeWidth={view===tab.id?2.2:1.8} strokeLinecap="round" strokeLinejoin="round"><path d={tab.d}/></svg>
+              <span style={{fontSize:10,fontWeight:view===tab.id?700:400,color:view===tab.id?"#22C55E":"#64748B"}}>{tab.label}</span>
+              {tab.id==="orders"&&orders.filter(o=>o.status==="pending-send").length>0&&(
+                <span style={{position:"absolute",top:4,right:"20%",background:"#22C55E",color:"white",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:99}}>{orders.filter(o=>o.status==="pending-send").length}</span>
+              )}
+              {view===tab.id&&<div style={{position:"absolute",bottom:-1,width:24,height:3,background:"#22C55E",borderRadius:"3px 3px 0 0"}}/>}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Main content */}
-      <div style={{marginLeft:240,padding:"40px 48px",maxWidth:1160,animation:"fadeIn 0.2s ease"}}>
+      <div style={{
+        marginLeft:isMobile?0:240,
+        padding:isMobile?"76px 16px 88px":"40px 48px",
+        maxWidth:isMobile?"100%":1160,
+        animation:"fadeIn 0.2s ease"
+      }}>
 
         {/* ══ DASHBOARD ══ */}
         {view==="dashboard"&&(
@@ -889,7 +966,7 @@ ${settings.company||""}`;
                 <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>
                   {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
                 </div>
-                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"#0A0F1E",lineHeight:1}}>
+                <h1 style={{fontSize:isMobile?24:32,fontWeight:800,letterSpacing:isMobile?"-0.5px":"-1.2px",margin:0,color:"#0A0F1E",lineHeight:1}}>
                   Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"} 👋
                 </h1>
                 <p style={{fontSize:15,color:"#64748B",marginTop:6,fontWeight:400}}>
@@ -930,21 +1007,21 @@ ${settings.company||""}`;
             )}
 
             {/* ── Stat cards ── */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:28}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?12:16,marginBottom:isMobile?20:28}}>
               {[
                 {label:"Total requests",  value:stats.total,    color:"#6366F1", dark:"#4338CA", light:"#EEF2FF", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>},
                 {label:"Awaiting quotes",  value:stats.pending,  color:"#F59E0B", dark:"#D97706", light:"#FFFBEB", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>},
                 {label:"Quotes received", value:stats.received,  color:"#8B5CF6", dark:"#7C3AED", light:"#F5F3FF", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth="1.8" strokeLinecap="round"><path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0l-8 5-8-5"/></svg>},
                 {label:"Approved POs",    value:stats.approved,  color:"#22C55E", dark:"#16A34A", light:"#F0FDF4", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="1.8" strokeLinecap="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>},
               ].map((s,i)=>(
-                <div key={s.label} style={{background:"white",borderRadius:20,padding:"22px 24px",border:"1px solid #F1F5F9",position:"relative",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)",cursor:"default"}}>
+                <div key={s.label} style={{background:"white",borderRadius:isMobile?16:20,padding:isMobile?"16px":"22px 24px",border:"1px solid #F1F5F9",position:"relative",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)",cursor:"default"}}>
                   {/* Top row */}
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
                     <div style={{width:40,height:40,background:s.light,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>{s.icon}</div>
                     <div style={{fontSize:11,fontWeight:600,color:s.value>0?s.color:"#CBD5E1",background:s.value>0?s.light:"#F8FAFC",padding:"3px 10px",borderRadius:20}}>{s.value>0?"Active":"—"}</div>
                   </div>
                   {/* Number */}
-                  <div style={{fontSize:44,fontWeight:800,color:s.value>0?s.dark:"#CBD5E1",fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",marginBottom:6}}>{s.value}</div>
+                  <div style={{fontSize:isMobile?34:44,fontWeight:800,color:s.value>0?s.dark:"#CBD5E1",fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:isMobile?"-1px":"-2px",marginBottom:6}}>{s.value}</div>
                   <div style={{fontSize:13,color:"#94A3B8",fontWeight:500}}>{s.label}</div>
                   {/* Bottom accent bar */}
                   <div style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:s.value>0?`linear-gradient(90deg,${s.color},${s.dark})`:"#F1F5F9",opacity:s.value>0?1:0.5}}/>
@@ -953,7 +1030,7 @@ ${settings.company||""}`;
             </div>
 
             {/* ── Quick actions ── */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:28}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fit,minmax(200px,1fr))",gap:isMobile?8:12,marginBottom:isMobile?20:28}}>
               {[
                 {label:"New material request",  sub:"Voice or type your list",        icon:"🎤", action:()=>setView("new"),      color:"#6366F1", light:"#EEF2FF"},
                 {label:"Analyse quotes",         sub:"Compare supplier responses",     icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, color:"#22C55E", light:"#F0FDF4"},
@@ -1059,7 +1136,7 @@ ${settings.company||""}`;
               {["Describe materials","Review & configure","Send RFQs"].map((s,i)=>(
                 <div key={s} style={{display:"flex",alignItems:"center",gap:8}}>
                   <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,background:step>i+1?"#6366F1":step===i+1?"#6366F1":"#E5E7EB",color:step>=i+1?"white":"#9CA3AF",boxShadow:step===i+1?"0 4px 12px rgba(99,102,241,0.35)":"none"}}>{step>i+1?"✓":i+1}</div>
-                  <span style={{fontSize:13,color:step===i+1?"#111827":"#9CA3AF",fontWeight:step===i+1?500:400}}>{s}</span>
+                  <span style={{fontSize:13,color:step===i+1?"#111827":"#9CA3AF",fontWeight:step===i+1?500:400,display:isMobile?"none":"block"}}>{s}</span>
                   {i<2&&<div style={{width:36,height:1,background:"#E5E7EB"}}/>}
                 </div>
               ))}
@@ -1068,7 +1145,7 @@ ${settings.company||""}`;
             {/* Step 1 */}
             {step===1&&(
               <Card>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16,marginBottom:20}}>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:isMobile?12:16,marginBottom:20}}>
                   {[{label:"Job reference",val:jobRef,set:setJobRef,ph:"e.g. JOB-2024-056"},{label:"Site / location",val:site,set:setSite,ph:"e.g. Unit 7, High Street"}].map(f=>(
                     <div key={f.label}>
                       <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
@@ -1155,7 +1232,7 @@ ${settings.company||""}`;
                 {/* ── Delivery method ── */}
                 <div style={{marginTop:16,padding:18,background:"linear-gradient(135deg,#F0F9FF,#E0F2FE)",borderRadius:12,border:"1px solid #BAE6FD"}}>
                   <div style={{fontSize:13,fontWeight:600,color:"#0369A1",marginBottom:14}}>🚚 Delivery requirements</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:14}}>
+                  <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:14}}>
                     <div>
                       <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Delivery method</div>
                       <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -1288,7 +1365,7 @@ ${settings.company||""}`;
               <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Quote analysis</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Select a request, enter each supplier quote, then run AI analysis</p>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:20}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"240px 1fr",gap:isMobile?12:20}}>
               <div>
                 <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Requests</div>
                 {requests.length===0&&<div style={{fontSize:13,color:"#9CA3AF",padding:"20px 0"}}>No requests yet — create one first</div>}
@@ -1873,7 +1950,7 @@ ${settings.company||""}`;
 
                     {/* Order body */}
                     <div style={{padding:"20px 28px"}}>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+                      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:isMobile?14:20}}>
 
                         {/* Left — order details */}
                         <div>
@@ -2024,7 +2101,7 @@ ${settings.company||""}`;
               <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Suppliers</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Your supplier accounts — add your real ones here</p>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:24}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:isMobile?10:16,marginBottom:isMobile?16:24}}>
               {suppliers.map(s=>(
                 <Card key={s.id}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
@@ -2044,7 +2121,7 @@ ${settings.company||""}`;
             </div>
             <Card>
               <div style={{fontSize:14,fontWeight:500,marginBottom:16}}>Add a supplier</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:12,alignItems:"end"}}>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr auto",gap:12,alignItems:"end"}}>
                 {[{label:"Company name",val:"name",ph:"e.g. BSS Industrial"},{label:"Quote email",val:"email",ph:"quotes@supplier.co.uk"},{label:"Categories",val:"categories",ph:"Plumbing, HVAC"}].map(f=>(
                   <div key={f.val}>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
@@ -2070,7 +2147,7 @@ ${settings.company||""}`;
               <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>All requests</h1>
             </div>
             <Card style={{padding:0,overflow:"hidden"}}>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:isMobile?600:"auto"}}>
                 <thead><tr style={{background:"#F8FAFF"}}>
                   {["Request","Job ref","Site","Trade","Items","Status","Created","Action"].map(h=>(
                     <th key={h} style={{padding:"12px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
