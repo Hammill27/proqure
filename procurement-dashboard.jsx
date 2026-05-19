@@ -89,7 +89,7 @@ Format: {"items":[{"id":1,"description":"...","quantity":N,"unit":"...","categor
   const txt = await callAI(sys, `Parse this material request: ${raw}`);
   try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
 }
-async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress) {
+async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline) {
   const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown. Sign off with the real contact name and company provided, no placeholder brackets.`;
   const list = items.map(i=>`- ${i.quantity} ${i.unit} ${i.description}`).join("\n");
   const deliveryLabels = {
@@ -100,8 +100,9 @@ async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliv
   };
   const deliveryStr = deliveryLabels[deliveryMethod]||deliveryMethod;
   const dateStr = deliveryDate ? `Required by: ${deliveryDate}` : "Required date: To be confirmed";
+  const deadlineStr = rfqDeadline ? `Please respond by: ${new Date(rfqDeadline).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}` : "";
   return callAI(sys,
-    `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}.\n\nItems required:\n${list}\n\nDelivery requirements:\n- Method: ${deliveryStr}\n- ${dateStr}\n\nAsk for unit prices, availability, lead time, and please ask them to include carriage/delivery charges in their quotation. Keep it concise and professional. Clearly mention the delivery method and required date in the email.`
+    `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}.\n\nItems required:\n${list}\n\nDelivery requirements:\n- Method: ${deliveryStr}\n- ${dateStr}\n${deadlineStr?"- "+deadlineStr:""}\n\nAsk for unit prices, availability, lead time, and please ask them to include carriage/delivery charges in their quotation. Keep it concise and professional. Clearly mention the delivery method and required date in the email.${deadlineStr?" Prominently include the response deadline.":""}`
   );
 }
 async function analyseQuote(items, quoteText, supplierName) {
@@ -445,6 +446,15 @@ export default function App() {
   const [deliveryDate,   setDeliveryDate]   = useState("");
   const [altAddress,     setAltAddress]     = useState("");
 
+  // Templates
+  const [templates, setTemplates] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_templates")||"[]")}catch{return []} });
+  const saveTemplates = (t) => { setTemplates(t); localStorage.setItem("piq_templates",JSON.stringify(t)); };
+  const [templateModal, setTemplateModal] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+
+  // RFQ deadline
+  const [rfqDeadline, setRfqDeadline] = useState("");
+
   // Edit modal state
   const [editModal,  setEditModal]  = useState(null); // request being edited
   const [editForm,   setEditForm]   = useState({});
@@ -570,7 +580,7 @@ export default function App() {
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Generating RFQ email…");
     try {
-      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress);
+      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline);
       setRfqEmail(email);
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
@@ -596,13 +606,47 @@ export default function App() {
         status:"pending",
         created: new Date().toISOString().split("T")[0],
         items: parsed.items,
-        deliveryMethod, deliveryDate, altAddress,
+        deliveryMethod, deliveryDate, altAddress, rfqDeadline,
         sentTo: sentSuppliers,
         activity:[{ ts:new Date().toISOString(), action:"Created", detail:`RFQ sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}`, user:settings.contactName||"You" }]
       };
       setRequests(p=>[r,...p]);
       showToast(`Emails sent & request saved as ${r.id}`);
     }
+  }
+
+  function handleDuplicate(r) {
+    setJobRef(r.jobRef+" (copy)");
+    setSite(r.site||"");
+    setTrade(r.trade||"Plumbing");
+    setDeliveryMethod(r.deliveryMethod||"direct");
+    setDeliveryDate(r.deliveryDate||"");
+    setAltAddress(r.altAddress||"");
+    // Rebuild raw input from items
+    const raw = r.items.map(i=>`${i.quantity} ${i.unit} of ${i.description}${i.notes?` (${i.notes})`:""}`).join(", ");
+    setRawInput(raw);
+    setParsed({ items: r.items.map(i=>({...i})), jobRef:r.jobRef+" (copy)", urgency:"standard" });
+    setStep(2);
+    setView("new");
+    showToast("Request duplicated — review and send");
+  }
+
+  function handleSaveTemplate() {
+    if (!parsed||!newTemplateName.trim()) return;
+    const t = { id:`TPL-${Date.now()}`, name:newTemplateName.trim(), trade, items:parsed.items, created:new Date().toISOString().split("T")[0] };
+    saveTemplates([t,...templates]);
+    setTemplateModal(false);
+    setNewTemplateName("");
+    showToast(`Template "${t.name}" saved`);
+  }
+
+  function handleLoadTemplate(t) {
+    setTrade(t.trade||"Plumbing");
+    setParsed({ items:t.items.map(i=>({...i})), jobRef:"", urgency:"standard" });
+    setRawInput(t.items.map(i=>`${i.quantity} ${i.unit} of ${i.description}`).join(", "));
+    setStep(2);
+    setTemplateModal(false);
+    showToast(`Template "${t.name}" loaded`);
   }
 
   function handleFinalise() {
@@ -615,7 +659,7 @@ export default function App() {
     };
     setRequests(p=>[r,...p]);
     setView("dashboard");
-    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setRfqEmail(""); setEmailRes(null); setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress("");
+    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setRfqEmail(""); setEmailRes(null); setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
     showToast("Request saved");
   }
 
@@ -1028,6 +1072,58 @@ ${settings.company||""}`;
               </button>
             </div>
 
+            {/* ── Overdue quote reminders ── */}
+            {(()=>{
+              const now = Date.now();
+              const overdue = requests.filter(r=>{
+                if (r.status!=="pending") return false;
+                const sent = r.activity?.find(a=>a.action==="Created")?.ts;
+                if (!sent) return false;
+                const hoursAgo = (now - new Date(sent).getTime()) / 3600000;
+                return hoursAgo >= 24;
+              });
+              if (!overdue.length) return null;
+              return(
+                <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:14,padding:"14px 20px",marginBottom:20}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#9A3412",marginBottom:10}}>⏰ Suppliers haven't responded yet</div>
+                  {overdue.map(r=>{
+                    const sent = r.activity?.find(a=>a.action==="Created")?.ts;
+                    const hoursAgo = Math.floor((now - new Date(sent).getTime()) / 3600000);
+                    const daysAgo = Math.floor(hoursAgo/24);
+                    const pendingSups = (r.sentTo||[]).filter(s=>!s.saved).map(s=>s.name);
+                    return(
+                      <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #FED7AA"}}>
+                        <div>
+                          <span style={{fontSize:13,fontWeight:600,color:"#7C2D12"}}>{r.jobRef}</span>
+                          <span style={{fontSize:12,color:"#C2410C",marginLeft:8}}>
+                            {pendingSups.length>0?`${pendingSups.join(", ")} hasn't responded`:"No quotes received"}
+                          </span>
+                          <span style={{fontSize:11,color:"#EA580C",marginLeft:8}}>· {daysAgo>0?`${daysAgo} day${daysAgo!==1?"s":""}`:`${hoursAgo}h`} ago</span>
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:11,color:"#EA580C",background:"#FEF3C7",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>View →</button>
+                          {r.rfqEmail&&<button onClick={async()=>{
+                            const unsent = (r.sentTo||[]).filter(s=>!s.saved);
+                            if(!unsent.length||!settings.resendKey) return;
+                            const subject = `REMINDER: Request for Quotation — ${r.jobRef}`;
+                            await sendRFQEmails(unsent, subject, `Hi,
+
+This is a friendly reminder regarding our request for quotation sent ${daysAgo>0?`${daysAgo} days ago`:`${hoursAgo} hours ago`} for job ${r.jobRef}.
+
+Could you please send us your quotation at your earliest convenience?
+
+Kind regards
+${settings.contactName||settings.company||"The Procurement Team"}`, settings.resendKey, settings.fromEmail||"onboarding@resend.dev");
+                            showToast(`Reminder sent to ${unsent.map(s=>s.name).join(", ")}`);
+                          }} style={{fontSize:11,color:"white",background:"#EA580C",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>Send reminder</button>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
             {/* ── Setup warnings ── */}
             {!settings.openRouterKey&&(
               <div style={{background:"#FFF1F2",border:"1px solid #FDA4AF",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1154,9 +1250,13 @@ ${settings.company||""}`;
                           <div style={{fontSize:11,color:"#94A3B8"}}>quotes in</div>
                         </div>
                       )}
-                      {/* Status */}
-                      <div style={{width:130,padding:"16px 0",flexShrink:0}}>
+                      {/* Status + deadline */}
+                      <div style={{width:150,padding:"16px 0",flexShrink:0}}>
                         <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
+                        {r.rfqDeadline&&r.status==="pending"&&(()=>{
+                          const daysLeft = Math.ceil((new Date(r.rfqDeadline).getTime()-Date.now())/86400000);
+                          return <div style={{fontSize:10,marginTop:4,color:daysLeft<=0?"#DC2626":daysLeft<=1?"#D97706":"#16A34A",fontWeight:600}}>{daysLeft<=0?"Deadline passed":`⏰ ${daysLeft}d left`}</div>;
+                        })()}
                       </div>
                       {/* Arrow */}
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
@@ -1231,7 +1331,8 @@ ${settings.company||""}`;
                 <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)}
                   placeholder={"Plumbing: \"I need 20 metres of 22mm copper pipe, 12 compression elbows, 6 isolation valves for the plant room.\"\n\nElectrical: \"100m of 2.5mm twin and earth, 20 double sockets, a 10-way consumer unit and 20mm conduit.\""}
                   style={{width:"100%",height:150,padding:"12px 14px",border:`1.5px solid ${listening?"#FECACA":"#E2E8F0"}`,borderRadius:12,fontSize:13,lineHeight:1.7,resize:"vertical",outline:"none",fontFamily:"inherit",background:listening?"#FFFBFB":"white",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}/>
-                <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+                <div style={{marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"#16A34A",background:"#F0FDF4",border:"1px solid #A7F3D0",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>📋 Load template</button>
                   <Btn onClick={handleParse} disabled={!rawInput.trim()||loading}>
                     {loading?<><Spinner/>{loadMsg}</>:"✦ Parse with AI"}
                   </Btn>
@@ -1251,7 +1352,7 @@ ${settings.company||""}`;
                 </div>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr style={{background:"#F8FAFF"}}>
-                    {["#","Description","Qty","Unit","Category","Notes"].map(h=><th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>)}
+                    {["#","Description","Qty","Unit","Category","Notes (editable)"].map(h=><th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>)}
                   </tr></thead>
                   <tbody>{parsed.items?.map((item,i)=>(
                     <tr key={item.id} style={{borderTop:"1px solid #F3F4F6"}}>
@@ -1260,7 +1361,17 @@ ${settings.company||""}`;
                       <td style={{padding:"11px 14px",fontSize:13,fontFamily:"'JetBrains Mono',monospace"}}>{item.quantity}</td>
                       <td style={{padding:"11px 14px",fontSize:13,color:"#6B7280"}}>{item.unit}</td>
                       <td style={{padding:"11px 14px"}}><Badge bg="#EFF6FF" text="#1D4ED8">{item.category}</Badge></td>
-                      <td style={{padding:"11px 14px",fontSize:12,color:"#9CA3AF"}}>{item.notes||"—"}</td>
+                      <td style={{padding:"6px 8px"}}>
+                        <input
+                          value={item.notes||""}
+                          onChange={e=>{
+                            const updated = parsed.items.map((it,ii)=>ii===i?{...it,notes:e.target.value}:it);
+                            setParsed(p=>({...p,items:updated}));
+                          }}
+                          placeholder="Add note…"
+                          style={{width:"100%",padding:"5px 8px",border:"1px solid #E2E8F0",borderRadius:6,fontSize:11,outline:"none",color:"#374151",fontFamily:"inherit"}}
+                        />
+                      </td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -1330,9 +1441,12 @@ ${settings.company||""}`;
                   </div>
                 </div>
 
-                <div style={{marginTop:20,display:"flex",justifyContent:"space-between"}}>
+                <div style={{marginTop:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
                   <Btn outline onClick={()=>setStep(1)}>← Back</Btn>
-                  <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email →"}</Btn>
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                    <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"1px solid #C7D2FE",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>💾 Save as template</button>
+                    <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email →"}</Btn>
+                  </div>
                 </div>
               </Card>
             )}
@@ -1470,6 +1584,12 @@ ${settings.company||""}`;
                               📅 Required by {new Date(activeReq.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}
                             </span>
                           )}
+                          {activeReq.rfqDeadline&&(()=>{
+                            const daysLeft = Math.ceil((new Date(activeReq.rfqDeadline).getTime()-Date.now())/86400000);
+                            return <span style={{background:daysLeft<=0?"#FEF2F2":daysLeft<=1?"#FFFBEB":"#FFFBEB",border:`1px solid ${daysLeft<=0?"#FECACA":"#FDE68A"}`,color:daysLeft<=0?"#DC2626":"#92400E",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>
+                              ⏰ {daysLeft<=0?"Deadline passed":`Respond by ${new Date(activeReq.rfqDeadline).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`}
+                            </span>;
+                          })()}
                           {activeReq.altAddress&&(
                             <span style={{background:"#FFFBEB",border:"1px solid #FDE68A",color:"#92400E",fontSize:12,padding:"4px 12px",borderRadius:20}}>
                               📍 {activeReq.altAddress}
@@ -2213,6 +2333,7 @@ ${settings.company||""}`;
                     <td style={{padding:"13px 16px"}}>
                       <div style={{display:"flex",gap:8,alignItems:"center"}}>
                         <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>View →</button>
+                        <button onClick={()=>handleDuplicate(r)} style={{fontSize:12,color:"#16A34A",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
                         <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
                         <button onClick={()=>setActivityModal(r)} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
                         <button onClick={()=>setDeleteConfirm(r.id)} style={{fontSize:12,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Delete</button>
@@ -2420,6 +2541,58 @@ ${settings.company||""}`;
 
       </>);
       })()}
+
+      {/* ══ TEMPLATE MODAL ══ */}
+      {templateModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"white",borderRadius:24,padding:"28px 32px",maxWidth:520,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.2)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div>
+                <div style={{fontSize:17,fontWeight:700,color:"#0A0F1E"}}>Request templates</div>
+                <div style={{fontSize:12,color:"#64748B",marginTop:2}}>Save your common material lists — load them instantly next time</div>
+              </div>
+              <button onClick={()=>setTemplateModal(false)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9CA3AF"}}>✕</button>
+            </div>
+
+            {/* Save current as template */}
+            {parsed&&(
+              <div style={{background:"#F0FDF4",border:"1px solid #A7F3D0",borderRadius:12,padding:"14px 16px",marginBottom:20}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#166534",marginBottom:8}}>💾 Save current list as template</div>
+                <div style={{display:"flex",gap:10}}>
+                  <input value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)} placeholder="Template name e.g. Boiler fit-out kit" style={{flex:1,padding:"8px 12px",border:"1px solid #A7F3D0",borderRadius:8,fontSize:13,outline:"none"}}/>
+                  <Btn onClick={handleSaveTemplate} disabled={!newTemplateName.trim()} color="#16A34A">Save</Btn>
+                </div>
+              </div>
+            )}
+
+            {/* Existing templates */}
+            {templates.length===0?(
+              <div style={{textAlign:"center",padding:"30px 0",color:"#94A3B8"}}>
+                <div style={{fontSize:28,marginBottom:8}}>📋</div>
+                <div style={{fontSize:14}}>No templates yet</div>
+                <div style={{fontSize:12,marginTop:4}}>Create a request first, then save it as a template from Step 2</div>
+              </div>
+            ):(
+              <div>
+                <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Your templates ({templates.length})</div>
+                {templates.map(t=>(
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:"#F8FAFC",borderRadius:12,marginBottom:8,border:"1px solid #F1F5F9"}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E"}}>{t.name}</div>
+                      <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{t.trade} · {t.items.length} items · saved {t.created}</div>
+                      <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>{t.items.slice(0,3).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join(", ")}{t.items.length>3?"…":""}</div>
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>handleLoadTemplate(t)} style={{fontSize:12,color:"white",background:"#16A34A",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600}}>Load</button>
+                      <button onClick={()=>saveTemplates(templates.filter(x=>x.id!==t.id))} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"none",borderRadius:8,padding:"7px 10px",cursor:"pointer"}}>✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ══ DELETE CONFIRM MODAL ══ */}
       {deleteConfirm&&(
