@@ -441,6 +441,12 @@ export default function App() {
   const [deleteConfirm, setDeleteConfirm] = useState(null); // request id to confirm delete
   const [activityModal, setActivityModal] = useState(null); // request to show log
 
+  // Orders state
+  const [orders, setOrders] = useState([]);
+  const [activeOrder, setActiveOrder] = useState(null);
+  const [sendingOrder, setSendingOrder] = useState(null);
+  const [orderNote, setOrderNote] = useState({});
+
   // Quote analysis state
   const [activeReq,     setActiveReq]     = useState(null);
   const [quoteInput,    setQuoteInput]    = useState("");
@@ -625,11 +631,33 @@ export default function App() {
     const poNum = `PO-${Date.now().toString().slice(-6)}`;
     const dateStr = new Date().toLocaleDateString("en-GB");
     await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:dateStr });
-    const doc = { id:poNum, type:"generated", label:`PO ${poNum}`, supplier:sup?.name||"", date:dateStr, status:"approved" };
+    const doc = { id:poNum, type:"generated", label:`PO ${poNum}`, supplier:sup?.name||"", supplierEmail:sup?.email||"", date:dateStr, status:"approved" };
     const poEntry = { ts:new Date().toISOString(), action:"PO approved & generated", detail:`PO ${poNum} for ${sup?.name||"supplier"} — generated and downloaded`, user:settings.contactName||"You" };
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
     setActiveReq(prev=>({...prev,status:"approved",documents:[...(prev.documents||[]),doc]}));
-    showToast(`PO ${poNum} generated and downloaded`);
+    // Create order record
+    const order = {
+      id: poNum,
+      reqId: activeReq.id,
+      jobRef: activeReq?.jobRef||"TBC",
+      site: activeReq?.site||"",
+      trade: activeReq?.trade||"",
+      supplier: sup?.name||"",
+      supplierEmail: sup?.email||"",
+      items: activeReq?.items||[],
+      analysis,
+      poNumber: poNum,
+      poDate: dateStr,
+      status: "pending-send",
+      type: "generated",
+      label: `PO ${poNum}`,
+      deliveryMethod: activeReq?.deliveryMethod||"",
+      deliveryDate: activeReq?.deliveryDate||"",
+      notes: "",
+      activity: [{ ts:new Date().toISOString(), action:"Order created", detail:`PO ${poNum} approved and generated`, user:settings.contactName||"You" }]
+    };
+    setOrders(p=>[order,...p]);
+    showToast(`PO ${poNum} generated — ready to send in Orders`);
   }
 
   async function handleSaveDraftQuote(qa) {
@@ -665,6 +693,75 @@ export default function App() {
       showToast(`${file.name} uploaded to job`);
     };
     reader.readAsDataURL(file);
+  }
+
+  function handleCreateOrderFromDoc(doc, req) {
+    if (!doc||!req) return;
+    const sup = suppliers.find(s=>req.sentTo?.some(st=>st.name===s.name))||{name:doc.supplier||"Supplier",email:""};
+    const order = {
+      id: doc.id,
+      reqId: req.id,
+      jobRef: req.jobRef||"TBC",
+      site: req.site||"",
+      trade: req.trade||"",
+      supplier: doc.supplier||sup.name||"",
+      supplierEmail: sup.email||"",
+      items: req.items||[],
+      poNumber: doc.id,
+      poDate: doc.date,
+      status: "pending-send",
+      type: doc.type,
+      label: doc.label,
+      dataUrl: doc.dataUrl||null,
+      deliveryMethod: req.deliveryMethod||"",
+      deliveryDate: req.deliveryDate||"",
+      notes: "",
+      activity: [{ ts:new Date().toISOString(), action:"Order created from uploaded document", detail:doc.label, user:settings.contactName||"You" }]
+    };
+    setOrders(p=>[order,...p.filter(o=>o.id!==doc.id)]);
+    showToast(`${doc.label} added to Orders`);
+  }
+
+  async function handleSendOrder(order) {
+    if (!settings.resendKey) { showToast("Add your Resend API key in Settings to send orders","warn"); setView("settings"); return; }
+    if (!order.supplierEmail) { showToast("No supplier email on this order — edit the order to add one","warn"); return; }
+    setSendingOrder(order.id);
+    const note = orderNote[order.id]||"";
+    const subject = `Purchase Order ${order.poNumber} — ${order.jobRef}`;
+    const deliveryLabels = { direct:"Delivery direct to site", alternative:"Delivery to alternative address", collect:"Collection from branch", tbc:"Delivery method to be confirmed" };
+    const body = `Dear ${order.supplier},
+
+Please find attached Purchase Order ${order.poNumber} for job reference ${order.jobRef}.
+
+${order.site?`Site: ${order.site}`:""}
+${order.deliveryMethod?`Delivery method: ${deliveryLabels[order.deliveryMethod]||order.deliveryMethod}`:""}
+${order.deliveryDate?`Required by: ${new Date(order.deliveryDate).toLocaleDateString("en-GB")}`:""}
+
+${note?`Additional notes:
+${note}
+`:""}
+Please confirm receipt of this order and advise of any issues with availability or delivery timescales.
+
+Kind regards
+${settings.contactName||settings.company||"The Procurement Team"}
+${settings.company||""}`;
+
+    try {
+      const res = await fetch("/api/send-email", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ from:settings.fromEmail||"onboarding@resend.dev", to:[order.supplierEmail], subject, text:body })
+      });
+      const d = await res.json();
+      if (res.ok && d.success) {
+        const entry = { ts:new Date().toISOString(), action:"Order sent to supplier", detail:`Sent to ${order.supplierEmail}`, user:settings.contactName||"You" };
+        setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"sent",sentAt:new Date().toISOString(),activity:[...(o.activity||[]),entry]}:o));
+        showToast(`Order sent to ${order.supplier}`);
+      } else {
+        showToast(`Send failed: ${d.error||"Unknown error"}`,"warn");
+      }
+    } catch(e) { showToast(`Send failed: ${e.message}`,"warn"); }
+    setSendingOrder(null);
   }
 
   // ── Render ──
@@ -710,13 +807,17 @@ export default function App() {
             {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
             {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
             {id:"quotes",   label:"Quote analysis", d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
+            {id:"orders",   label:"Orders", d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
             {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
             {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
           ].map(item=>(
             <button key={item.id} onClick={()=>{setView(item.id);if(item.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);}}
               style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"rgba(99,102,241,0.18)":"transparent",color:view===item.id?"#A5B4FC":"#64748B",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:2,textAlign:"left",borderLeft:view===item.id?"3px solid #818CF8":"3px solid transparent",transition:"all 0.15s"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
-              {item.label}
+              <span style={{flex:1}}>{item.label}</span>
+              {item.id==="orders"&&orders.filter(o=>o.status==="pending-send").length>0&&(
+                <span style={{background:"#22C55E",color:"white",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:20,minWidth:20,textAlign:"center"}}>{orders.filter(o=>o.status==="pending-send").length}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -805,11 +906,12 @@ export default function App() {
             </div>
 
             {/* ── Quick actions ── */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:28}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:28}}>
               {[
                 {label:"New material request",  sub:"Voice or type your list",        icon:"🎤", action:()=>setView("new"),      color:"#6366F1", light:"#EEF2FF"},
                 {label:"Analyse quotes",         sub:"Compare supplier responses",     icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, color:"#22C55E", light:"#F0FDF4"},
                 {label:"Manage suppliers",       sub:"Add or update supplier accounts",icon:"🏢", action:()=>setView("suppliers"), color:"#F59E0B", light:"#FFFBEB"},
+                {label:"Send orders",             sub:`${orders.filter(o=>o.status==="pending-send").length} POs ready to send`,icon:"📦", action:()=>setView("orders"),    color:"#22C55E", light:"#F0FDF4"},
               ].map(q=>(
                 <button key={q.label} onClick={q.action} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 20px",background:"white",border:"1px solid #F1F5F9",borderRadius:16,cursor:"pointer",textAlign:"left",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.15s"}}>
                   <div style={{width:44,height:44,background:q.light,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{q.icon}</div>
@@ -1633,6 +1735,210 @@ export default function App() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ══ ORDERS ══ */}
+        {view==="orders"&&(
+          <div style={{animation:"fadeIn 0.25s ease"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>ORDER MANAGEMENT</div>
+                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"#0A0F1E"}}>Orders</h1>
+                <p style={{fontSize:15,color:"#64748B",marginTop:6}}>Send approved purchase orders to suppliers and track their status</p>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"#166534",fontWeight:500}}>
+                  {orders.filter(o=>o.status==="pending-send").length} pending · {orders.filter(o=>o.status==="sent").length} sent
+                </div>
+              </div>
+            </div>
+
+            {orders.length===0?(
+              <div style={{background:"white",borderRadius:24,border:"1px solid #F1F5F9",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                <div style={{width:80,height:80,background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📦</div>
+                <div style={{fontSize:20,fontWeight:700,color:"#0A0F1E",marginBottom:8,letterSpacing:"-0.5px"}}>No orders yet</div>
+                <div style={{fontSize:14,color:"#94A3B8",maxWidth:380,margin:"0 auto 28px",lineHeight:1.7}}>
+                  Orders appear here when you approve a PO in Quote Analysis, or when you promote an uploaded document to an order. Once here, send them directly to your supplier with one click.
+                </div>
+                <button onClick={()=>setView("quotes")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(99,102,241,0.3)"}}>
+                  Go to Quote Analysis →
+                </button>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                {orders.map(order=>{
+                  const isPending = order.status==="pending-send";
+                  const isSent = order.status==="sent";
+                  return(
+                  <div key={order.id} style={{background:"white",borderRadius:20,border:`1px solid ${isPending?"#BBF7D0":isSent?"#E0E7FF":"#F1F5F9"}`,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
+
+                    {/* Order header */}
+                    <div style={{padding:"20px 28px",borderBottom:"1px solid #F8FAFC",display:"flex",justifyContent:"space-between",alignItems:"center",background:isPending?"linear-gradient(135deg,#F0FDF4,#FAFFFE)":isSent?"linear-gradient(135deg,#EEF2FF,#FAFFFE)":"white"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:16}}>
+                        <div style={{width:48,height:48,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":"#F1F5F9",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,boxShadow:isPending?"0 4px 12px rgba(34,197,94,0.3)":isSent?"0 4px 12px rgba(99,102,241,0.3)":"none"}}>
+                          {isPending?"📦":isSent?"✈️":"📄"}
+                        </div>
+                        <div>
+                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+                            <span style={{fontSize:16,fontWeight:700,color:"#0A0F1E",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
+                            <span style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,background:isPending?"#DCFCE7":isSent?"#EEF2FF":"#F1F5F9",color:isPending?"#166534":isSent?"#4338CA":"#64748B"}}>
+                              {isPending?"Ready to send":isSent?"Sent":"Draft"}
+                            </span>
+                          </div>
+                          <div style={{fontSize:13,color:"#64748B"}}>{order.jobRef} · {order.site} · {order.trade}</div>
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:13,fontWeight:600,color:"#0A0F1E"}}>{order.supplier}</div>
+                        <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>{order.supplierEmail||"No email set"}</div>
+                        <div style={{fontSize:11,color:"#CBD5E1",marginTop:2}}>{order.poDate}</div>
+                      </div>
+                    </div>
+
+                    {/* Order body */}
+                    <div style={{padding:"20px 28px"}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+
+                        {/* Left — order details */}
+                        <div>
+                          {/* Items summary */}
+                          <div style={{marginBottom:16}}>
+                            <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Items ordered ({order.items?.length||0})</div>
+                            <div style={{background:"#F8FAFC",borderRadius:10,padding:"12px 14px",maxHeight:120,overflowY:"auto"}}>
+                              {(order.items||[]).map((item,i)=>(
+                                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:i<order.items.length-1?"1px solid #F1F5F9":"none"}}>
+                                  <span style={{fontSize:13,color:"#334155"}}>{item.description}</span>
+                                  <span style={{fontSize:13,fontWeight:600,color:"#0A0F1E",fontFamily:"'JetBrains Mono',monospace"}}>{item.quantity} {item.unit}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Delivery info */}
+                          {(order.deliveryMethod||order.deliveryDate)&&(
+                            <div style={{marginBottom:16}}>
+                              <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Delivery</div>
+                              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                                {order.deliveryMethod&&<span style={{background:"#F0F9FF",border:"1px solid #BAE6FD",color:"#0369A1",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🚚 {{"direct":"To site","alternative":"Alt. address","collect":"Collect","tbc":"TBC"}[order.deliveryMethod]||order.deliveryMethod}</span>}
+                                {order.deliveryDate&&<span style={{background:"#F0FDF4",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>📅 {new Date(order.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Activity log */}
+                          {order.activity?.length>0&&(
+                            <div>
+                              <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Activity</div>
+                              {order.activity.slice(-3).reverse().map((a,i)=>(
+                                <div key={i} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid #F8FAFC"}}>
+                                  <div style={{width:6,height:6,borderRadius:"50%",background:"#22C55E",marginTop:5,flexShrink:0}}/>
+                                  <div style={{flex:1}}>
+                                    <div style={{fontSize:12,fontWeight:500,color:"#334155"}}>{a.action}</div>
+                                    <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>{new Date(a.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})} · {a.user}</div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Right — send panel */}
+                        <div style={{background:"#F8FAFC",borderRadius:14,padding:"20px"}}>
+                          <div style={{fontSize:13,fontWeight:600,color:"#0A0F1E",marginBottom:4}}>
+                            {isSent?"Order sent":"Send this order to supplier"}
+                          </div>
+                          <div style={{fontSize:12,color:"#64748B",marginBottom:16,lineHeight:1.6}}>
+                            {isSent
+                              ? `Sent to ${order.supplierEmail} on ${order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—"}`
+                              : "An email will be sent to the supplier with the PO details and any notes you add below. They will be asked to confirm receipt."
+                            }
+                          </div>
+
+                          {/* Supplier email override */}
+                          <div style={{marginBottom:12}}>
+                            <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Supplier email</label>
+                            <input
+                              value={order.supplierEmail||""}
+                              onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))}
+                              placeholder="supplier@company.co.uk"
+                              style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",background:"white"}}
+                            />
+                          </div>
+
+                          {/* Notes */}
+                          <div style={{marginBottom:16}}>
+                            <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Additional notes (optional)</label>
+                            <textarea
+                              value={orderNote[order.id]||""}
+                              onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))}
+                              placeholder="Any special instructions, delivery access notes, contact on site..."
+                              style={{width:"100%",height:80,padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"white"}}
+                            />
+                          </div>
+
+                          {/* Send button */}
+                          {isPending?(
+                            <button
+                              onClick={()=>handleSendOrder(order)}
+                              disabled={sendingOrder===order.id||!order.supplierEmail}
+                              style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:sendingOrder===order.id||!order.supplierEmail?"#D1FAE5":"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:sendingOrder===order.id||!order.supplierEmail?"not-allowed":"pointer",boxShadow:sendingOrder===order.id?"none":"0 4px 16px rgba(34,197,94,0.3)",marginBottom:8}}>
+                              {sendingOrder===order.id?<><Spinner/>Sending…</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
+                            </button>
+                          ):(
+                            <div style={{background:"#DCFCE7",borderRadius:10,padding:"12px",textAlign:"center",fontSize:13,fontWeight:600,color:"#166534",marginBottom:8}}>
+                              ✓ Order sent successfully
+                            </div>
+                          )}
+
+                          {/* Resend / mark as acknowledged */}
+                          <div style={{display:"flex",gap:8}}>
+                            {isSent&&(
+                              <button onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"pending-send"}:o))} style={{flex:1,fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>
+                                Resend
+                              </button>
+                            )}
+                            {isSent&&(
+                              <button onClick={()=>{
+                                const entry={ts:new Date().toISOString(),action:"Order acknowledged by supplier",detail:"Manually marked as acknowledged",user:settings.contactName||"You"};
+                                setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"acknowledged",activity:[...(o.activity||[]),entry]}:o));
+                                showToast("Marked as acknowledged");
+                              }} style={{flex:1,fontSize:12,color:"#059669",background:"#DCFCE7",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>
+                                Mark acknowledged
+                              </button>
+                            )}
+                            <button onClick={()=>setOrders(p=>p.filter(o=>o.id!==order.id))} style={{flex:isSent?0:1,fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600,minWidth:isSent?80:undefined}}>
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Promote uploaded docs to orders */}
+            {requests.some(r=>(r.documents||[]).some(d=>d.type==="uploaded"&&!orders.find(o=>o.id===d.id)))&&(
+              <div style={{marginTop:24,background:"white",borderRadius:20,border:"1px solid #F1F5F9",padding:"20px 28px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E",marginBottom:4}}>Uploaded documents ready to send</div>
+                <div style={{fontSize:13,color:"#64748B",marginBottom:16}}>These documents were uploaded to jobs but haven't been sent as orders yet</div>
+                {requests.flatMap(r=>(r.documents||[]).filter(d=>d.type==="uploaded"&&!orders.find(o=>o.id===d.id)).map(d=>({...d,_req:r}))).map((d,i)=>(
+                  <div key={d.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderTop:i>0?"1px solid #F8FAFC":"none"}}>
+                    <div style={{width:40,height:40,background:"#EEF2FF",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>📎</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:500,color:"#0A0F1E"}}>{d.label}</div>
+                      <div style={{fontSize:12,color:"#64748B"}}>{d._req.jobRef} · {d._req.site} · {d.date}</div>
+                    </div>
+                    <button onClick={()=>handleCreateOrderFromDoc(d,d._req)} style={{background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      Add to Orders →
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
