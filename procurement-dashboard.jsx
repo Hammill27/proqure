@@ -79,10 +79,20 @@ Format: {"items":[{"id":1,"description":"...","quantity":N,"unit":"...","categor
   const txt = await callAI(sys, `Parse this material request: ${raw}`);
   try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
 }
-async function generateRFQ(items, jobRef, company, contactName, fromEmail) {
-  const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown. Sign off with the real contact name and company provided, not placeholders.`;
+async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress) {
+  const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown. Sign off with the real contact name and company provided, no placeholder brackets.`;
   const list = items.map(i=>`- ${i.quantity} ${i.unit} ${i.description}`).join("\n");
-  return callAI(sys, `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact name: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}, for:\n${list}\nAsk for unit prices, availability, and delivery lead time. Keep it concise and professional. Sign off with the real name and company, no placeholder brackets.`);
+  const deliveryLabels = {
+    direct: "Delivery direct to site",
+    alternative: `Delivery to alternative address: ${altAddress||"to be confirmed"}`,
+    collect: "Collection from branch",
+    tbc: "Delivery method to be confirmed"
+  };
+  const deliveryStr = deliveryLabels[deliveryMethod]||deliveryMethod;
+  const dateStr = deliveryDate ? `Required by: ${deliveryDate}` : "Required date: To be confirmed";
+  return callAI(sys,
+    `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}.\n\nItems required:\n${list}\n\nDelivery requirements:\n- Method: ${deliveryStr}\n- ${dateStr}\n\nAsk for unit prices, availability, lead time, and please ask them to include carriage/delivery charges in their quotation. Keep it concise and professional. Clearly mention the delivery method and required date in the email.`
+  );
 }
 async function analyseQuote(items, quoteText, supplierName) {
   const sys = `You are an expert AI procurement analyst for UK plumbing, HVAC, and electrical trades companies. A supplier has responded to a Request for Quotation. Your job is to perform a thorough, detailed analysis. Return ONLY valid JSON with no markdown, no explanation, no preamble.
@@ -419,6 +429,9 @@ export default function App() {
   const [loading,  setLoading]  = useState(false);
   const [loadMsg,  setLoadMsg]  = useState("");
   const [emailRes, setEmailRes] = useState(null);
+  const [deliveryMethod, setDeliveryMethod] = useState("direct");
+  const [deliveryDate,   setDeliveryDate]   = useState("");
+  const [altAddress,     setAltAddress]     = useState("");
 
   // Edit modal state
   const [editModal,  setEditModal]  = useState(null); // request being edited
@@ -512,7 +525,7 @@ export default function App() {
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Generating RFQ email…");
     try {
-      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail);
+      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress);
       setRfqEmail(email);
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
@@ -538,6 +551,7 @@ export default function App() {
         status:"pending",
         created: new Date().toISOString().split("T")[0],
         items: parsed.items,
+        deliveryMethod, deliveryDate, altAddress,
         sentTo: sentSuppliers,
         activity:[{ ts:new Date().toISOString(), action:"Created", detail:`RFQ sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}`, user:settings.contactName||"You" }]
       };
@@ -556,7 +570,7 @@ export default function App() {
     };
     setRequests(p=>[r,...p]);
     setView("dashboard");
-    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setRfqEmail(""); setEmailRes(null);
+    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setRfqEmail(""); setEmailRes(null); setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress("");
     showToast("Request saved");
   }
 
@@ -881,6 +895,59 @@ export default function App() {
                     {filteredSup.length===0&&<div style={{fontSize:13,color:"#9CA3AF"}}>No suppliers for {trade} — add them in Suppliers.</div>}
                   </div>
                 </div>
+                {/* ── Delivery method ── */}
+                <div style={{marginTop:16,padding:18,background:"linear-gradient(135deg,#F0F9FF,#E0F2FE)",borderRadius:12,border:"1px solid #BAE6FD"}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"#0369A1",marginBottom:14}}>🚚 Delivery requirements</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:14}}>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Delivery method</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        {[
+                          {val:"direct",    icon:"📍", label:"Deliver direct to site",         sub:`${site||"site address"}`},
+                          {val:"alternative",icon:"🏢", label:"Deliver to alternative address", sub:"specify address below"},
+                          {val:"collect",   icon:"🏪", label:"Collect from branch",             sub:"we will collect"},
+                          {val:"tbc",       icon:"❓", label:"To be confirmed",                 sub:"supplier to await confirmation"},
+                        ].map(opt=>(
+                          <label key={opt.val} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:8,border:`1.5px solid ${deliveryMethod===opt.val?"#3B82F6":"#E2E8F0"}`,background:deliveryMethod===opt.val?"#EFF6FF":"white",cursor:"pointer"}}>
+                            <input type="radio" name="deliveryMethod" value={opt.val} checked={deliveryMethod===opt.val} onChange={()=>setDeliveryMethod(opt.val)} style={{accentColor:"#3B82F6",marginTop:2}}/>
+                            <div>
+                              <div style={{fontSize:13,fontWeight:500,color:"#1E293B"}}>{opt.icon} {opt.label}</div>
+                              <div style={{fontSize:11,color:"#64748B",marginTop:1}}>{opt.sub}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                      {deliveryMethod==="alternative"&&(
+                        <div style={{marginTop:10}}>
+                          <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Alternative delivery address</label>
+                          <textarea value={altAddress} onChange={e=>setAltAddress(e.target.value)} placeholder="Full delivery address..." style={{width:"100%",height:70,padding:"8px 10px",border:"1px solid #BFDBFE",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Required delivery date</div>
+                      <div style={{background:"white",borderRadius:10,padding:14,border:"1px solid #E2E8F0"}}>
+                        <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} min={new Date().toISOString().split("T")[0]} style={{width:"100%",padding:"10px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:14,outline:"none",color:deliveryDate?"#1E293B":"#94A3B8"}}/>
+                        <div style={{fontSize:11,color:"#94A3B8",marginTop:8}}>Leave blank if date is flexible</div>
+                        {deliveryDate&&(
+                          <div style={{marginTop:8,padding:"8px 12px",background:"#F0FDF4",borderRadius:6,fontSize:12,color:"#166534",fontWeight:500}}>
+                            ✓ Required by {new Date(deliveryDate).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+                          </div>
+                        )}
+                        <div style={{marginTop:12,fontSize:11,color:"#64748B",lineHeight:1.6}}>
+                          <div style={{fontWeight:500,marginBottom:4}}>This will tell suppliers to:</div>
+                          <div>• Include carriage/delivery charges in their quote</div>
+                          <div>• Confirm they can meet your required date</div>
+                          <div>• State lead times clearly</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{background:"white",borderRadius:8,padding:"10px 14px",border:"1px solid #BAE6FD",fontSize:12,color:"#0369A1"}}>
+                    ℹ️ These delivery details will be included in the RFQ email and the AI will extract carriage charges from supplier responses during quote analysis.
+                  </div>
+                </div>
+
                 <div style={{marginTop:20,display:"flex",justifyContent:"space-between"}}>
                   <Btn outline onClick={()=>setStep(1)}>← Back</Btn>
                   <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email →"}</Btn>
@@ -996,13 +1063,32 @@ export default function App() {
                           <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
                         </div>
                       </div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
                         {activeReq.items.map((item,i)=>(
                           <span key={i} style={{background:"#F1F5F9",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#334155"}}>
                             <span style={{fontWeight:600}}>{item.quantity} {item.unit}</span> {item.description}
                           </span>
                         ))}
                       </div>
+                      {(activeReq.deliveryMethod||activeReq.deliveryDate)&&(
+                        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                          {activeReq.deliveryMethod&&(
+                            <span style={{background:"#F0F9FF",border:"1px solid #BAE6FD",color:"#0369A1",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
+                              🚚 {{direct:"Deliver to site",alternative:"Alt. address delivery",collect:"Collect from branch",tbc:"Delivery TBC"}[activeReq.deliveryMethod]||activeReq.deliveryMethod}
+                            </span>
+                          )}
+                          {activeReq.deliveryDate&&(
+                            <span style={{background:"#F0FDF4",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
+                              📅 Required by {new Date(activeReq.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}
+                            </span>
+                          )}
+                          {activeReq.altAddress&&(
+                            <span style={{background:"#FFFBEB",border:"1px solid #FDE68A",color:"#92400E",fontSize:12,padding:"4px 12px",borderRadius:20}}>
+                              📍 {activeReq.altAddress}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </Card>
 
                     {/* Quote input boxes — one per supplier */}
