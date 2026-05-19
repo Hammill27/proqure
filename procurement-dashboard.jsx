@@ -312,6 +312,12 @@ export default function App() {
   const [loadMsg,  setLoadMsg]  = useState("");
   const [emailRes, setEmailRes] = useState(null);
 
+  // Edit modal state
+  const [editModal,  setEditModal]  = useState(null); // request being edited
+  const [editForm,   setEditForm]   = useState({});
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // request id to confirm delete
+  const [activityModal, setActivityModal] = useState(null); // request to show log
+
   // Quote analysis state
   const [activeReq,     setActiveReq]     = useState(null);
   const [quoteInput,    setQuoteInput]    = useState("");
@@ -337,6 +343,36 @@ export default function App() {
   };
 
   const filteredSup = suppliers.filter(s=>s.categories.some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
+
+  function logActivity(reqId, action, detail="") {
+    const entry = { ts: new Date().toISOString(), action, detail, user: settings.contactName||"You" };
+    setRequests(p=>p.map(r=>r.id===reqId ? {...r, activity:[...(r.activity||[]), entry]} : r));
+  }
+
+  function handleDelete(id) {
+    logActivity(id, "Deleted", "Request permanently deleted");
+    setRequests(p=>p.filter(r=>r.id!==id));
+    if (activeReq?.id===id) setActiveReq(null);
+    setDeleteConfirm(null);
+    showToast("Request deleted");
+  }
+
+  function handleEditSave() {
+    const r = requests.find(r=>r.id===editModal.id);
+    const changes = [];
+    if (editForm.jobRef!==r.jobRef) changes.push(`Job ref: ${r.jobRef} → ${editForm.jobRef}`);
+    if (editForm.site!==r.site)     changes.push(`Site: ${r.site} → ${editForm.site}`);
+    if (editForm.status!==r.status) changes.push(`Status: ${STATUS[r.status].label} → ${STATUS[editForm.status].label}`);
+    if (editForm.notes!==r.notes)   changes.push(`Notes updated`);
+    const entry = { ts: new Date().toISOString(), action:"Edited", detail: changes.join(" · ")||"No changes", user: settings.contactName||"You" };
+    setRequests(p=>p.map(r=>r.id===editModal.id
+      ? {...r, jobRef:editForm.jobRef, site:editForm.site, status:editForm.status, notes:editForm.notes, activity:[...(r.activity||[]), entry]}
+      : r
+    ));
+    if (activeReq?.id===editModal.id) setActiveReq(prev=>({...prev, jobRef:editForm.jobRef, site:editForm.site, status:editForm.status, notes:editForm.notes}));
+    setEditModal(null);
+    showToast("Request updated");
+  }
 
   // ── Handlers ──
   async function handleParse() {
@@ -388,7 +424,8 @@ export default function App() {
         jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
         status:"pending",
         created: new Date().toISOString().split("T")[0],
-        items: parsed.items
+        items: parsed.items,
+        activity:[{ ts:new Date().toISOString(), action:"Created", detail:`RFQ sent to ${ok} supplier${ok!==1?"s":""}`, user:settings.contactName||"You" }]
       };
       setRequests(p=>[r,...p]);
       showToast(`Emails sent & request saved as ${r.id}`);
@@ -417,7 +454,10 @@ export default function App() {
     try {
       const a = await analyseQuote(activeReq.items, quoteInput);
       setQuoteAnalysis(a);
-      if (!a.error) setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"received"}:r));
+      if (!a.error) {
+        const entry = { ts:new Date().toISOString(), action:"Quote analysed", detail:`Completeness: ${a.completeness}%`, user:settings.contactName||"You" };
+        setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"received",activity:[...(r.activity||[]),entry]}:r));
+      }
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
     setLoading(false);
   }
@@ -426,7 +466,8 @@ export default function App() {
     const sup = suppliers.find(s=>selSup.includes(s.id))||suppliers[0];
     const poNum = `PO-${Date.now().toString().slice(-6)}`;
     await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis:quoteAnalysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:new Date().toLocaleDateString("en-GB") });
-    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved"}:r));
+    const poEntry = { ts:new Date().toISOString(), action:"PO approved", detail:`PO ${poNum} generated and downloaded`, user:settings.contactName||"You" };
+    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",activity:[...(r.activity||[]),poEntry]}:r));
     showToast(`PO ${poNum} downloaded`);
   }
 
@@ -747,6 +788,7 @@ export default function App() {
                     <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>{r.trade} · {r.items.length} items</div>
                     <div style={{fontSize:11,color:"#9CA3AF",marginTop:1,marginBottom:4}}>{r.jobRef}</div>
                     <Badge bg={STATUS[r.status].bg} text={STATUS[r.status].text}>{STATUS[r.status].label}</Badge>
+                    {r.notes&&<div style={{fontSize:11,color:"#94A3B8",marginTop:4,fontStyle:"italic"}}>{r.notes}</div>}
                   </button>
                 ))}
               </div>
@@ -754,7 +796,14 @@ export default function App() {
                 {activeReq?(
                   <>
                     <Card style={{marginBottom:16}}>
-                      <div style={{fontSize:13,fontWeight:500,marginBottom:10}}>Original request — {activeReq.id} <span style={{fontWeight:400,color:"#6B7280"}}>{activeReq.site}</span></div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                        <div style={{fontSize:13,fontWeight:500}}>Original request — {activeReq.id} <span style={{fontWeight:400,color:"#6B7280"}}>{activeReq.site}</span></div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Edit</button>
+                          <button onClick={()=>setActivityModal(activeReq)} style={{fontSize:12,color:"#6B7280",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>📋 Log {activeReq.activity?.length?`(${activeReq.activity.length})`:""}</button>
+                          <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
+                        </div>
+                      </div>
                       <table style={{width:"100%",borderCollapse:"collapse"}}>
                         <thead><tr style={{background:"#F9FAFB"}}>
                           {["Description","Qty","Unit","Category"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>)}
@@ -922,7 +971,12 @@ export default function App() {
                     <td style={{padding:"13px 16px"}}><Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge></td>
                     <td style={{padding:"13px 16px",fontSize:12,color:"#9CA3AF"}}>{r.created}</td>
                     <td style={{padding:"13px 16px"}}>
-                      <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>View →</button>
+                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                        <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>View →</button>
+                        <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
+                        <button onClick={()=>setActivityModal(r)} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
+                        <button onClick={()=>setDeleteConfirm(r.id)} style={{fontSize:12,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+                      </div>
                     </td>
                   </tr>
                 )})}</tbody>
@@ -1007,6 +1061,92 @@ export default function App() {
         )}
 
       </div>
+
+      {/* ══ DELETE CONFIRM MODAL ══ */}
+      {deleteConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"white",borderRadius:16,padding:"28px 32px",maxWidth:420,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>🗑️</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center"}}>Delete this request?</div>
+            <div style={{fontSize:13,color:"#6B7280",marginBottom:24,textAlign:"center"}}>This cannot be undone. The request and all its activity will be permanently removed.</div>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <Btn outline onClick={()=>setDeleteConfirm(null)}>Cancel</Btn>
+              <Btn color="#DC2626" onClick={()=>handleDelete(deleteConfirm)}>Yes, delete it</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ EDIT MODAL ══ */}
+      {editModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"white",borderRadius:16,padding:"28px 32px",maxWidth:540,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:20}}>Edit request — {editModal.id}</div>
+            <div style={{display:"grid",gap:14}}>
+              <div>
+                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Job reference</label>
+                <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+              </div>
+              <div>
+                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Site / location</label>
+                <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+              </div>
+              <div>
+                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Status</label>
+                <select value={editForm.status||"draft"} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,background:"white",outline:"none"}}>
+                  <option value="draft">Draft</option>
+                  <option value="pending">Pending quotes</option>
+                  <option value="received">Quotes received</option>
+                  <option value="approved">Approved</option>
+                </select>
+              </div>
+              <div>
+                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Notes</label>
+                <textarea value={editForm.notes||""} onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))} placeholder="Add any notes about this request..." style={{width:"100%",height:80,padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10,marginTop:20,justifyContent:"flex-end"}}>
+              <Btn outline onClick={()=>setEditModal(null)}>Cancel</Btn>
+              <Btn onClick={handleEditSave}>Save changes</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ ACTIVITY LOG MODAL ══ */}
+      {activityModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"white",borderRadius:16,padding:"28px 32px",maxWidth:560,width:"90%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div>
+                <div style={{fontSize:16,fontWeight:600}}>{activityModal.id} — Activity log</div>
+                <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>{activityModal.jobRef} · {activityModal.site}</div>
+              </div>
+              <button onClick={()=>setActivityModal(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9CA3AF"}}>✕</button>
+            </div>
+            {(!activityModal.activity||activityModal.activity.length===0)?(
+              <div style={{textAlign:"center",padding:"40px 0",color:"#9CA3AF",fontSize:13}}>No activity recorded yet</div>
+            ):(
+              <div>
+                {[...(activityModal.activity||[])].reverse().map((entry,i)=>(
+                  <div key={i} style={{display:"flex",gap:14,padding:"12px 0",borderBottom:"1px solid #F3F4F6"}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:"#3B82F6",marginTop:5,flexShrink:0}}/>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                        <span style={{fontSize:13,fontWeight:500,color:"#1E293B"}}>{entry.action}</span>
+                        <span style={{fontSize:11,color:"#9CA3AF",whiteSpace:"nowrap",marginLeft:12}}>{new Date(entry.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
+                      </div>
+                      {entry.detail&&<div style={{fontSize:12,color:"#64748B",marginTop:3}}>{entry.detail}</div>}
+                      <div style={{fontSize:11,color:"#CBD5E1",marginTop:2}}>by {entry.user}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
