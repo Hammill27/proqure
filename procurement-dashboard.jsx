@@ -453,13 +453,15 @@ export default function App() {
     showToast(`${ok} of ${results.length} emails sent`);
     // Auto-save the request after sending
     if (ok > 0) {
+      const sentSuppliers = toSend.map(s=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false }));
       const r = {
         id:`RFQ-${String(requests.length+1).padStart(3,"0")}`,
         jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
         status:"pending",
         created: new Date().toISOString().split("T")[0],
         items: parsed.items,
-        activity:[{ ts:new Date().toISOString(), action:"Created", detail:`RFQ sent to ${ok} supplier${ok!==1?"s":""}`, user:settings.contactName||"You" }]
+        sentTo: sentSuppliers,
+        activity:[{ ts:new Date().toISOString(), action:"Created", detail:`RFQ sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}`, user:settings.contactName||"You" }]
       };
       setRequests(p=>[r,...p]);
       showToast(`Emails sent & request saved as ${r.id}`);
@@ -495,6 +497,32 @@ export default function App() {
       }
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
     setLoading(false);
+  }
+
+  async function handleAnalyseAll() {
+    if (!activeReq) return;
+    const toAnalyse = (activeReq.sentTo||[]).filter(s=>s.saved&&s.quote?.trim());
+    if (!toAnalyse.length) return;
+    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    window.__piq_or_key__ = settings.openRouterKey;
+    setLoading(true);
+    const results = [];
+    for (let i=0; i<toAnalyse.length; i++) {
+      const sup = toAnalyse[i];
+      setLoadMsg(`Analysing ${sup.name} (${i+1} of ${toAnalyse.length})…`);
+      try {
+        const a = await analyseQuote(activeReq.items, sup.quote, sup.name);
+        if (!a.error) results.push({...a, supplierName:a.supplierName||sup.name, _id:sup.id});
+      } catch(e) { showToast(`Error analysing ${sup.name}: ${e.message}`,"warn"); }
+    }
+    setAllAnalyses(results);
+    if (results.length>0) {
+      const entry = { ts:new Date().toISOString(), action:"AI analysis run", detail:`${results.length} quote${results.length!==1?"s":""} analysed`, user:settings.contactName||"You" };
+      setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"received",activity:[...(r.activity||[]),entry]}:r));
+      setActiveReq(prev=>({...prev,status:"received"}));
+    }
+    setLoading(false);
+    showToast(`Analysis complete — ${results.length} quote${results.length!==1?"s":""} compared`);
   }
 
   async function handleApprovePO() {
@@ -810,69 +838,157 @@ export default function App() {
         {view==="quotes"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:26,fontWeight:600,letterSpacing:"-0.5px",margin:0}}>Quote analysis</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Paste a supplier quote — AI compares it line by line against your request</p>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#1E293B,#3B82F6)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Quote analysis</h1>
+              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Select a request, enter each supplier quote, then run AI analysis</p>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"220px 1fr",gap:20}}>
+            <div style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:20}}>
               <div>
-                <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Select request</div>
-                {requests.map(r=>(
-                  <button key={r.id} onClick={()=>{setActiveReq(r);setQuoteAnalysis(null);setQuoteInput("");setAllAnalyses([]);setQuoteSupplierName("");}}
-                    style={{width:"100%",textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${activeReq?.id===r.id?"#BFDBFE":"#E5E7EB"}`,background:activeReq?.id===r.id?"#EFF6FF":"white",cursor:"pointer",marginBottom:8}}>
-                    <div style={{fontSize:12,fontWeight:500,fontFamily:"'DM Mono',monospace",color:"#2563EB"}}>{r.id}</div>
-                    <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>{r.trade} · {r.items.length} items</div>
-                    <div style={{fontSize:11,color:"#9CA3AF",marginTop:1,marginBottom:4}}>{r.jobRef}</div>
-                    <Badge bg={STATUS[r.status].bg} text={STATUS[r.status].text}>{STATUS[r.status].label}</Badge>
+                <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Requests</div>
+                {requests.length===0&&<div style={{fontSize:13,color:"#9CA3AF",padding:"20px 0"}}>No requests yet — create one first</div>}
+                {requests.map(r=>{
+                  const savedCount = (r.sentTo||[]).filter(s=>s.saved).length;
+                  const totalCount = (r.sentTo||[]).length;
+                  return(
+                  <button key={r.id} onClick={()=>{setActiveReq(r);setQuoteAnalysis(null);setAllAnalyses([]);}}
+                    style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${activeReq?.id===r.id?"#3B82F6":"#E5E7EB"}`,background:activeReq?.id===r.id?"#EFF6FF":"white",cursor:"pointer",marginBottom:8,transition:"all 0.15s"}}>
+                    <div style={{fontSize:12,fontWeight:600,fontFamily:"'DM Mono',monospace",color:"#3B82F6"}}>{r.id}</div>
+                    <div style={{fontSize:13,fontWeight:500,color:"#1E293B",marginTop:3}}>{r.jobRef}</div>
+                    <div style={{fontSize:12,color:"#64748B",marginTop:1}}>{r.trade} · {r.items.length} items</div>
+                    <div style={{marginTop:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <Badge bg={STATUS[r.status].bg} text={STATUS[r.status].text}>{STATUS[r.status].label}</Badge>
+                      {totalCount>0&&<span style={{fontSize:11,color:"#64748B"}}>{savedCount}/{totalCount} quotes in</span>}
+                    </div>
                     {r.notes&&<div style={{fontSize:11,color:"#94A3B8",marginTop:4,fontStyle:"italic"}}>{r.notes}</div>}
                   </button>
-                ))}
+                  );
+                })}
               </div>
               <div>
                 {activeReq?(
                   <>
+                    {/* Request summary header */}
                     <Card style={{marginBottom:16}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                        <div style={{fontSize:13,fontWeight:500}}>Original request — {activeReq.id} <span style={{fontWeight:400,color:"#6B7280"}}>{activeReq.site}</span></div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                        <div>
+                          <div style={{fontSize:16,fontWeight:600,color:"#0F172A"}}>{activeReq.id} — {activeReq.jobRef}</div>
+                          <div style={{fontSize:13,color:"#64748B",marginTop:2}}>{activeReq.site} · {activeReq.trade} · {activeReq.items.length} items</div>
+                        </div>
                         <div style={{display:"flex",gap:8}}>
                           <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Edit</button>
                           <button onClick={()=>setActivityModal(activeReq)} style={{fontSize:12,color:"#6B7280",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>📋 Log {activeReq.activity?.length?`(${activeReq.activity.length})`:""}</button>
                           <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
                         </div>
                       </div>
-                      <table style={{width:"100%",borderCollapse:"collapse"}}>
-                        <thead><tr style={{background:"#F9FAFB"}}>
-                          {["Description","Qty","Unit","Category"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>)}
-                        </tr></thead>
-                        <tbody>{activeReq.items.map((item,i)=>(
-                          <tr key={i} style={{borderTop:"1px solid #F3F4F6"}}>
-                            <td style={{padding:"10px 12px",fontSize:13}}>{item.description}</td>
-                            <td style={{padding:"10px 12px",fontSize:13,fontFamily:"'DM Mono',monospace"}}>{item.quantity}</td>
-                            <td style={{padding:"10px 12px",fontSize:13,color:"#6B7280"}}>{item.unit}</td>
-                            <td style={{padding:"10px 12px"}}><Badge bg="#EFF6FF" text="#1D4ED8">{item.category}</Badge></td>
-                          </tr>
-                        ))}</tbody>
-                      </table>
-                    </Card>
-                    <Card style={{marginBottom:16}}>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-                        <div>
-                          <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Supplier name</label>
-                          <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
-                        </div>
-                        <div style={{display:"flex",alignItems:"flex-end"}}>
-                          <div style={{fontSize:12,color:"#94A3B8",paddingBottom:10}}>Add multiple quotes one at a time — each gets its own analysis card below</div>
-                        </div>
-                      </div>
-                      <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:8}}>Paste the supplier quote here</label>
-                      <textarea value={quoteInput} onChange={e=>setQuoteInput(e.target.value)}
-                        placeholder={"Paste the full supplier quote, email, or price list here.\n\nThe AI will extract:\n• Prices and line totals\n• Stock availability and quantities\n• Delivery / carriage charges\n• Lead times\n• Discounts or special pricing\n• Any alternatives offered\n\nPaste as much text as you like — the more detail the better."}
-                        style={{width:"100%",height:140,padding:"12px 14px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
-                      <div style={{marginTop:12,display:"flex",justifyContent:"flex-end"}}>
-                        <Btn onClick={handleAnalyse} disabled={!quoteInput.trim()||loading} color="#7C3AED">
-                          {loading?<><Spinner/>{loadMsg}</>:"Analyse with AI →"}
-                        </Btn>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                        {activeReq.items.map((item,i)=>(
+                          <span key={i} style={{background:"#F1F5F9",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#334155"}}>
+                            <span style={{fontWeight:600}}>{item.quantity} {item.unit}</span> {item.description}
+                          </span>
+                        ))}
                       </div>
                     </Card>
+
+                    {/* Quote input boxes — one per supplier */}
+                    {(activeReq.sentTo&&activeReq.sentTo.length>0)?(
+                      <div style={{marginBottom:16}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                          <div>
+                            <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>Supplier quotes</div>
+                            <div style={{fontSize:13,color:"#64748B",marginTop:2}}>
+                              RFQ was sent to {activeReq.sentTo.length} supplier{activeReq.sentTo.length!==1?"s":""}. Paste each quote below, save it, then run the AI analysis.
+                            </div>
+                          </div>
+                          <div style={{fontSize:13,fontWeight:600,color:"#3B82F6"}}>
+                            {activeReq.sentTo.filter(s=>s.saved).length} of {activeReq.sentTo.length} quotes entered
+                          </div>
+                        </div>
+
+                        {activeReq.sentTo.map((sup,si)=>(
+                          <Card key={sup.id} style={{marginBottom:12,border:sup.saved?"1px solid #A7F3D0":"1px solid #E2E8F0"}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                                <div style={{width:36,height:36,background:sup.saved?"#D1FAE5":"#EFF6FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:sup.saved?"#059669":"#3B82F6"}}>{sup.name.charAt(0)}</div>
+                                <div>
+                                  <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>{sup.name}</div>
+                                  <div style={{fontSize:12,color:"#64748B"}}>{sup.email}</div>
+                                </div>
+                              </div>
+                              {sup.saved
+                                ? <span style={{background:"#D1FAE5",color:"#065F46",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>✓ Quote saved</span>
+                                : <span style={{background:"#FEF3C7",color:"#92400E",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>Awaiting quote</span>
+                              }
+                            </div>
+                            <textarea
+                              value={sup.quote||""}
+                              onChange={e=>{
+                                setRequests(p=>p.map(r=>r.id===activeReq.id?{
+                                  ...r,
+                                  sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value,saved:false}:s)
+                                }:r));
+                                setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value,saved:false}:s)}));
+                              }}
+                              placeholder={`Paste ${sup.name}'s quote here — prices, availability, delivery charges, lead times, any notes they included...`}
+                              style={{width:"100%",height:120,padding:"10px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit",background:sup.saved?"#F0FDF4":"white"}}
+                            />
+                            <div style={{marginTop:8,display:"flex",justifyContent:"flex-end",gap:8}}>
+                              {sup.saved&&(
+                                <button onClick={()=>{
+                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}:r));
+                                  setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}));
+                                }} style={{fontSize:12,color:"#64748B",background:"none",border:"1px solid #E2E8F0",borderRadius:6,padding:"6px 12px",cursor:"pointer"}}>Edit</button>
+                              )}
+                              <Btn
+                                disabled={!sup.quote?.trim()}
+                                color={sup.saved?"#059669":"#3B82F6"}
+                                onClick={()=>{
+                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}:r));
+                                  setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}));
+                                  showToast(`${sup.name} quote saved`);
+                                }}
+                              >{sup.saved?"✓ Saved":"Save quote"}</Btn>
+                            </div>
+                          </Card>
+                        ))}
+
+                        {/* Analyse button — enabled when at least 1 quote saved */}
+                        {activeReq.sentTo.some(s=>s.saved)&&(
+                          <div style={{background:"linear-gradient(135deg,#0F172A,#1E3A5F)",borderRadius:14,padding:"20px 24px",marginTop:8}}>
+                            <div style={{fontSize:14,fontWeight:600,color:"white",marginBottom:4}}>
+                              {activeReq.sentTo.filter(s=>s.saved).length === activeReq.sentTo.length
+                                ? "✓ All quotes received — ready for AI analysis"
+                                : `${activeReq.sentTo.filter(s=>s.saved).length} of ${activeReq.sentTo.length} quotes saved — you can analyse now or wait for more`
+                              }
+                            </div>
+                            <div style={{fontSize:13,color:"#94A3B8",marginBottom:16}}>
+                              AI will compare all saved quotes against your original request — pricing, availability, carriage, discounts, alternatives
+                            </div>
+                            <Btn onClick={handleAnalyseAll} disabled={loading} color="#3B82F6">
+                              {loading?<><Spinner/>{loadMsg}</>:`Analyse ${activeReq.sentTo.filter(s=>s.saved).length} quote${activeReq.sentTo.filter(s=>s.saved).length!==1?"s":""} with AI →`}
+                            </Btn>
+                          </div>
+                        )}
+                      </div>
+                    ):(
+                      /* Manual entry fallback for requests without sentTo data */
+                      <Card style={{marginBottom:16}}>
+                        <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Paste supplier quote</div>
+                        <div style={{fontSize:12,color:"#94A3B8",marginBottom:12}}>This request has no supplier tracking. Enter supplier name and paste their quote.</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                          <div>
+                            <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Supplier name</label>
+                            <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                          </div>
+                        </div>
+                        <textarea value={quoteInput} onChange={e=>setQuoteInput(e.target.value)}
+                          placeholder="Paste the supplier quote here..."
+                          style={{width:"100%",height:120,padding:"12px 14px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
+                        <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
+                          <Btn onClick={handleAnalyse} disabled={!quoteInput.trim()||loading} color="#7C3AED">
+                            {loading?<><Spinner/>{loadMsg}</>:"Analyse with AI →"}
+                          </Btn>
+                        </div>
+                      </Card>
+                    )}
 
                     {allAnalyses.length>0&&(
                       <div>
