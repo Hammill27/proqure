@@ -84,12 +84,44 @@ async function generateRFQ(items, jobRef, company, contactName, fromEmail) {
   const list = items.map(i=>`- ${i.quantity} ${i.unit} ${i.description}`).join("\n");
   return callAI(sys, `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact name: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}, for:\n${list}\nAsk for unit prices, availability, and delivery lead time. Keep it concise and professional. Sign off with the real name and company, no placeholder brackets.`);
 }
-async function analyseQuote(items, quoteText) {
-  const sys = `You are an AI procurement analyst for UK trades. Compare a supplier quote against the original request. Return ONLY valid JSON, no markdown.
-Format: {"matched":[{"item":"...","requestedQty":N,"requestedUnit":"...","quotedPrice":"...","available":true,"notes":"..."}],"missing":["..."],"substitutions":[{"original":"...","substitute":"...","notes":"..."}],"totalEstimate":"...","completeness":N,"recommendation":"...","warnings":["..."]}`;
-  const req = items.map(i=>`${i.quantity} ${i.unit} ${i.description}`).join(", ");
-  const raw = await callAI(sys, `Request: ${req}\n\nSupplier quote:\n${quoteText}\n\nAnalyse and return JSON.`);
-  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); } catch { return {error:true}; }
+async function analyseQuote(items, quoteText, supplierName) {
+  const sys = `You are an expert AI procurement analyst for UK plumbing, HVAC, and electrical trades companies. A supplier has responded to a Request for Quotation. Your job is to perform a thorough, detailed analysis. Return ONLY valid JSON with no markdown, no explanation, no preamble.
+
+Required JSON format:
+{
+  "supplierName": "...",
+  "completeness": 0-100,
+  "recommendation": "short plain-english verdict",
+  "overallVerdict": "excellent|good|partial|poor",
+  "subtotal": "£0.00",
+  "carriageCharge": "£0.00 or Free or Not stated",
+  "vatNote": "string",
+  "estimatedTotal": "£0.00",
+  "leadTime": "string",
+  "discounts": [{"item":"...","discount":"...","detail":"..."}],
+  "matched": [{"item":"...","requestedQty":0,"requestedUnit":"...","quotedQty":0,"quotedUnit":"...","unitPrice":"...","lineTotal":"...","inStock":true,"stockQty":"...or unknown","qtyMatch":true,"notes":"..."}],
+  "missing": [{"item":"...","reason":"not quoted|out of stock|discontinued"}],
+  "alternatives": [{"requestedItem":"...","alternativeOffered":"...","altPrice":"...","reason":"...","recommended":true}],
+  "warnings": ["..."],
+  "positives": ["..."]
+}
+
+Rules:
+- Extract EVERY price, quantity, stock level, lead time, carriage/delivery charge from the quote
+- For each matched item check if the quoted quantity matches requested quantity exactly
+- Flag any quantity discrepancies clearly in qtyMatch field
+- Identify any discount mentions (bulk discount, trade account discount, promotional pricing)
+- Extract carriage/delivery charges even if mentioned in passing
+- Note lead times for each item if stated, or overall lead time
+- Suggest alternatives only if the supplier explicitly offers them
+- Be accurate with maths - calculate line totals and subtotal correctly
+- If price is not stated for an item, note it as "Not quoted"`;
+
+  const req = items.map(i=>`- ${i.quantity} ${i.unit} of ${i.description}`).join("\n");
+  const raw = await callAI(sys,
+    `Supplier name: ${supplierName||"Unknown supplier"}\n\nOriginal material request:\n${req}\n\nSupplier quote received:\n${quoteText}\n\nPerform full analysis and return JSON.`
+  );
+  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); } catch { return {error:true, raw}; }
 }
 
 // ─── Email via Vercel serverless function (no CORS) ──────────────────────────
@@ -321,7 +353,9 @@ export default function App() {
   // Quote analysis state
   const [activeReq,     setActiveReq]     = useState(null);
   const [quoteInput,    setQuoteInput]    = useState("");
+  const [quoteSupplierName, setQuoteSupplierName] = useState("");
   const [quoteAnalysis, setQuoteAnalysis] = useState(null);
+  const [allAnalyses, setAllAnalyses] = useState([]);
 
   // Settings form
   const [sForm, setSForm] = useState({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings});
@@ -452,7 +486,8 @@ export default function App() {
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Analysing quote…");
     try {
-      const a = await analyseQuote(activeReq.items, quoteInput);
+      const supplierName = suppliers.find(s=>selSup.includes(s.id))?.name || quoteSupplierName || "Supplier";
+      const a = await analyseQuote(activeReq.items, quoteInput, supplierName);
       setQuoteAnalysis(a);
       if (!a.error) {
         const entry = { ts:new Date().toISOString(), action:"Quote analysed", detail:`Completeness: ${a.completeness}%`, user:settings.contactName||"You" };
@@ -782,7 +817,7 @@ export default function App() {
               <div>
                 <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Select request</div>
                 {requests.map(r=>(
-                  <button key={r.id} onClick={()=>{setActiveReq(r);setQuoteAnalysis(null);setQuoteInput("");}}
+                  <button key={r.id} onClick={()=>{setActiveReq(r);setQuoteAnalysis(null);setQuoteInput("");setAllAnalyses([]);setQuoteSupplierName("");}}
                     style={{width:"100%",textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${activeReq?.id===r.id?"#BFDBFE":"#E5E7EB"}`,background:activeReq?.id===r.id?"#EFF6FF":"white",cursor:"pointer",marginBottom:8}}>
                     <div style={{fontSize:12,fontWeight:500,fontFamily:"'DM Mono',monospace",color:"#2563EB"}}>{r.id}</div>
                     <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>{r.trade} · {r.items.length} items</div>
@@ -819,9 +854,18 @@ export default function App() {
                       </table>
                     </Card>
                     <Card style={{marginBottom:16}}>
-                      <label style={{fontSize:13,fontWeight:500,display:"block",marginBottom:8}}>Paste supplier quote here</label>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+                        <div>
+                          <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Supplier name</label>
+                          <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none"}}/>
+                        </div>
+                        <div style={{display:"flex",alignItems:"flex-end"}}>
+                          <div style={{fontSize:12,color:"#94A3B8",paddingBottom:10}}>Add multiple quotes one at a time — each gets its own analysis card below</div>
+                        </div>
+                      </div>
+                      <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:8}}>Paste the supplier quote here</label>
                       <textarea value={quoteInput} onChange={e=>setQuoteInput(e.target.value)}
-                        placeholder={"Paste the supplier's email or quote content here.\n\nExample:\n22mm copper pipe — £4.20/metre (10m available)\n22mm compression elbows — £2.80 each, 12 in stock\n15mm isolation valve — £6.50 each\nPTFE tape — £1.20/roll\nNote: expansion vessels out of stock, 5–7 day lead time."}
+                        placeholder={"Paste the full supplier quote, email, or price list here.\n\nThe AI will extract:\n• Prices and line totals\n• Stock availability and quantities\n• Delivery / carriage charges\n• Lead times\n• Discounts or special pricing\n• Any alternatives offered\n\nPaste as much text as you like — the more detail the better."}
                         style={{width:"100%",height:140,padding:"12px 14px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
                       <div style={{marginTop:12,display:"flex",justifyContent:"flex-end"}}>
                         <Btn onClick={handleAnalyse} disabled={!quoteInput.trim()||loading} color="#7C3AED">
@@ -830,68 +874,178 @@ export default function App() {
                       </div>
                     </Card>
 
-                    {quoteAnalysis&&!quoteAnalysis.error&&(
-                      <Card>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-                          <div style={{fontSize:15,fontWeight:500}}>AI analysis result</div>
-                          <div style={{display:"flex",alignItems:"center",gap:10}}>
-                            <span style={{fontSize:13,color:"#6B7280"}}>Completeness</span>
-                            <span style={{fontSize:24,fontWeight:600,color:quoteAnalysis.completeness>=80?"#059669":quoteAnalysis.completeness>=60?"#D97706":"#DC2626",fontFamily:"'DM Mono',monospace"}}>{quoteAnalysis.completeness}%</span>
-                          </div>
-                        </div>
-                        {quoteAnalysis.warnings?.length>0&&(
-                          <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"12px 16px",marginBottom:16}}>
-                            {quoteAnalysis.warnings.map((w,i)=><div key={i} style={{fontSize:13,color:"#92400E"}}>⚠ {w}</div>)}
-                          </div>
-                        )}
-                        {quoteAnalysis.matched?.length>0&&(
-                          <>
-                            <div style={{fontSize:13,fontWeight:500,marginBottom:8,color:"#059669"}}>✓ Matched ({quoteAnalysis.matched.length})</div>
-                            <table style={{width:"100%",borderCollapse:"collapse",marginBottom:16}}>
-                              <thead><tr style={{background:"#F0FDF4"}}>
-                                {["Item","Requested","Unit price","Stock","Notes"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:12,fontWeight:500,color:"#374151"}}>{h}</th>)}
-                              </tr></thead>
-                              <tbody>{quoteAnalysis.matched.map((m,i)=>(
-                                <tr key={i} style={{borderTop:"1px solid #F3F4F6"}}>
-                                  <td style={{padding:"10px 12px",fontSize:13}}>{m.item}</td>
-                                  <td style={{padding:"10px 12px",fontSize:13,fontFamily:"'DM Mono',monospace"}}>{m.requestedQty} {m.requestedUnit}</td>
-                                  <td style={{padding:"10px 12px",fontSize:13,fontWeight:500,color:"#059669",fontFamily:"'DM Mono',monospace"}}>{m.quotedPrice||"—"}</td>
-                                  <td style={{padding:"10px 12px"}}><Badge bg={m.available?"#D1FAE5":"#FEE2E2"} text={m.available?"#065F46":"#991B1B"}>{m.available?"In stock":"Unavailable"}</Badge></td>
-                                  <td style={{padding:"10px 12px",fontSize:12,color:"#6B7280"}}>{m.notes||"—"}</td>
-                                </tr>
-                              ))}</tbody>
-                            </table>
-                          </>
-                        )}
-                        {quoteAnalysis.missing?.length>0&&(
-                          <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"12px 16px",marginBottom:16}}>
-                            <div style={{fontSize:13,fontWeight:500,color:"#991B1B",marginBottom:6}}>✗ Missing from quote ({quoteAnalysis.missing.length})</div>
-                            {quoteAnalysis.missing.map((m,i)=><div key={i} style={{fontSize:13,color:"#991B1B",marginTop:4}}>• {m}</div>)}
-                          </div>
-                        )}
-                        {quoteAnalysis.substitutions?.length>0&&(
-                          <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"12px 16px",marginBottom:16}}>
-                            <div style={{fontSize:13,fontWeight:500,color:"#92400E",marginBottom:6}}>~ Substitutions proposed</div>
-                            {quoteAnalysis.substitutions.map((s,i)=><div key={i} style={{fontSize:13,color:"#92400E",marginTop:4}}>• {s.original} → {s.substitute}{s.notes?` (${s.notes})`:""}</div>)}
-                          </div>
-                        )}
-                        <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:8,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-                          <div>
-                            <div style={{fontSize:12,color:"#374151",fontWeight:500}}>AI recommendation</div>
-                            <div style={{fontSize:13,color:"#166534",marginTop:4}}>{quoteAnalysis.recommendation}</div>
-                          </div>
-                          {quoteAnalysis.totalEstimate&&(
-                            <div style={{textAlign:"right"}}>
-                              <div style={{fontSize:12,color:"#6B7280"}}>Estimated total</div>
-                              <div style={{fontSize:22,fontWeight:600,fontFamily:"'DM Mono',monospace",color:"#111827"}}>{quoteAnalysis.totalEstimate}</div>
+                    {allAnalyses.length>0&&(
+                      <div>
+                        {/* Comparison summary bar if multiple quotes */}
+                        {allAnalyses.length>1&&(
+                          <div style={{background:"linear-gradient(135deg,#0F172A,#1E3A5F)",borderRadius:16,padding:"20px 24px",marginBottom:20,color:"white"}}>
+                            <div style={{fontSize:14,fontWeight:600,marginBottom:16,color:"#93C5FD"}}>⚡ AI Comparison Summary — {allAnalyses.length} quotes received</div>
+                            <div style={{display:"grid",gridTemplateColumns:`repeat(${allAnalyses.length},1fr)`,gap:12}}>
+                              {[...allAnalyses].sort((a,b)=>b.completeness-a.completeness).map((a,i)=>{
+                                const isBest = i===0;
+                                const verdictColor = a.overallVerdict==="excellent"?"#4ADE80":a.overallVerdict==="good"?"#60A5FA":a.overallVerdict==="partial"?"#FBBF24":"#F87171";
+                                return(
+                                  <div key={a._id} style={{background:isBest?"rgba(59,130,246,0.2)":"rgba(255,255,255,0.05)",borderRadius:10,padding:"14px 16px",border:isBest?"1px solid rgba(59,130,246,0.5)":"1px solid rgba(255,255,255,0.1)"}}>
+                                    {isBest&&<div style={{fontSize:10,fontWeight:700,color:"#60A5FA",marginBottom:6,letterSpacing:"0.1em"}}>⭐ RECOMMENDED</div>}
+                                    <div style={{fontSize:13,fontWeight:600,color:"white",marginBottom:8}}>{a.supplierName}</div>
+                                    <div style={{fontSize:22,fontWeight:700,color:verdictColor,fontFamily:"monospace"}}>{a.completeness}%</div>
+                                    <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>completeness</div>
+                                    <div style={{fontSize:13,fontWeight:600,color:"#4ADE80",marginTop:8}}>{a.estimatedTotal||a.subtotal||"—"}</div>
+                                    <div style={{fontSize:11,color:"#94A3B8"}}>est. total inc. carriage</div>
+                                    {a.carriageCharge&&a.carriageCharge!=="Not stated"&&<div style={{fontSize:11,color:"#FBBF24",marginTop:4}}>🚚 {a.carriageCharge}</div>}
+                                    {a.missing?.length>0&&<div style={{fontSize:11,color:"#F87171",marginTop:4}}>✗ {a.missing.length} item{a.missing.length!==1?"s":""} missing</div>}
+                                  </div>
+                                );
+                              })}
                             </div>
-                          )}
-                        </div>
-                        <div style={{display:"flex",gap:10}}>
-                          <Btn onClick={handleApprovePO} color="#059669">Approve &amp; download PO (PDF)</Btn>
-                          <Btn outline onClick={()=>{setQuoteInput("");setQuoteAnalysis(null);}}>Enter another quote</Btn>
-                        </div>
-                      </Card>
+                          </div>
+                        )}
+
+                        {/* Individual quote cards */}
+                        {allAnalyses.map((qa,qi)=>{
+                          const verdictConfig = {
+                            excellent:{bg:"#ECFDF5",border:"#6EE7B7",text:"#065F46",label:"Excellent"},
+                            good:{bg:"#EFF6FF",border:"#93C5FD",text:"#1E40AF",label:"Good"},
+                            partial:{bg:"#FFFBEB",border:"#FCD34D",text:"#92400E",label:"Partial"},
+                            poor:{bg:"#FEF2F2",border:"#FCA5A5",text:"#991B1B",label:"Poor"},
+                          }[qa.overallVerdict||"good"]||{bg:"#EFF6FF",border:"#93C5FD",text:"#1E40AF",label:"Good"};
+                          return(
+                          <Card key={qa._id} style={{marginBottom:20,border:`1px solid ${verdictConfig.border}`}}>
+                            {/* Quote header */}
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,paddingBottom:16,borderBottom:"1px solid #F1F5F9"}}>
+                              <div>
+                                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+                                  <div style={{fontSize:17,fontWeight:700,color:"#0F172A"}}>{qa.supplierName}</div>
+                                  <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
+                                </div>
+                                <div style={{fontSize:13,color:"#64748B"}}>{qa.recommendation}</div>
+                              </div>
+                              <div style={{textAlign:"right",flexShrink:0,marginLeft:20}}>
+                                <div style={{fontSize:11,color:"#94A3B8",marginBottom:2}}>Completeness</div>
+                                <div style={{fontSize:32,fontWeight:700,fontFamily:"monospace",color:qa.completeness>=80?"#059669":qa.completeness>=60?"#D97706":"#DC2626",lineHeight:1}}>{qa.completeness}%</div>
+                              </div>
+                            </div>
+
+                            {/* Financial summary strip */}
+                            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+                              {[
+                                {label:"Subtotal (ex VAT)",value:qa.subtotal||"—",color:"#1E293B"},
+                                {label:"Carriage / delivery",value:qa.carriageCharge||"Not stated",color:qa.carriageCharge==="Free"?"#059669":qa.carriageCharge==="Not stated"?"#94A3B8":"#DC2626"},
+                                {label:"Estimated total",value:qa.estimatedTotal||qa.subtotal||"—",color:"#0F172A",bold:true},
+                                {label:"Lead time",value:qa.leadTime||"Not stated",color:"#64748B"},
+                              ].map(f=>(
+                                <div key={f.label} style={{background:"#F8FAFC",borderRadius:10,padding:"12px 14px"}}>
+                                  <div style={{fontSize:11,color:"#94A3B8",marginBottom:4,fontWeight:500}}>{f.label}</div>
+                                  <div style={{fontSize:14,fontWeight:f.bold?700:500,color:f.color}}>{f.value}</div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Positives */}
+                            {qa.positives?.length>0&&(
+                              <div style={{background:"#F0FDF4",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:8}}>
+                                {qa.positives.map((p,i)=>(
+                                  <span key={i} style={{fontSize:12,color:"#166534",display:"flex",alignItems:"center",gap:4}}>✓ {p}</span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Discounts */}
+                            {qa.discounts?.length>0&&(
+                              <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#92400E",marginBottom:8}}>🏷️ Discounts available</div>
+                                {qa.discounts.map((d,i)=>(
+                                  <div key={i} style={{fontSize:13,color:"#78350F",marginBottom:4}}>
+                                    <span style={{fontWeight:500}}>{d.item}</span> — {d.discount} {d.detail&&<span style={{color:"#92400E"}}>({d.detail})</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Matched items table */}
+                            {qa.matched?.length>0&&(
+                              <div style={{marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#059669",marginBottom:8}}>✓ Quoted items ({qa.matched.length})</div>
+                                <div style={{overflowX:"auto"}}>
+                                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                                    <thead><tr style={{background:"#F0FDF4"}}>
+                                      {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty ✓","Notes"].map(h=>(
+                                        <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:600,color:"#374151",whiteSpace:"nowrap"}}>{h}</th>
+                                      ))}
+                                    </tr></thead>
+                                    <tbody>{qa.matched.map((m,i)=>(
+                                      <tr key={i} style={{borderTop:"1px solid #F3F4F6",background:i%2===0?"white":"#FAFAFA"}}>
+                                        <td style={{padding:"9px 10px",fontWeight:500,color:"#0F172A"}}>{m.item}</td>
+                                        <td style={{padding:"9px 10px",color:"#64748B",fontFamily:"monospace",fontSize:12}}>{m.requestedQty} {m.requestedUnit}</td>
+                                        <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,color:m.qtyMatch?"#0F172A":"#DC2626",fontWeight:m.qtyMatch?400:600}}>{m.quotedQty||m.requestedQty} {m.quotedUnit||m.requestedUnit}</td>
+                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#059669",fontFamily:"monospace",fontSize:12}}>{m.unitPrice||m.quotedPrice||"—"}</td>
+                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#0F172A",fontFamily:"monospace",fontSize:12}}>{m.lineTotal||"—"}</td>
+                                        <td style={{padding:"9px 10px"}}>
+                                          <Badge bg={m.inStock?"#D1FAE5":"#FEE2E2"} text={m.inStock?"#065F46":"#991B1B"}>{m.inStock?(m.stockQty&&m.stockQty!=="unknown"?`${m.stockQty} in stock`:"In stock"):"Out of stock"}</Badge>
+                                        </td>
+                                        <td style={{padding:"9px 10px"}}>
+                                          {m.qtyMatch===false
+                                            ? <span style={{fontSize:11,color:"#DC2626",fontWeight:600}}>⚠ Mismatch</span>
+                                            : <span style={{fontSize:11,color:"#059669"}}>✓ Match</span>
+                                          }
+                                        </td>
+                                        <td style={{padding:"9px 10px",fontSize:12,color:"#64748B"}}>{m.notes||"—"}</td>
+                                      </tr>
+                                    ))}</tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Missing items */}
+                            {qa.missing?.length>0&&(
+                              <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#991B1B",marginBottom:8}}>✗ Not quoted ({qa.missing.length} item{qa.missing.length!==1?"s":""})</div>
+                                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                                  {qa.missing.map((m,i)=>(
+                                    <div key={i} style={{background:"#FEE2E2",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#991B1B"}}>
+                                      {m.item||m} {m.reason&&<span style={{color:"#B91C1C"}}>— {m.reason}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Alternatives */}
+                            {qa.alternatives?.length>0&&(
+                              <div style={{background:"#F0F9FF",border:"1px solid #BAE6FD",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#0369A1",marginBottom:8}}>💡 Alternative options offered</div>
+                                {qa.alternatives.map((a,i)=>(
+                                  <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"white",borderRadius:8,border:"1px solid #E0F2FE"}}>
+                                    <div style={{fontSize:12,color:"#64748B"}}>Instead of: <span style={{fontWeight:500,color:"#0F172A"}}>{a.requestedItem}</span></div>
+                                    <div style={{fontSize:13,fontWeight:500,color:"#0369A1",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>— {a.altPrice}</span>}</div>
+                                    {a.reason&&<div style={{fontSize:12,color:"#64748B",marginTop:2}}>{a.reason}</div>}
+                                    {a.recommended&&<span style={{fontSize:10,background:"#0369A1",color:"white",padding:"1px 7px",borderRadius:10,marginTop:4,display:"inline-block"}}>AI recommends</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Warnings */}
+                            {qa.warnings?.length>0&&(
+                              <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#92400E",marginBottom:6}}>⚠ Warnings</div>
+                                {qa.warnings.map((w,i)=><div key={i} style={{fontSize:13,color:"#78350F",marginTop:3}}>• {w}</div>)}
+                              </div>
+                            )}
+
+                            {/* VAT note */}
+                            {qa.vatNote&&<div style={{fontSize:12,color:"#94A3B8",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
+
+                            {/* Approve button */}
+                            <div style={{display:"flex",gap:10,paddingTop:12,borderTop:"1px solid #F1F5F9"}}>
+                              <Btn onClick={()=>{setQuoteAnalysis(qa);handleApprovePO();}} color="#059669">Approve &amp; download PO</Btn>
+                              <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove this quote</Btn>
+                            </div>
+                          </Card>
+                          );
+                        })}
+                      </div>
                     )}
                   </>
                 ):(
