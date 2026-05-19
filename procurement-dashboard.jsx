@@ -447,8 +447,35 @@ export default function App() {
   const [sendingOrder, setSendingOrder] = useState(null);
   const [orderNote, setOrderNote] = useState({});
 
+  // Quote library — persisted
+  const [quoteLibrary, setQuoteLibrary] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("piq_quote_library")||"[]"); } catch { return []; }
+  });
+  const saveToLibrary = (qa, reqId, jobRef, site, trade) => {
+    const entry = {
+      id: `QL-${Date.now()}`,
+      savedAt: new Date().toISOString(),
+      reqId, jobRef, site, trade,
+      supplierName: qa.supplierName||"Unknown",
+      completeness: qa.completeness,
+      totalEstimate: qa.estimatedTotal||qa.subtotal||"",
+      carriageCharge: qa.carriageCharge||"",
+      leadTime: qa.leadTime||"",
+      items: qa.matched||[],
+      missing: qa.missing||[],
+      warnings: qa.warnings||[],
+      overallVerdict: qa.overallVerdict||"",
+    };
+    setQuoteLibrary(prev => {
+      const next = [entry, ...prev];
+      localStorage.setItem("piq_quote_library", JSON.stringify(next.slice(0,500)));
+      return next.slice(0,500);
+    });
+  };
+
   // Quote analysis state
   const [activeReq,     setActiveReq]     = useState(null);
+  const [approvedQuoteId, setApprovedQuoteId] = useState(null); // tracks which qa._id is approved in current session
   const [quoteInput,    setQuoteInput]    = useState("");
   const [quoteSupplierName, setQuoteSupplierName] = useState("");
   const [quoteAnalysis, setQuoteAnalysis] = useState(null);
@@ -616,13 +643,16 @@ export default function App() {
       } catch(e) { showToast(`Error analysing ${sup.name}: ${e.message}`,"warn"); }
     }
     setAllAnalyses(results);
+    setApprovedQuoteId(null);
     if (results.length>0) {
       const entry = { ts:new Date().toISOString(), action:"AI analysis run", detail:`${results.length} quote${results.length!==1?"s":""} analysed`, user:settings.contactName||"You" };
       setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"received",activity:[...(r.activity||[]),entry]}:r));
       setActiveReq(prev=>({...prev,status:"received"}));
+      // Auto-save all quotes to library
+      results.forEach(qa => saveToLibrary(qa, activeReq.id, activeReq.jobRef, activeReq.site, activeReq.trade));
     }
     setLoading(false);
-    showToast(`Analysis complete — ${results.length} quote${results.length!==1?"s":""} compared`);
+    showToast(`Analysis complete — ${results.length} quote${results.length!==1?"s":""} saved to library`);
   }
 
   async function handleApprovePO(qa) {
@@ -635,6 +665,7 @@ export default function App() {
     const poEntry = { ts:new Date().toISOString(), action:"PO approved & generated", detail:`PO ${poNum} for ${sup?.name||"supplier"} — generated and downloaded`, user:settings.contactName||"You" };
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
     setActiveReq(prev=>({...prev,status:"approved",documents:[...(prev.documents||[]),doc]}));
+    setApprovedQuoteId(qa?._id||null);
     // Create order record
     const order = {
       id: poNum,
@@ -658,6 +689,21 @@ export default function App() {
     };
     setOrders(p=>[order,...p]);
     showToast(`PO ${poNum} generated — ready to send in Orders`);
+  }
+
+  function handleUndoApproval() {
+    if (!activeReq) return;
+    setApprovedQuoteId(null);
+    setRequests(p=>p.map(r=>r.id===activeReq.id?{
+      ...r,
+      status:"received",
+      documents:(r.documents||[]).filter(d=>d.type!=="generated"||d.id!==r.documents?.slice(-1)[0]?.id),
+      activity:[...(r.activity||[]),{ ts:new Date().toISOString(), action:"Approval undone", detail:"PO approval reversed", user:settings.contactName||"You" }]
+    }:r));
+    // Remove from orders
+    setOrders(p=>p.filter(o=>o.reqId!==activeReq.id||o.status==="sent"||o.status==="acknowledged"));
+    setActiveReq(prev=>({...prev,status:"received"}));
+    showToast("Approval undone — you can re-approve a different quote");
   }
 
   async function handleSaveDraftQuote(qa) {
@@ -809,6 +855,7 @@ ${settings.company||""}`;
             {id:"quotes",   label:"Quote analysis", d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
             {id:"orders",   label:"Orders", d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
             {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
+            {id:"library",  label:"Quote library",  d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
             {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
           ].map(item=>(
             <button key={item.id} onClick={()=>{setView(item.id);if(item.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);}}
@@ -1665,17 +1712,45 @@ ${settings.company||""}`;
                             {/* VAT note */}
                             {qa.vatNote&&<div style={{fontSize:12,color:"#94A3B8",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
 
-                            {/* Action buttons */}
+                            {/* Action buttons — smart conditional */}
                             <div style={{paddingTop:16,borderTop:"1px solid #F1F5F9"}}>
-                              <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-                                <Btn onClick={()=>handleApprovePO(qa)} color="#059669">✓ Approve &amp; generate PO</Btn>
-                                <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft PDF</Btn>
-                                <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove quote</Btn>
-                              </div>
-                              <div style={{fontSize:12,color:"#94A3B8"}}>
-                                <span style={{marginRight:16}}>✓ Approve &amp; generate PO — marks job approved, downloads PO, stores record</span>
-                                <span>Save as draft — downloads PDF for review, not yet approved</span>
-                              </div>
+                              {approvedQuoteId===qa._id ? (
+                                /* ── This quote IS the approved one ── */
+                                <div>
+                                  <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 18px",background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,border:"1px solid #A7F3D0",marginBottom:12}}>
+                                    <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,boxShadow:"0 4px 12px rgba(34,197,94,0.3)",flexShrink:0}}>✓</div>
+                                    <div style={{flex:1}}>
+                                      <div style={{fontSize:14,fontWeight:700,color:"#166534"}}>Quote approved — PO generated</div>
+                                      <div style={{fontSize:12,color:"#16A34A",marginTop:2}}>This quote has been approved and sent to Orders. The PO has been downloaded.</div>
+                                    </div>
+                                    <button onClick={handleUndoApproval} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+                                      ↩ Undo approval
+                                    </button>
+                                  </div>
+                                  <button onClick={()=>setView("orders")} style={{fontSize:13,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600}}>
+                                    View in Orders →
+                                  </button>
+                                </div>
+                              ) : approvedQuoteId && approvedQuoteId!==qa._id ? (
+                                /* ── Another quote has been approved — show reduced options ── */
+                                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                                  <div style={{fontSize:12,color:"#94A3B8",flex:1}}>Another quote has been approved for this job.</div>
+                                  <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft</Btn>
+                                  <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
+                                </div>
+                              ) : (
+                                /* ── No quote approved yet — show all options ── */
+                                <div>
+                                  <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+                                    <Btn onClick={()=>handleApprovePO(qa)} color="#16A34A">✓ Approve &amp; generate PO</Btn>
+                                    <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft PDF</Btn>
+                                    <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
+                                  </div>
+                                  <div style={{fontSize:11,color:"#94A3B8"}}>
+                                    Approving generates the PO, sends it to Orders for dispatch, and locks this quote. Other quotes will show reduced options.
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </Card>
                           );
@@ -2022,6 +2097,121 @@ ${settings.company||""}`;
                 )})}</tbody>
               </table>
             </Card>
+          </div>
+        )}
+
+        {/* ══ QUOTE LIBRARY ══ */}
+        {view==="library"&&(
+          <div style={{animation:"fadeIn 0.25s ease"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>PRICE HISTORY</div>
+                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"#0A0F1E"}}>Quote Library</h1>
+                <p style={{fontSize:15,color:"#64748B",marginTop:6}}>Every supplier quote ever received — track price changes over time</p>
+              </div>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"#166534",fontWeight:500}}>
+                  {quoteLibrary.length} quotes saved
+                </div>
+                {quoteLibrary.length>0&&(
+                  <button onClick={()=>{ if(window.confirm("Clear entire quote library? This cannot be undone.")) { setQuoteLibrary([]); localStorage.removeItem("piq_quote_library"); showToast("Library cleared"); }}} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>
+                    Clear all
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {quoteLibrary.length===0?(
+              <div style={{background:"white",borderRadius:24,border:"1px solid #F1F5F9",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                <div style={{width:80,height:80,background:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📚</div>
+                <div style={{fontSize:20,fontWeight:700,color:"#0A0F1E",marginBottom:8}}>No quotes saved yet</div>
+                <div style={{fontSize:14,color:"#94A3B8",maxWidth:380,margin:"0 auto",lineHeight:1.7}}>
+                  Every time you run AI analysis on a supplier quote, it gets saved here automatically. You can then track pricing trends and compare against previous quotes.
+                </div>
+              </div>
+            ):(
+              <div>
+                {/* Supplier scorecards */}
+                {(()=>{
+                  const bySupplier = {};
+                  quoteLibrary.forEach(q=>{
+                    if (!bySupplier[q.supplierName]) bySupplier[q.supplierName]={name:q.supplierName,quotes:[],avgCompleteness:0,priceHistory:[]};
+                    bySupplier[q.supplierName].quotes.push(q);
+                  });
+                  Object.values(bySupplier).forEach(s=>{
+                    s.avgCompleteness = Math.round(s.quotes.reduce((a,q)=>a+q.completeness,0)/s.quotes.length);
+                    s.quoteCount = s.quotes.length;
+                    s.lastQuoted = s.quotes[0]?.savedAt;
+                  });
+                  const scorecards = Object.values(bySupplier).sort((a,b)=>b.quoteCount-a.quoteCount);
+                  return(
+                    <div>
+                      <div style={{fontSize:13,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Supplier scorecards</div>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:28}}>
+                        {scorecards.map(s=>(
+                          <div key={s.name} style={{background:"white",borderRadius:16,border:"1px solid #F1F5F9",padding:"18px 20px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                              <div style={{width:40,height:40,background:"linear-gradient(135deg,#DCFCE7,#BBF7D0)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"#16A34A"}}>{s.name.charAt(0)}</div>
+                              <span style={{fontSize:11,fontWeight:600,background:"#F0FDF4",color:"#166534",padding:"3px 8px",borderRadius:20}}>{s.quoteCount} quote{s.quoteCount!==1?"s":""}</span>
+                            </div>
+                            <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E",marginBottom:8}}>{s.name}</div>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                              <div style={{fontSize:12,color:"#64748B"}}>Avg. completeness</div>
+                              <div style={{fontSize:18,fontWeight:700,color:s.avgCompleteness>=80?"#22C55E":s.avgCompleteness>=60?"#F59E0B":"#DC2626",fontFamily:"'JetBrains Mono',monospace"}}>{s.avgCompleteness}%</div>
+                            </div>
+                            <div style={{marginTop:6,height:4,background:"#F1F5F9",borderRadius:99,overflow:"hidden"}}>
+                              <div style={{height:"100%",width:`${s.avgCompleteness}%`,background:s.avgCompleteness>=80?"linear-gradient(90deg,#22C55E,#16A34A)":s.avgCompleteness>=60?"linear-gradient(90deg,#F59E0B,#D97706)":"linear-gradient(90deg,#EF4444,#DC2626)",borderRadius:99}}/>
+                            </div>
+                            {s.lastQuoted&&<div style={{fontSize:11,color:"#CBD5E1",marginTop:8}}>Last quoted {new Date(s.lastQuoted).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Full quote history table */}
+                <div style={{background:"white",borderRadius:20,border:"1px solid #F1F5F9",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                  <div style={{padding:"18px 24px",borderBottom:"1px solid #F8FAFC",background:"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
+                    <div style={{fontSize:15,fontWeight:700,color:"#0A0F1E"}}>Full quote history</div>
+                    <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>All quotes saved from AI analysis — newest first</div>
+                  </div>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr style={{background:"#F8FAFF"}}>
+                      {["Date","Supplier","Job ref","Trade","Completeness","Est. total","Carriage","Lead time","Items","Missing",""].map(h=>(
+                        <th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.06em",whiteSpace:"nowrap"}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>{quoteLibrary.map((q,i)=>(
+                      <tr key={q.id} style={{borderTop:"1px solid #F8FAFC"}}>
+                        <td style={{padding:"12px 14px",fontSize:12,color:"#64748B",whiteSpace:"nowrap"}}>{new Date(q.savedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</td>
+                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"#0A0F1E"}}>{q.supplierName}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:"#6366F1"}}>{q.jobRef}</td>
+                        <td style={{padding:"12px 14px"}}><span style={{background:"#F1F5F9",color:"#475569",fontSize:11,fontWeight:500,padding:"3px 8px",borderRadius:20}}>{q.trade}</span></td>
+                        <td style={{padding:"12px 14px"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{width:48,height:5,background:"#F1F5F9",borderRadius:99,overflow:"hidden"}}>
+                              <div style={{height:"100%",width:`${q.completeness}%`,background:q.completeness>=80?"#22C55E":q.completeness>=60?"#F59E0B":"#EF4444",borderRadius:99}}/>
+                            </div>
+                            <span style={{fontSize:12,fontWeight:600,color:q.completeness>=80?"#22C55E":q.completeness>=60?"#F59E0B":"#EF4444"}}>{q.completeness}%</span>
+                          </div>
+                        </td>
+                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"#0A0F1E",fontFamily:"'JetBrains Mono',monospace"}}>{q.totalEstimate||"—"}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,color:q.carriageCharge==="Free"?"#22C55E":q.carriageCharge==="Not stated"?"#94A3B8":"#DC2626",fontWeight:500}}>{q.carriageCharge||"—"}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,color:"#64748B"}}>{q.leadTime||"—"}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,color:"#64748B"}}>{q.items?.length||0}</td>
+                        <td style={{padding:"12px 14px"}}>
+                          {q.missing?.length>0?<span style={{background:"#FEF2F2",color:"#DC2626",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>{q.missing.length} missing</span>:<span style={{background:"#F0FDF4",color:"#16A34A",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>Complete</span>}
+                        </td>
+                        <td style={{padding:"12px 14px"}}>
+                          <button onClick={()=>setQuoteLibrary(p=>{ const n=p.filter(x=>x.id!==q.id); localStorage.setItem("piq_quote_library",JSON.stringify(n)); return n; })} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
+                        </td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
