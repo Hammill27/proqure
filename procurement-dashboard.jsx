@@ -109,44 +109,379 @@ async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliv
     `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}.\n\nItems required:\n${list}\n\nDelivery requirements:\n- Method: ${deliveryStr}\n- ${dateStr}\n${deadlineStr?"- "+deadlineStr:""}\n\nAsk for unit prices, availability, lead time, and please ask them to include carriage/delivery charges in their quotation. Keep it concise and professional. Clearly mention the delivery method and required date in the email.${deadlineStr?" Prominently include the response deadline.":""}`
   );
 }
-async function analyseQuote(items, quoteText, supplierName) {
-  const sys = `You are an expert AI procurement analyst for UK plumbing, HVAC, and electrical trades companies. A supplier has responded to a Request for Quotation. Your job is to perform a thorough, detailed analysis. Return ONLY valid JSON with no markdown, no explanation, no preamble.
+// ─── Quote text pre-processor ────────────────────────────────────────────────
+function preprocessQuoteText(raw) {
+  return raw
+    .replace(/
+/g, "
+")
+    .replace(/
+/g, "
+")
+    .replace(/[ 	]+/g, " ")           // collapse whitespace
+    .replace(/
+{3,}/g, "
 
-Required JSON format:
+")        // max double line break
+    .replace(/^(from|regards|thanks|sent from|dear|hi |hello|to:|cc:|subject:|date:).*/gim, "") // strip email headers/footers
+    .replace(/[^ -~
+£€$]/g, " ") // strip non-printable except currency
+    .trim();
+}
+
+// ─── Parse price string to float ──────────────────────────────────────────────
+function parsePrice(s) {
+  if (!s || typeof s !== "string") return null;
+  const n = parseFloat(s.replace(/[^0-9.]/g, ""));
+  return isNaN(n) ? null : n;
+}
+
+// ─── JavaScript post-processor — validates AI output ─────────────────────────
+function validateAndFix(analysis, requestedItems) {
+  if (!analysis || analysis.error) return analysis;
+
+  const warnings = [...(analysis.warnings||[])];
+  const matched = (analysis.matched||[]).map(m => {
+    let confidence = "high";
+    const unitPrice = parsePrice(m.unitPrice);
+    const requestedQty = parseFloat(m.requestedQty) || 0;
+    const quotedQty = parseFloat(m.quotedQty) || requestedQty;
+
+    // Recalculate line total from unit price × quoted qty
+    let calculatedTotal = null;
+    if (unitPrice !== null && quotedQty > 0) {
+      calculatedTotal = unitPrice * quotedQty;
+      const aiTotal = parsePrice(m.lineTotal);
+      if (aiTotal !== null && Math.abs(aiTotal - calculatedTotal) > 0.02) {
+        warnings.push(`Maths check: ${m.item} — AI said £${aiTotal.toFixed(2)} but ${quotedQty} × £${unitPrice.toFixed(2)} = £${calculatedTotal.toFixed(2)}`);
+        confidence = "low";
+      }
+    }
+
+    // Flag uncertain prices
+    if (!m.unitPrice || m.unitPrice === "Not quoted" || m.unitPrice === "POA" || m.unitPrice === "TBA" || m.unitPrice === "—") {
+      confidence = "low";
+    }
+
+    // Flag if unit price looks suspiciously high or low (sanity check)
+    if (unitPrice !== null) {
+      if (unitPrice < 0.01) { warnings.push(`Suspicious price: ${m.item} quoted at £${unitPrice} — please verify`); confidence = "low"; }
+      if (unitPrice > 50000) { warnings.push(`Unusually high price: ${m.item} at £${unitPrice} — please verify`); confidence = "low"; }
+    }
+
+    // Flag qty mismatch
+    if (requestedQty > 0 && quotedQty > 0 && Math.abs(requestedQty - quotedQty) > 0.001) {
+      confidence = confidence === "high" ? "medium" : confidence;
+    }
+
+    // Vague stock status — downgrade confidence
+    if (m.stockQty === "unknown" || (typeof m.inStock !== "boolean")) {
+      confidence = confidence === "high" ? "medium" : confidence;
+    }
+
+    return {
+      ...m,
+      lineTotal: calculatedTotal !== null ? `£${calculatedTotal.toFixed(2)}` : m.lineTotal,
+      confidence,
+    };
+  });
+
+  // Recompute subtotal from validated line totals
+  const computedSubtotal = matched.reduce((sum, m) => {
+    const t = parsePrice(m.lineTotal);
+    return sum + (t || 0);
+  }, 0);
+
+  const aiSubtotal = parsePrice(analysis.subtotal);
+  if (aiSubtotal !== null && computedSubtotal > 0 && Math.abs(aiSubtotal - computedSubtotal) > 0.50) {
+    warnings.push(`Subtotal check: AI said ${analysis.subtotal} but line totals add up to £${computedSubtotal.toFixed(2)}`);
+  }
+
+  // Use computed subtotal if more reliable
+  const finalSubtotal = computedSubtotal > 0 ? `£${computedSubtotal.toFixed(2)}` : analysis.subtotal;
+
+  // Recompute estimated total with carriage
+  const carriageAmt = parsePrice(analysis.carriageCharge);
+  const finalTotal = carriageAmt !== null && computedSubtotal > 0
+    ? `£${(computedSubtotal + carriageAmt).toFixed(2)}`
+    : analysis.estimatedTotal || finalSubtotal;
+
+  // Completeness score — verify against actual matched vs requested
+  const requestedCount = requestedItems.length;
+  const matchedCount = matched.filter(m => m.unitPrice && m.unitPrice !== "Not quoted" && m.unitPrice !== "—").length;
+  const missingCount = (analysis.missing||[]).length;
+  const computedCompleteness = requestedCount > 0
+    ? Math.round((matchedCount / requestedCount) * 100)
+    : analysis.completeness;
+
+  // Use the lower of AI completeness or computed — prevents AI over-claiming
+  const finalCompleteness = Math.min(analysis.completeness || 0, computedCompleteness);
+
+  // Flag carriage ambiguity
+  const carriageRaw = (analysis.carriageCharge||"").toLowerCase();
+  if (carriageRaw.includes("over") || carriageRaw.includes("above") || carriageRaw.includes("minimum") || carriageRaw.includes("depending")) {
+    warnings.push(`Carriage condition: "${analysis.carriageCharge}" — verify whether this order qualifies for free delivery`);
+  }
+
+  // Overall verdict based on validated completeness
+  const overallVerdict = finalCompleteness >= 90 ? "excellent"
+    : finalCompleteness >= 75 ? "good"
+    : finalCompleteness >= 50 ? "partial"
+    : "poor";
+
+  return {
+    ...analysis,
+    matched,
+    warnings: [...new Set(warnings)], // deduplicate
+    subtotal: finalSubtotal,
+    estimatedTotal: finalTotal,
+    completeness: finalCompleteness,
+    overallVerdict,
+    _validated: true,
+  };
+}
+
+// ─── Stage 1: Extract raw line items from quote ───────────────────────────────
+async function extractQuoteLines(quoteText, supplierName) {
+  const sys = `You are a data extraction specialist. Your ONLY job is to extract every pricing line from a supplier quote EXACTLY as written. Do not interpret, match, or analyse anything. Just extract the raw lines.
+
+Return ONLY valid JSON — no markdown, no explanation:
 {
   "supplierName": "...",
-  "completeness": 0-100,
-  "recommendation": "short plain-english verdict",
-  "overallVerdict": "excellent|good|partial|poor",
-  "subtotal": "£0.00",
-  "carriageCharge": "£0.00 or Free or Not stated",
-  "vatNote": "string",
-  "estimatedTotal": "£0.00",
-  "leadTime": "string",
-  "discounts": [{"item":"...","discount":"...","detail":"..."}],
-  "matched": [{"item":"...","requestedQty":0,"requestedUnit":"...","quotedQty":0,"quotedUnit":"...","unitPrice":"...","lineTotal":"...","inStock":true,"stockQty":"...or unknown","qtyMatch":true,"notes":"..."}],
-  "missing": [{"item":"...","reason":"not quoted|out of stock|discontinued"}],
-  "alternatives": [{"requestedItem":"...","alternativeOffered":"...","altPrice":"...","reason":"...","recommended":true}],
-  "warnings": ["..."],
-  "positives": ["..."]
+  "lines": [
+    {"rawText":"exact line from quote","product":"product name as written","qty":null or number,"unit":"unit as written or null","unitPrice":null or number,"lineTotal":null or number,"currency":"GBP"}
+  ],
+  "carriageRaw": "exact carriage text or null",
+  "leadTimeRaw": "exact lead time text or null",
+  "vatRaw": "exact VAT text or null",
+  "discountRaw": "exact discount text or null",
+  "quoteRef": "supplier quote reference or null"
+}
+
+Rules — CRITICAL:
+- Copy product names EXACTLY as they appear — do not normalise or interpret
+- If a price says "POA", "TBA", "Call", "On application" — set unitPrice to null and note in rawText
+- If a quantity is ambiguous (e.g. "10 x 3m lengths") — set qty to null and preserve rawText exactly
+- ONLY include lines that are clearly products or services being quoted
+- Do NOT include lines that are email headers, signatures, addresses, payment terms
+- If you cannot find a numeric price — set unitPrice to null, never guess`;
+
+  const cleaned = preprocessQuoteText(quoteText);
+  const raw = await callAI(sys,
+    `Supplier: ${supplierName||"Unknown"}
+
+Quote text:
+${cleaned}
+
+Extract all pricing lines as JSON.`
+  );
+  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); }
+  catch { return { lines:[], error:"extraction_failed", raw }; }
+}
+
+// ─── Stage 2: Match extracted lines to requested items ────────────────────────
+async function matchQuoteToRequest(requestedItems, extractedLines, supplierName) {
+  const reqList = requestedItems.map((item,i) =>
+    `${i+1}. ${item.quantity} ${item.unit} of "${item.description}"${item.notes?` [Note: ${item.notes}]`:""}`
+  ).join("
+");
+
+  const lineList = (extractedLines.lines||[]).map((l,i) =>
+    `${i+1}. "${l.rawText}" | product: ${l.product} | qty: ${l.qty??'?'} | unit: ${l.unit??'?'} | unitPrice: ${l.unitPrice??'?'} | lineTotal: ${l.lineTotal??'?'}`
+  ).join("
+");
+
+  const sys = `You are a procurement matching specialist. Match supplier quote lines to requested items. Be STRICT — only match if you are genuinely confident. Return ONLY valid JSON, no markdown.
+
+Output format:
+{
+  "matched": [
+    {
+      "requestedItem": "description from request",
+      "requestedQty": number,
+      "requestedUnit": "unit",
+      "quotedProduct": "product name from quote",
+      "quotedQty": number or null,
+      "quotedUnit": "unit from quote or null",
+      "unitPrice": "£X.XX or Not quoted",
+      "lineTotal": "£X.XX or null",
+      "inStock": true/false/null,
+      "stockQty": "number or unknown",
+      "leadTime": "string or null",
+      "qtyMatch": true/false,
+      "matchConfidence": "high|medium|low",
+      "matchReason": "brief explanation of why these match",
+      "notes": "any relevant notes"
+    }
+  ],
+  "missing": [
+    {"item":"description","reason":"not found in quote|out of stock|discontinued|price on application"}
+  ],
+  "alternatives": [
+    {"requestedItem":"...","alternativeOffered":"...","altPrice":"...","reason":"why alternative","recommended":true/false}
+  ],
+  "unmatchedQuoteLines": ["lines in quote that didn't match any requested item"]
+}
+
+Matching rules — CRITICAL:
+- Match based on product type, specification, and size — a "22mm compression elbow" matches "22mm elbow compression fitting"
+- Do NOT match if the specification is different (e.g. 15mm vs 22mm, copper vs plastic)
+- If partially matching (e.g. similar product but different spec) — set matchConfidence to "low" and explain in matchReason
+- If a requested item appears NOWHERE in the quote — put it in missing, do not force a match
+- qtyMatch is true only if quotedQty equals requestedQty exactly
+- inStock: true if quote says "in stock", "available", "ex-stock"; false if "out of stock", "unavailable"; null if not mentioned
+- matchConfidence high = clear exact match, medium = likely match with minor differences, low = uncertain`;
+
+  const raw = await callAI(sys,
+    `Supplier: ${supplierName||"Unknown"}
+
+Requested items:
+${reqList}
+
+Extracted quote lines:
+${lineList||"(no lines extracted)"}
+
+Match and return JSON.`
+  );
+  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); }
+  catch { return { matched:[], missing:requestedItems.map(i=>({item:i.description,reason:"matching_failed"})), error:"matching_failed" }; }
+}
+
+// ─── Stage 3: Synthesise final analysis ──────────────────────────────────────
+async function synthesiseAnalysis(requestedItems, extractedData, matchedData, supplierName) {
+  const sys = `You are a senior procurement analyst. You have been given pre-extracted and pre-matched quote data. Your job is to produce a final analysis summary. Return ONLY valid JSON, no markdown.
+
+Output:
+{
+  "supplierName": "...",
+  "recommendation": "2-sentence plain-English verdict — be specific about value, completeness, and any concerns",
+  "discounts": [{"item":"...","discount":"percent or amount","detail":"condition if any"}],
+  "positives": ["specific positive points — max 4"],
+  "warnings": ["specific warnings — only real issues, max 5"],
+  "vatNote": "exact VAT statement from quote or 'Not stated'",
+  "carriageCharge": "£X.XX or Free or Free over £X or Not stated — use exact wording from quote",
+  "leadTime": "exact lead time from quote or Not stated"
 }
 
 Rules:
-- Extract EVERY price, quantity, stock level, lead time, carriage/delivery charge from the quote
-- For each matched item check if the quoted quantity matches requested quantity exactly
-- Flag any quantity discrepancies clearly in qtyMatch field
-- Identify any discount mentions (bulk discount, trade account discount, promotional pricing)
-- Extract carriage/delivery charges even if mentioned in passing
-- Note lead times for each item if stated, or overall lead time
-- Suggest alternatives only if the supplier explicitly offers them
-- Be accurate with maths - calculate line totals and subtotal correctly
-- If price is not stated for an item, note it as "Not quoted"`;
+- Base EVERYTHING on the provided data — do not invent or assume anything
+- If carriageCharge has a condition (e.g. free over £150) — include the full condition
+- Discounts only if explicitly stated in the quote — never infer
+- Warnings only for real problems: missing items, qty mismatches, unclear prices, conditional carriage
+- Positives only for genuinely good things: fast delivery, full availability, competitive pricing
+- Recommendation must reference the actual completeness and total`;
 
-  const req = items.map(i=>`- ${i.quantity} ${i.unit} of ${i.description}`).join("\n");
+  const summary = {
+    supplier: supplierName,
+    requested: requestedItems.map(i=>`${i.quantity} ${i.unit} ${i.description}`),
+    matched: matchedData.matched?.length||0,
+    missing: matchedData.missing?.length||0,
+    carriageRaw: extractedData.carriageRaw||"not stated",
+    leadTimeRaw: extractedData.leadTimeRaw||"not stated",
+    vatRaw: extractedData.vatRaw||"not stated",
+    discountRaw: extractedData.discountRaw||"none",
+    warnings: matchedData.matched?.filter(m=>!m.qtyMatch||m.matchConfidence==="low").map(m=>`${m.requestedItem}: ${m.matchReason}`)||[],
+  };
+
   const raw = await callAI(sys,
-    `Supplier name: ${supplierName||"Unknown supplier"}\n\nOriginal material request:\n${req}\n\nSupplier quote received:\n${quoteText}\n\nPerform full analysis and return JSON.`
+    `Data summary:
+${JSON.stringify(summary,null,2)}
+
+Produce final analysis JSON.`
   );
-  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); } catch { return {error:true, raw}; }
+  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); }
+  catch { return { recommendation:"Analysis complete.", discounts:[], positives:[], warnings:[], vatNote:"Not stated", carriageCharge:"Not stated", leadTime:"Not stated" }; }
+}
+
+// ─── Master analyseQuote — orchestrates all stages ───────────────────────────
+async function analyseQuote(items, quoteText, supplierName, onProgress) {
+  const progress = onProgress || (()=>{});
+
+  try {
+    // Stage 1: Extract
+    progress("Extracting quote data…");
+    const extracted = await extractQuoteLines(quoteText, supplierName);
+
+    // Stage 2: Match
+    progress("Matching items to request…");
+    const matched = await matchQuoteToRequest(items, extracted, supplierName);
+
+    // Stage 3: Synthesise
+    progress("Validating and calculating…");
+    const synthesis = await synthesiseAnalysis(items, extracted, matched, supplierName);
+
+    // Compute subtotal from matched lines
+    const lineTotal = (matched.matched||[]).reduce((sum,m)=>{
+      const p = parsePrice(m.unitPrice);
+      const q = parseFloat(m.quotedQty) || parseFloat(m.requestedQty) || 0;
+      return sum + (p !== null && q > 0 ? p * q : parsePrice(m.lineTotal) || 0);
+    }, 0);
+
+    const carriageAmt = parsePrice(synthesis.carriageCharge);
+    const estimatedTotal = lineTotal > 0
+      ? `£${(lineTotal + (carriageAmt||0)).toFixed(2)}`
+      : null;
+
+    // Completeness — based on actual matched with real prices
+    const pricedItems = (matched.matched||[]).filter(m => parsePrice(m.unitPrice) !== null && m.matchConfidence !== "low");
+    const completeness = items.length > 0
+      ? Math.round((pricedItems.length / items.length) * 100)
+      : 0;
+
+    const overallVerdict = completeness >= 90 ? "excellent"
+      : completeness >= 75 ? "good"
+      : completeness >= 50 ? "partial" : "poor";
+
+    // Build unified result
+    const result = {
+      supplierName: extracted.supplierName || supplierName,
+      completeness,
+      overallVerdict,
+      recommendation: synthesis.recommendation || "",
+      subtotal: lineTotal > 0 ? `£${lineTotal.toFixed(2)}` : "Not calculated",
+      carriageCharge: synthesis.carriageCharge || "Not stated",
+      vatNote: synthesis.vatNote || "Not stated",
+      estimatedTotal: estimatedTotal || "Not calculated",
+      leadTime: synthesis.leadTime || extracted.leadTimeRaw || "Not stated",
+      discounts: synthesis.discounts || [],
+      matched: (matched.matched||[]).map(m => ({
+        item: m.requestedItem,
+        requestedQty: m.requestedQty,
+        requestedUnit: m.requestedUnit,
+        quotedQty: m.quotedQty,
+        quotedUnit: m.quotedUnit || m.requestedUnit,
+        unitPrice: m.unitPrice || "Not quoted",
+        lineTotal: (() => {
+          const p = parsePrice(m.unitPrice);
+          const q = parseFloat(m.quotedQty) || parseFloat(m.requestedQty) || 0;
+          return p !== null && q > 0 ? `£${(p*q).toFixed(2)}` : m.lineTotal || "—";
+        })(),
+        inStock: m.inStock,
+        stockQty: m.stockQty || "unknown",
+        qtyMatch: m.qtyMatch,
+        confidence: m.matchConfidence,
+        notes: [m.matchReason, m.notes].filter(Boolean).join(" · ") || "—",
+      })),
+      missing: matched.missing || [],
+      alternatives: matched.alternatives || [],
+      warnings: [
+        ...(synthesis.warnings||[]),
+        ...(matched.matched||[])
+          .filter(m=>m.matchConfidence==="low")
+          .map(m=>`Low confidence match: "${m.requestedItem}" → "${m.quotedProduct||"?"}" — please verify`),
+      ].slice(0,8),
+      positives: synthesis.positives || [],
+      quoteRef: extracted.quoteRef || null,
+      _validated: true,
+      _stages: { extracted: extracted.lines?.length||0, matched: matched.matched?.length||0 },
+    };
+
+    // Final JS validation pass
+    return validateAndFix(result, items);
+
+  } catch(e) {
+    return { error:true, errorMessage: e.message };
+  }
 }
 
 // ─── Extract quote text from uploaded file using AI ──────────────────────────
@@ -2196,6 +2531,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                   <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
                                 </div>
                                 <div style={{fontSize:13,color:"var(--text-secondary)"}}>{qa.recommendation}</div>
+                                {qa._stages&&<div style={{fontSize:10,color:"var(--text-muted)",marginTop:4}}>
+                                  {qa._stages.extracted} lines extracted · {qa._stages.matched} items matched · JS-validated
+                                </div>}
                               </div>
                               <div style={{textAlign:"right",flexShrink:0,marginLeft:20}}>
                                 <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:2}}>Completeness</div>
@@ -2246,7 +2584,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div style={{overflowX:"auto"}}>
                                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                                     <thead><tr style={{background:"var(--green-mint)"}}>
-                                      {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty ✓","Notes"].map(h=>(
+                                      {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty ✓","Notes",""].map(h=>(
                                         <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{h}</th>
                                       ))}
                                     </tr></thead>
@@ -2267,6 +2605,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                           }
                                         </td>
                                         <td style={{padding:"9px 10px",fontSize:12,color:"var(--text-secondary)"}}>{m.notes||"—"}</td>
+                                        <td style={{padding:"9px 10px"}}>
+                                          {m.confidence==="low"&&<span title="Low confidence match — please verify" style={{fontSize:11,background:"var(--amber-light)",color:"var(--amber)",fontWeight:700,padding:"2px 8px",borderRadius:99,cursor:"help"}}>⚠ Check</span>}
+                                          {m.confidence==="medium"&&<span title="Medium confidence — likely correct" style={{fontSize:11,background:"var(--bg-subtle2)",color:"var(--text-tertiary)",padding:"2px 8px",borderRadius:99}}>~</span>}
+                                        </td>
                                       </tr>
                                     ))}</tbody>
                                   </table>
