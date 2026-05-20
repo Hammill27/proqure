@@ -10,7 +10,7 @@ function useIsMobile() {
   return isMobile;
 }
 
-// ─── Speech recognition hook ─────────────────────────────────────────────────
+// --- Speech recognition hook -------------------------------------------------
 function useSpeechRecognition({ onTranscript, onFinal }) {
   const recRef = useRef(null);
   const [listening, setListening] = useState(false);
@@ -38,7 +38,7 @@ function useSpeechRecognition({ onTranscript, onFinal }) {
   return { listening, supported, start, stop };
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// --- Constants ----------------------------------------------------------------
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 const RESEND_API    = "https://api.resend.com/emails";
 const TRADES = ["Plumbing","HVAC","Electrical","Ventilation","Mechanical"];
@@ -56,7 +56,7 @@ const STATUS = {
   approved: { bg:"#DCFCE7", text:"#166534",  label:"Approved" },
 };
 
-// ─── AI helpers ───────────────────────────────────────────────────────────────
+// --- AI helpers ---------------------------------------------------------------
 async function callAI(system, user, history=[]) {
   const key = window.__piq_or_key__ || "";
   if (!key) throw new Error("NO_KEY");
@@ -109,7 +109,7 @@ async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliv
     `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}.\n\nItems required:\n${list}\n\nDelivery requirements:\n- Method: ${deliveryStr}\n- ${dateStr}\n${deadlineStr?"- "+deadlineStr:""}\n\nAsk for unit prices, availability, lead time, and please ask them to include carriage/delivery charges in their quotation. Keep it concise and professional. Clearly mention the delivery method and required date in the email.${deadlineStr?" Prominently include the response deadline.":""}`
   );
 }
-// ─── Quote text pre-processor ────────────────────────────────────────────────
+// --- Quote text pre-processor ------------------------------------------------
 function preprocessQuoteText(raw) {
   return raw
     .replace(/\r\n/g, "\n")
@@ -121,14 +121,14 @@ function preprocessQuoteText(raw) {
     .trim();
 }
 
-// ─── Parse price string to float ──────────────────────────────────────────────
+// --- Parse price string to float ----------------------------------------------
 function parsePrice(s) {
   if (!s || typeof s !== "string") return null;
   const n = parseFloat(s.replace(/[^0-9.]/g, ""));
   return isNaN(n) ? null : n;
 }
 
-// ─── JavaScript post-processor — validates AI output ─────────────────────────
+// --- JavaScript post-processor - validates AI output -------------------------
 function validateAndFix(analysis, requestedItems) {
   if (!analysis || analysis.error) return analysis;
 
@@ -145,20 +145,20 @@ function validateAndFix(analysis, requestedItems) {
       calculatedTotal = unitPrice * quotedQty;
       const aiTotal = parsePrice(m.lineTotal);
       if (aiTotal !== null && Math.abs(aiTotal - calculatedTotal) > 0.02) {
-        warnings.push(`Maths check: ${m.item} — AI said £${aiTotal.toFixed(2)} but ${quotedQty} × £${unitPrice.toFixed(2)} = £${calculatedTotal.toFixed(2)}`);
+        warnings.push(`Maths check: ${m.item} - AI said £${aiTotal.toFixed(2)} but ${quotedQty} × £${unitPrice.toFixed(2)} = £${calculatedTotal.toFixed(2)}`);
         confidence = "low";
       }
     }
 
     // Flag uncertain prices
-    if (!m.unitPrice || m.unitPrice === "Not quoted" || m.unitPrice === "POA" || m.unitPrice === "TBA" || m.unitPrice === "—") {
+    if (!m.unitPrice || m.unitPrice === "Not quoted" || m.unitPrice === "POA" || m.unitPrice === "TBA" || m.unitPrice === "-") {
       confidence = "low";
     }
 
     // Flag if unit price looks suspiciously high or low (sanity check)
     if (unitPrice !== null) {
-      if (unitPrice < 0.01) { warnings.push(`Suspicious price: ${m.item} quoted at £${unitPrice} — please verify`); confidence = "low"; }
-      if (unitPrice > 50000) { warnings.push(`Unusually high price: ${m.item} at £${unitPrice} — please verify`); confidence = "low"; }
+      if (unitPrice < 0.01) { warnings.push(`Suspicious price: ${m.item} quoted at £${unitPrice} - please verify`); confidence = "low"; }
+      if (unitPrice > 50000) { warnings.push(`Unusually high price: ${m.item} at £${unitPrice} - please verify`); confidence = "low"; }
     }
 
     // Flag qty mismatch
@@ -166,7 +166,7 @@ function validateAndFix(analysis, requestedItems) {
       confidence = confidence === "high" ? "medium" : confidence;
     }
 
-    // Vague stock status — downgrade confidence
+    // Vague stock status - downgrade confidence
     if (m.stockQty === "unknown" || (typeof m.inStock !== "boolean")) {
       confidence = confidence === "high" ? "medium" : confidence;
     }
@@ -198,21 +198,21 @@ function validateAndFix(analysis, requestedItems) {
     ? `£${(computedSubtotal + carriageAmt).toFixed(2)}`
     : analysis.estimatedTotal || finalSubtotal;
 
-  // Completeness score — verify against actual matched vs requested
+  // Completeness score - verify against actual matched vs requested
   const requestedCount = requestedItems.length;
-  const matchedCount = matched.filter(m => m.unitPrice && m.unitPrice !== "Not quoted" && m.unitPrice !== "—").length;
+  const matchedCount = matched.filter(m => m.unitPrice && m.unitPrice !== "Not quoted" && m.unitPrice !== "-").length;
   const missingCount = (analysis.missing||[]).length;
   const computedCompleteness = requestedCount > 0
     ? Math.round((matchedCount / requestedCount) * 100)
     : analysis.completeness;
 
-  // Use the lower of AI completeness or computed — prevents AI over-claiming
+  // Use the lower of AI completeness or computed - prevents AI over-claiming
   const finalCompleteness = Math.min(analysis.completeness || 0, computedCompleteness);
 
   // Flag carriage ambiguity
   const carriageRaw = (analysis.carriageCharge||"").toLowerCase();
   if (carriageRaw.includes("over") || carriageRaw.includes("above") || carriageRaw.includes("minimum") || carriageRaw.includes("depending")) {
-    warnings.push(`Carriage condition: "${analysis.carriageCharge}" — verify whether this order qualifies for free delivery`);
+    warnings.push(`Carriage condition: "${analysis.carriageCharge}" - verify whether this order qualifies for free delivery`);
   }
 
   // Overall verdict based on validated completeness
@@ -233,11 +233,11 @@ function validateAndFix(analysis, requestedItems) {
   };
 }
 
-// ─── Stage 1: Extract raw line items from quote ───────────────────────────────
+// --- Stage 1: Extract raw line items from quote -------------------------------
 async function extractQuoteLines(quoteText, supplierName) {
   const sys = `You are a data extraction specialist. Your ONLY job is to extract every pricing line from a supplier quote EXACTLY as written. Do not interpret, match, or analyse anything. Just extract the raw lines.
 
-Return ONLY valid JSON — no markdown, no explanation:
+Return ONLY valid JSON - no markdown, no explanation:
 {
   "supplierName": "...",
   "lines": [
@@ -250,13 +250,13 @@ Return ONLY valid JSON — no markdown, no explanation:
   "quoteRef": "supplier quote reference or null"
 }
 
-Rules — CRITICAL:
-- Copy product names EXACTLY as they appear — do not normalise or interpret
-- If a price says "POA", "TBA", "Call", "On application" — set unitPrice to null and note in rawText
-- If a quantity is ambiguous (e.g. "10 x 3m lengths") — set qty to null and preserve rawText exactly
+Rules - CRITICAL:
+- Copy product names EXACTLY as they appear - do not normalise or interpret
+- If a price says "POA", "TBA", "Call", "On application" - set unitPrice to null and note in rawText
+- If a quantity is ambiguous (e.g. "10 x 3m lengths") - set qty to null and preserve rawText exactly
 - ONLY include lines that are clearly products or services being quoted
 - Do NOT include lines that are email headers, signatures, addresses, payment terms
-- If you cannot find a numeric price — set unitPrice to null, never guess`;
+- If you cannot find a numeric price - set unitPrice to null, never guess`;
 
   const cleaned = preprocessQuoteText(quoteText);
   const raw = await callAI(sys,
@@ -271,7 +271,7 @@ Extract all pricing lines as JSON.`
   catch { return { lines:[], error:"extraction_failed", raw }; }
 }
 
-// ─── Stage 2: Match extracted lines to requested items ────────────────────────
+// --- Stage 2: Match extracted lines to requested items ------------------------
 async function matchQuoteToRequest(requestedItems, extractedLines, supplierName) {
   const reqList = requestedItems.map((item,i) =>
     `${i+1}. ${item.quantity} ${item.unit} of "${item.description}"${item.notes?` [Note: ${item.notes}]`:""}`
@@ -281,7 +281,7 @@ async function matchQuoteToRequest(requestedItems, extractedLines, supplierName)
     `${i+1}. "${l.rawText}" | product: ${l.product} | qty: ${l.qty??'?'} | unit: ${l.unit??'?'} | unitPrice: ${l.unitPrice??'?'} | lineTotal: ${l.lineTotal??'?'}`
   ).join("\n")
 
-  const sys = `You are a procurement matching specialist. Match supplier quote lines to requested items. Be STRICT — only match if you are genuinely confident. Return ONLY valid JSON, no markdown.
+  const sys = `You are a procurement matching specialist. Match supplier quote lines to requested items. Be STRICT - only match if you are genuinely confident. Return ONLY valid JSON, no markdown.
 
 Output format:
 {
@@ -313,11 +313,11 @@ Output format:
   "unmatchedQuoteLines": ["lines in quote that didn't match any requested item"]
 }
 
-Matching rules — CRITICAL:
-- Match based on product type, specification, and size — a "22mm compression elbow" matches "22mm elbow compression fitting"
+Matching rules - CRITICAL:
+- Match based on product type, specification, and size - a "22mm compression elbow" matches "22mm elbow compression fitting"
 - Do NOT match if the specification is different (e.g. 15mm vs 22mm, copper vs plastic)
-- If partially matching (e.g. similar product but different spec) — set matchConfidence to "low" and explain in matchReason
-- If a requested item appears NOWHERE in the quote — put it in missing, do not force a match
+- If partially matching (e.g. similar product but different spec) - set matchConfidence to "low" and explain in matchReason
+- If a requested item appears NOWHERE in the quote - put it in missing, do not force a match
 - qtyMatch is true only if quotedQty equals requestedQty exactly
 - inStock: true if quote says "in stock", "available", "ex-stock"; false if "out of stock", "unavailable"; null if not mentioned
 - matchConfidence high = clear exact match, medium = likely match with minor differences, low = uncertain`;
@@ -337,26 +337,26 @@ Match and return JSON.`
   catch { return { matched:[], missing:requestedItems.map(i=>({item:i.description,reason:"matching_failed"})), error:"matching_failed" }; }
 }
 
-// ─── Stage 3: Synthesise final analysis ──────────────────────────────────────
+// --- Stage 3: Synthesise final analysis --------------------------------------
 async function synthesiseAnalysis(requestedItems, extractedData, matchedData, supplierName) {
   const sys = `You are a senior procurement analyst. You have been given pre-extracted and pre-matched quote data. Your job is to produce a final analysis summary. Return ONLY valid JSON, no markdown.
 
 Output:
 {
   "supplierName": "...",
-  "recommendation": "2-sentence plain-English verdict — be specific about value, completeness, and any concerns",
+  "recommendation": "2-sentence plain-English verdict - be specific about value, completeness, and any concerns",
   "discounts": [{"item":"...","discount":"percent or amount","detail":"condition if any"}],
-  "positives": ["specific positive points — max 4"],
-  "warnings": ["specific warnings — only real issues, max 5"],
+  "positives": ["specific positive points - max 4"],
+  "warnings": ["specific warnings - only real issues, max 5"],
   "vatNote": "exact VAT statement from quote or 'Not stated'",
-  "carriageCharge": "£X.XX or Free or Free over £X or Not stated — use exact wording from quote",
+  "carriageCharge": "£X.XX or Free or Free over £X or Not stated - use exact wording from quote",
   "leadTime": "exact lead time from quote or Not stated"
 }
 
 Rules:
-- Base EVERYTHING on the provided data — do not invent or assume anything
-- If carriageCharge has a condition (e.g. free over £150) — include the full condition
-- Discounts only if explicitly stated in the quote — never infer
+- Base EVERYTHING on the provided data - do not invent or assume anything
+- If carriageCharge has a condition (e.g. free over £150) - include the full condition
+- Discounts only if explicitly stated in the quote - never infer
 - Warnings only for real problems: missing items, qty mismatches, unclear prices, conditional carriage
 - Positives only for genuinely good things: fast delivery, full availability, competitive pricing
 - Recommendation must reference the actual completeness and total`;
@@ -383,21 +383,21 @@ Produce final analysis JSON.`
   catch { return { recommendation:"Analysis complete.", discounts:[], positives:[], warnings:[], vatNote:"Not stated", carriageCharge:"Not stated", leadTime:"Not stated" }; }
 }
 
-// ─── Master analyseQuote — orchestrates all stages ───────────────────────────
+// --- Master analyseQuote - orchestrates all stages ---------------------------
 async function analyseQuote(items, quoteText, supplierName, onProgress) {
   const progress = onProgress || (()=>{});
 
   try {
     // Stage 1: Extract
-    progress("Extracting quote data…");
+    progress("Extracting quote data...");
     const extracted = await extractQuoteLines(quoteText, supplierName);
 
     // Stage 2: Match
-    progress("Matching items to request…");
+    progress("Matching items to request...");
     const matched = await matchQuoteToRequest(items, extracted, supplierName);
 
     // Stage 3: Synthesise
-    progress("Validating and calculating…");
+    progress("Validating and calculating...");
     const synthesis = await synthesiseAnalysis(items, extracted, matched, supplierName);
 
     // Compute subtotal from matched lines
@@ -412,7 +412,7 @@ async function analyseQuote(items, quoteText, supplierName, onProgress) {
       ? `£${(lineTotal + (carriageAmt||0)).toFixed(2)}`
       : null;
 
-    // Completeness — based on actual matched with real prices
+    // Completeness - based on actual matched with real prices
     const pricedItems = (matched.matched||[]).filter(m => parsePrice(m.unitPrice) !== null && m.matchConfidence !== "low");
     const completeness = items.length > 0
       ? Math.round((pricedItems.length / items.length) * 100)
@@ -444,13 +444,13 @@ async function analyseQuote(items, quoteText, supplierName, onProgress) {
         lineTotal: (() => {
           const p = parsePrice(m.unitPrice);
           const q = parseFloat(m.quotedQty) || parseFloat(m.requestedQty) || 0;
-          return p !== null && q > 0 ? `£${(p*q).toFixed(2)}` : m.lineTotal || "—";
+          return p !== null && q > 0 ? `£${(p*q).toFixed(2)}` : m.lineTotal || "-";
         })(),
         inStock: m.inStock,
         stockQty: m.stockQty || "unknown",
         qtyMatch: m.qtyMatch,
         confidence: m.matchConfidence,
-        notes: [m.matchReason, m.notes].filter(Boolean).join(" · ") || "—",
+        notes: [m.matchReason, m.notes].filter(Boolean).join(" · ") || "-",
       })),
       missing: matched.missing || [],
       alternatives: matched.alternatives || [],
@@ -458,7 +458,7 @@ async function analyseQuote(items, quoteText, supplierName, onProgress) {
         ...(synthesis.warnings||[]),
         ...(matched.matched||[])
           .filter(m=>m.matchConfidence==="low")
-          .map(m=>`Low confidence match: "${m.requestedItem}" → "${m.quotedProduct||"?"}" — please verify`),
+          .map(m=>`Low confidence match: "${m.requestedItem}" > "${m.quotedProduct||"?"}" - please verify`),
       ].slice(0,8),
       positives: synthesis.positives || [],
       quoteRef: extracted.quoteRef || null,
@@ -474,7 +474,7 @@ async function analyseQuote(items, quoteText, supplierName, onProgress) {
   }
 }
 
-// ─── Extract quote text from uploaded file using AI ──────────────────────────
+// --- Extract quote text from uploaded file using AI --------------------------
 async function extractQuoteFromFile(fileContent, fileName, fileType) {
   const sys = `You are a procurement data extraction specialist. A supplier has sent a quote document. Extract ALL pricing information, stock availability, delivery charges, lead times, and any other relevant procurement data from the document content provided. Return the extracted information as clean, structured plain text that clearly lists each item with its price, availability, and any other details. Preserve all numbers and prices exactly. If the document appears to be a table or spreadsheet, convert it to a clear line-by-line format. Start directly with the extracted data, no preamble.`;
   const prompt = `File name: ${fileName}
@@ -487,7 +487,7 @@ Extract all quote/pricing information as clean structured text.`;
   return callAI(sys, prompt);
 }
 
-// ─── Read file content for AI extraction ─────────────────────────────────────
+// --- Read file content for AI extraction -------------------------------------
 async function readFileForExtraction(file) {
   return new Promise((resolve, reject) => {
     const ext = file.name.split(".").pop().toLowerCase();
@@ -527,7 +527,7 @@ async function readFileForExtraction(file) {
       reader.readAsBinaryString(file);
       return;
     }
-    // For PDF and Word — read as base64 and send to AI with note
+    // For PDF and Word - read as base64 and send to AI with note
     // (AI will do its best with the text it can extract)
     const reader = new FileReader();
     reader.onload = e => {
@@ -550,7 +550,7 @@ async function readFileForExtraction(file) {
   });
 }
 
-// ─── Email via Vercel serverless function (no CORS) ──────────────────────────
+// --- Email via Vercel serverless function (no CORS) --------------------------
 async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail) {
   const results = [];
   for (const s of suppliers) {
@@ -578,7 +578,7 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail) {
   return results;
 }
 
-// ─── PDF generation via jsPDF (loaded from CDN on demand) ────────────────────
+// --- PDF generation via jsPDF (loaded from CDN on demand) --------------------
 async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, company, contactName, contactEmail, date }) {
   if (!window.jspdf) {
     await new Promise((res,rej) => {
@@ -592,7 +592,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   const doc = new jsPDF({ unit:"mm", format:"a4" });
   const W = 210, M = 18;
 
-  // ── Deep navy header bar ──
+  // -- Deep navy header bar --
   doc.setFillColor(15,23,42);
   doc.rect(0,0,W,42,"F");
 
@@ -609,7 +609,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.text(company||"Your Company", M, 27);
   doc.text("Powered by ProQuote", M, 33);
 
-  // PO number & date — right aligned
+  // PO number & date - right aligned
   doc.setTextColor(255,255,255);
   doc.setFont("helvetica","bold"); doc.setFontSize(11);
   doc.text(poNumber, W-M, 18, {align:"right"});
@@ -617,7 +617,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.setTextColor(148,163,184);
   doc.text(`Issued: ${date}`, W-M, 27, {align:"right"});
 
-  // ── Info boxes ──
+  // -- Info boxes --
   let y = 54;
   // Box backgrounds
   doc.setFillColor(248,250,252); doc.roundedRect(M, y, 80, 32, 2, 2, "F");
@@ -627,9 +627,9 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
   doc.text("SUPPLIER", M+4, y+7);
   doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(15,23,42);
-  doc.text(supplier?.name||"—", M+4, y+14);
+  doc.text(supplier?.name||"-", M+4, y+14);
   doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(71,85,105);
-  doc.text(supplier?.email||"—", M+4, y+20);
+  doc.text(supplier?.email||"-", M+4, y+20);
 
   // Job box
   doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
@@ -637,12 +637,12 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(15,23,42);
   doc.text(`Ref: ${jobRef||"TBC"}`, M+90, y+14);
   doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(71,85,105);
-  doc.text(site||"—", M+90, y+20);
+  doc.text(site||"-", M+90, y+20);
   if(contactName) doc.text(`Contact: ${contactName}`, M+90, y+26);
 
   y += 42;
 
-  // ── Table header ──
+  // -- Table header --
   doc.setFillColor(15,23,42);
   doc.rect(M, y, W-M*2, 10, "F");
   doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(148,163,184);
@@ -654,7 +654,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.text("TOTAL", W-M, y+6.5, {align:"right"});
   y += 10;
 
-  // ── Table rows ──
+  // -- Table rows --
   const rows = analysis?.matched?.length
     ? analysis.matched
     : items.map(i=>({ item:i.description, requestedQty:i.quantity, requestedUnit:i.unit, quotedPrice:"TBC" }));
@@ -687,7 +687,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
     y += 9;
   });
 
-  // ── Total bar ──
+  // -- Total bar --
   y += 4;
   doc.setFillColor(15,23,42);
   doc.rect(M, y, W-M*2, 12, "F");
@@ -697,22 +697,22 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.text(grandTotal?`£${grandTotal.toFixed(2)}`:"TBC", W-M, y+8, {align:"right"});
   y += 20;
 
-  // ── VAT note ──
+  // -- VAT note --
   doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(100,116,139);
   doc.text("All prices shown exclude VAT unless otherwise stated.", M, y);
   y += 10;
 
-  // ── Footer ──
+  // -- Footer --
   doc.setDrawColor(226,232,240); doc.setLineWidth(0.3);
   doc.line(M, 275, W-M, 275);
   doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(148,163,184);
   doc.text(`${company||"Your Company"}  ·  ${contactEmail||""}  ·  PO ${poNumber}`, M, 280);
-  doc.text("Generated by ProQuote — AI-powered procurement for trades", W-M, 280, {align:"right"});
+  doc.text("Generated by ProQuote - AI-powered procurement for trades", W-M, 280, {align:"right"});
 
   doc.save(`PO-${poNumber}.pdf`);
 }
 
-// ─── Tiny shared components ───────────────────────────────────────────────────
+// --- Tiny shared components ---------------------------------------------------
 const Btn = ({ onClick, disabled, color="#6366F1", outline=false, children }) => (
   <button onClick={onClick} disabled={disabled} style={{
     background: outline?"transparent": disabled?"#C7D2FE":color,
@@ -735,7 +735,7 @@ const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
 );
 
-// ─── App ──────────────────────────────────────────────────────────────────────
+// --- App ----------------------------------------------------------------------
 export default function App() {
   // Settings persisted to localStorage
   const [settings, setSettings] = useState(() => {
@@ -854,12 +854,12 @@ export default function App() {
         confirmationDoc: doc,
         activity:[...(o.activity||[]),entry]
       }:o));
-      showToast(`Confirmation attached — order marked as Confirmed`);
+      showToast(`Confirmation attached - order marked as Confirmed`);
     };
     reader.readAsDataURL(file);
   }
 
-  // Quote library — persisted
+  // Quote library - persisted
   const [quoteLibrary, setQuoteLibrary] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_quote_library")||"[]"); } catch { return []; }
   });
@@ -934,9 +934,9 @@ export default function App() {
   function handleEditSave() {
     const r = requests.find(r=>r.id===editModal.id);
     const changes = [];
-    if (editForm.jobRef!==r.jobRef) changes.push(`Job ref: ${r.jobRef} → ${editForm.jobRef}`);
-    if (editForm.site!==r.site)     changes.push(`Site: ${r.site} → ${editForm.site}`);
-    if (editForm.status!==r.status) changes.push(`Status: ${STATUS[r.status].label} → ${STATUS[editForm.status].label}`);
+    if (editForm.jobRef!==r.jobRef) changes.push(`Job ref: ${r.jobRef} > ${editForm.jobRef}`);
+    if (editForm.site!==r.site)     changes.push(`Site: ${r.site} > ${editForm.site}`);
+    if (editForm.status!==r.status) changes.push(`Status: ${STATUS[r.status].label} > ${STATUS[editForm.status].label}`);
     if (editForm.notes!==r.notes)   changes.push(`Notes updated`);
     const entry = { ts: new Date().toISOString(), action:"Edited", detail: changes.join(" · ")||"No changes", user: settings.contactName||"You" };
     setRequests(p=>p.map(r=>r.id===editModal.id
@@ -948,12 +948,12 @@ export default function App() {
     showToast("Request updated");
   }
 
-  // ── Handlers ──
+  // -- Handlers --
   async function handleParse() {
     if (!rawInput.trim()) return;
     if (!settings.openRouterKey) { showToast("Add your free OpenRouter key in Settings first","warn"); setView("settings"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
-    setLoading(true); setLoadMsg("Parsing your material list…");
+    setLoading(true); setLoadMsg("Parsing your material list...");
     try {
       const data = await parseMaterialList(rawInput);
       setParsed(data);
@@ -972,7 +972,7 @@ export default function App() {
 
   async function handleGenRFQ() {
     window.__piq_or_key__ = settings.openRouterKey;
-    setLoading(true); setLoadMsg("Generating RFQ email…");
+    setLoading(true); setLoadMsg("Generating RFQ email...");
     try {
       const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline);
       setRfqEmail(email);
@@ -983,9 +983,9 @@ export default function App() {
 
   async function handleSendEmails() {
     if (!settings.resendKey) { showToast("Add your Resend API key in Settings first","warn"); setView("settings"); return; }
-    setLoading(true); setLoadMsg("Sending to suppliers…");
+    setLoading(true); setLoadMsg("Sending to suppliers...");
     const toSend = suppliers.filter(s=>selSup.includes(s.id));
-    const subject = `Request for Quotation — ${jobRef||parsed?.jobRef||"TBC"}`;
+    const subject = `Request for Quotation - ${jobRef||parsed?.jobRef||"TBC"}`;
     const results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev");
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
@@ -1007,9 +1007,9 @@ export default function App() {
       };
       setRequests(p=>[r,...p]);
       // Show success state briefly then redirect and reset
-      showToast(`✓ ${ok} RFQ${ok!==1?"s":""} sent — ${newId} saved`);
+      showToast(`v ${ok} RFQ${ok!==1?"s":""} sent - ${newId} saved`);
       setTimeout(()=>{
-        // Full reset — ready for next request
+        // Full reset - ready for next request
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
         setRfqEmail(""); setEmailRes(null); setSelSup([]);
@@ -1019,7 +1019,7 @@ export default function App() {
       setEmailRes(results); // show brief success UI
     } else {
       setEmailRes(results);
-      showToast(`Send failed — check your Resend key and supplier emails`,"warn");
+      showToast(`Send failed - check your Resend key and supplier emails`,"warn");
     }
   }
 
@@ -1036,7 +1036,7 @@ export default function App() {
     setParsed({ items: r.items.map(i=>({...i})), jobRef:r.jobRef+" (copy)", urgency:"standard" });
     setStep(2);
     setView("new");
-    showToast("Request duplicated — review and send");
+    showToast("Request duplicated - review and send");
     console.log(`[ProQuote] Request duplicated from ${r.id}`);
   }
 
@@ -1047,7 +1047,7 @@ export default function App() {
     setTemplateModal(false);
     setNewTemplateName("");
     showToast(`Template "${t.name}" saved`);
-    console.log(`[ProQuote] Template saved: ${t.name} — ${t.items.length} items`);
+    console.log(`[ProQuote] Template saved: ${t.name} - ${t.items.length} items`);
   }
 
   function handleLoadTemplate(t) {
@@ -1088,7 +1088,7 @@ export default function App() {
     if (!quoteInput.trim()||!activeReq) return;
     if (!settings.openRouterKey) { showToast("Add your free OpenRouter key in Settings first","warn"); setView("settings"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
-    setLoading(true); setLoadMsg("Analysing quote…");
+    setLoading(true); setLoadMsg("Analysing quote...");
     try {
       const supplierName = suppliers.find(s=>selSup.includes(s.id))?.name || quoteSupplierName || "Supplier";
       const a = await analyseQuote(activeReq.items, quoteInput, supplierName);
@@ -1111,7 +1111,7 @@ export default function App() {
     const results = [];
     for (let i=0; i<toAnalyse.length; i++) {
       const sup = toAnalyse[i];
-      setLoadMsg(`Analysing ${sup.name} (${i+1} of ${toAnalyse.length})…`);
+      setLoadMsg(`Analysing ${sup.name} (${i+1} of ${toAnalyse.length})...`);
       try {
         const a = await analyseQuote(activeReq.items, sup.quote, sup.name);
         if (!a.error) results.push({...a, supplierName:a.supplierName||sup.name, _id:sup.id});
@@ -1127,7 +1127,7 @@ export default function App() {
       results.forEach(qa => saveToLibrary(qa, activeReq.id, activeReq.jobRef, activeReq.site, activeReq.trade));
     }
     setLoading(false);
-    showToast(`Analysis complete — ${results.length} quote${results.length!==1?"s":""} saved to library`);
+    showToast(`Analysis complete - ${results.length} quote${results.length!==1?"s":""} saved to library`);
   }
 
   async function handleApprovePO(qa) {
@@ -1158,7 +1158,7 @@ export default function App() {
     const poEntry = {
       ts:new Date().toISOString(),
       action:"PO approved & generated",
-      detail:`PO ${poNum} — ${sup?.name||"supplier"} — Est. ${analysis?.estimatedTotal||"—"} — ${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} auto-saved to library`,
+      detail:`PO ${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} - ${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} auto-saved to library`,
       user:settings.contactName||"You"
     };
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
@@ -1176,7 +1176,7 @@ export default function App() {
       status:"pending-send", type:"generated", label:`PO ${poNum}`,
       deliveryMethod:activeReq?.deliveryMethod||"", deliveryDate:activeReq?.deliveryDate||"",
       notes:"",
-      activity:[{ ts:new Date().toISOString(), action:"Order created", detail:`PO ${poNum} approved — ${sup?.name||"supplier"} — ${analysis?.estimatedTotal||"—"}`, user:settings.contactName||"You" }]
+      activity:[{ ts:new Date().toISOString(), action:"Order created", detail:`PO ${poNum} approved - ${sup?.name||"supplier"} - ${analysis?.estimatedTotal||"-"}`, user:settings.contactName||"You" }]
     };
     setOrders(p=>[order,...p]);
 
@@ -1197,7 +1197,7 @@ export default function App() {
     // Remove from orders
     setOrders(p=>p.filter(o=>o.reqId!==activeReq.id||o.status==="sent"||o.status==="acknowledged"));
     setActiveReq(prev=>({...prev,status:"received"}));
-    showToast("Approval undone — you can re-approve a different quote");
+    showToast("Approval undone - you can re-approve a different quote");
   }
 
   async function handleHelpChat(question) {
@@ -1208,7 +1208,7 @@ export default function App() {
     setHelpMessages(p=>[...p,userMsg]);
     setHelpInput("");
     setHelpLoading(true);
-    const sys = `You are the ProQuote AI assistant. ProQuote is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use the platform. Be concise, friendly, and accurate. Key features: voice material requests, AI parsing of lists, RFQ email generation, supplier management, AI quote analysis and comparison, purchase order generation, orders tracking with status timeline (Ready→Sent→Confirmed→Delivered), quote library with supplier scorecards, request templates by trade, dark/light theme, mobile app with bottom nav. If asked about something not in ProQuote, say so clearly. Answer in 2-4 sentences unless a longer explanation is genuinely needed.`;
+    const sys = `You are the ProQuote AI assistant. ProQuote is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use the platform. Be concise, friendly, and accurate. Key features: voice material requests, AI parsing of lists, RFQ email generation, supplier management, AI quote analysis and comparison, purchase order generation, orders tracking with status timeline (Ready>Sent>Confirmed>Delivered), quote library with supplier scorecards, request templates by trade, dark/light theme, mobile app with bottom nav. If asked about something not in ProQuote, say so clearly. Answer in 2-4 sentences unless a longer explanation is genuinely needed.`;
     const history = [...helpMessages,userMsg].slice(-10).map(m=>({role:m.role,content:m.content}));
     try {
       const raw = await callAI(sys, question, history);
@@ -1222,8 +1222,8 @@ export default function App() {
     const dateStr = new Date().toLocaleDateString("en-GB");
     const sup = suppliers.find(s=>s.name===qa?.supplierName) || {name:qa?.supplierName||"Supplier"};
     await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis:qa, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:dateStr });
-    const doc = { id:poNum, type:"draft", label:`Draft — ${sup.name}`, supplier:sup.name, date:dateStr, status:"draft" };
-    const entry = { ts:new Date().toISOString(), action:"Draft quote saved", detail:`Draft PDF saved for ${sup.name} — not yet approved`, user:settings.contactName||"You" };
+    const doc = { id:poNum, type:"draft", label:`Draft - ${sup.name}`, supplier:sup.name, date:dateStr, status:"draft" };
+    const entry = { ts:new Date().toISOString(), action:"Draft quote saved", detail:`Draft PDF saved for ${sup.name} - not yet approved`, user:settings.contactName||"You" };
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),entry]}:r));
     setActiveReq(prev=>({...prev,documents:[...(prev.documents||[]),doc]}));
     showToast(`Draft saved for ${sup.name}`);
@@ -1281,10 +1281,10 @@ export default function App() {
 
   async function handleSendOrder(order) {
     if (!settings.resendKey) { showToast("Add your Resend API key in Settings to send orders","warn"); setView("settings"); return; }
-    if (!order.supplierEmail) { showToast("No supplier email on this order — edit the order to add one","warn"); return; }
+    if (!order.supplierEmail) { showToast("No supplier email on this order - edit the order to add one","warn"); return; }
     setSendingOrder(order.id);
     const note = orderNote[order.id]||"";
-    const subject = `Purchase Order ${order.poNumber} — ${order.jobRef}`;
+    const subject = `Purchase Order ${order.poNumber} - ${order.jobRef}`;
     const deliveryLabels = { direct:"Delivery direct to site", alternative:"Delivery to alternative address", collect:"Collection from branch", tbc:"Delivery method to be confirmed" };
     const body = `Dear ${order.supplier},
 
@@ -1326,16 +1326,16 @@ ${settings.company||""}`;
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; localStorage.setItem("piq_dark",n?"1":"0"); return n; });
 
-  // ── Persist to localStorage ──
+  // -- Persist to localStorage --
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
 
-  // ── Render ──
+  // -- Render --
   return (
     <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
       <style>{`
-      /* ── LIGHT THEME (default) ── */
+      /* -- LIGHT THEME (default) -- */
       :root {
         --bg-page:        #F3F4F6;
         --bg-card:        #FFFFFF;
@@ -1377,7 +1377,7 @@ ${settings.company||""}`;
         --radius-lg:      16px;
       }
 
-      /* ── DARK THEME — Microsoft Admin inspired ── */
+      /* -- DARK THEME - Microsoft Admin inspired -- */
       /* Clean slate surfaces, consistent elevation, green brand accents */
       [data-theme="dark"] {
         --bg-page:        #1F2937;
@@ -1420,7 +1420,7 @@ ${settings.company||""}`;
         --radius-lg:      16px;
       }
 
-      /* ── Global dark mode overrides ── */
+      /* -- Global dark mode overrides -- */
       [data-theme="dark"] input,
       [data-theme="dark"] textarea,
       [data-theme="dark"] select {
@@ -1473,12 +1473,12 @@ ${settings.company||""}`;
       {/* Toast notification */}
       {toast && (
         <div style={{position:"fixed",top:isMobile?16:24,right:isMobile?16:24,left:isMobile?16:"auto",zIndex:9999,background:toast.type==="warn"?"rgba(255,251,235,0.95)":"rgba(240,253,244,0.95)",backdropFilter:"blur(12px)",border:`1px solid ${toast.type==="warn"?"#FDE68A":"#A7F3D0"}`,color:toast.type==="warn"?"#92400E":"#065F46",borderRadius:14,padding:"14px 20px",fontSize:13,fontWeight:500,boxShadow:"0 8px 32px rgba(0,0,0,0.12),0 2px 8px rgba(0,0,0,0.08)",display:"flex",alignItems:"center",gap:10,animation:"fadeIn 0.2s ease",maxWidth:360}}>
-          <span style={{fontSize:16}}>{toast.type==="warn"?"⚠️":"✅"}</span>
+          <span style={{fontSize:16}}>{toast.type==="warn"?"!️":"✅"}</span>
           <span>{toast.msg}</span>
         </div>
       )}
 
-      {/* ── NAV ITEMS DATA ── */}
+      {/* -- NAV ITEMS DATA -- */}
       {(()=>{
         const navItems = [
           {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
@@ -1496,7 +1496,7 @@ ${settings.company||""}`;
         const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
         return (<>
 
-      {/* ── DESKTOP SIDEBAR ── */}
+      {/* -- DESKTOP SIDEBAR -- */}
       {!isMobile&&(
       <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0A0F1E 0%,#111827 60%,#0F172A 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 40px rgba(0,0,0,0.25)"}}>
         <div style={{padding:"28px 24px 24px",borderBottom:"1px solid var(--sidebar-border)"}}>
@@ -1535,14 +1535,14 @@ ${settings.company||""}`;
             </div>
           </button>
           <div style={{fontSize:11,background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid var(--sidebar-border)"}}>
-            <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B",marginRight:6}}>●</span>
+            <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B",marginRight:6}}>*</span>
             <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B"}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · no email"):"Setup needed"}</span>
           </div>
         </div>
       </div>
       )}
 
-      {/* ── MOBILE TOP HEADER ── */}
+      {/* -- MOBILE TOP HEADER -- */}
       {isMobile&&(
         <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"var(--topbar-bg)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,borderBottom:"1px solid var(--sidebar-border)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -1563,7 +1563,7 @@ ${settings.company||""}`;
         </div>
       )}
 
-      {/* ── MOBILE BOTTOM TAB BAR ── */}
+      {/* -- MOBILE BOTTOM TAB BAR -- */}
       {isMobile&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,height:68,background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
           {[
@@ -1593,7 +1593,7 @@ ${settings.company||""}`;
             </button>
           ))}
 
-          {/* ── More menu overlay ── */}
+          {/* -- More menu overlay -- */}
           {moreMenuOpen&&(
             <div style={{position:"fixed",bottom:68,left:0,right:0,zIndex:200,animation:"fadeIn 0.15s ease"}}>
               {/* Backdrop */}
@@ -1625,7 +1625,7 @@ ${settings.company||""}`;
                 <div style={{margin:"12px 16px 0",padding:"10px 14px",background:"rgba(255,255,255,0.04)",borderRadius:10,display:"flex",alignItems:"center",gap:8}}>
                   <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"#22C55E":"#F59E0B",flexShrink:0}}/>
                   <span style={{fontSize:12,color:settings.openRouterKey?"#22C55E":"#F59E0B"}}>
-                    {settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · email not set"):"Setup needed — tap Settings"}
+                    {settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · email not set"):"Setup needed - tap Settings"}
                   </span>
                 </div>
               </div>
@@ -1654,11 +1654,11 @@ ${settings.company||""}`;
         zIndex:1
       }}>
 
-        {/* ══ DASHBOARD ══ */}
+        {/* == DASHBOARD == */}
         {view==="dashboard"&&(
           <div style={{animation:"fadeIn 0.25s ease"}}>
 
-            {/* ── Hero header ── */}
+            {/* -- Hero header -- */}
             <div style={{
               background:darkMode?"#111827":"linear-gradient(135deg,#0A0F1E,#1a2744)",
               borderRadius:24,padding:isMobile?"24px":"36px 40px",marginBottom:24,
@@ -1678,7 +1678,7 @@ ${settings.company||""}`;
                   </h1>
                   <p style={{fontSize:isMobile?13:15,color:"rgba(148,163,184,0.9)",margin:0,maxWidth:480,lineHeight:1.6}}>
                     {requests.length===0
-                      ?"Welcome to ProQuote — create your first material request to get started"
+                      ?"Welcome to ProQuote - create your first material request to get started"
                       :`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.${orders.filter(o=>o.status==="pending-send").length>0?` ${orders.filter(o=>o.status==="pending-send").length} PO${orders.filter(o=>o.status==="pending-send").length!==1?"s":""} ready to send.`:""}`
                     }
                   </p>
@@ -1692,7 +1692,7 @@ ${settings.company||""}`;
 
             </div>
 
-            {/* ── Overdue quote reminders ── */}
+            {/* -- Overdue quote reminders -- */}
             {(()=>{
               const now = Date.now();
               const overdue = requests.filter(r=>{
@@ -1721,11 +1721,11 @@ ${settings.company||""}`;
                           <span style={{fontSize:11,color:"#EA580C",marginLeft:8}}>· {daysAgo>0?`${daysAgo} day${daysAgo!==1?"s":""}`:`${hoursAgo}h`} ago</span>
                         </div>
                         <div style={{display:"flex",gap:8}}>
-                          <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:11,color:"#EA580C",background:"#FEF3C7",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>View →</button>
+                          <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:11,color:"#EA580C",background:"#FEF3C7",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>View ></button>
                           {r.rfqEmail&&<button onClick={async()=>{
                             const unsent = (r.sentTo||[]).filter(s=>!s.saved);
                             if(!unsent.length||!settings.resendKey) return;
-                            const subject = `REMINDER: Request for Quotation — ${r.jobRef}`;
+                            const subject = `REMINDER: Request for Quotation - ${r.jobRef}`;
                             await sendRFQEmails(unsent, subject, `Hi,
 
 This is a friendly reminder regarding our request for quotation sent ${daysAgo>0?`${daysAgo} days ago`:`${hoursAgo} hours ago`} for job ${r.jobRef}.
@@ -1744,17 +1744,17 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               );
             })()}
 
-            {/* ── Setup warnings ── */}
+            {/* -- Setup warnings -- */}
             {!settings.openRouterKey&&(
               <div style={{background:"#FFF1F2",border:"1px solid #FDA4AF",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:32,height:32,background:"#FEE2E2",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>⚠️</div>
+                  <div style={{width:32,height:32,background:"#FEE2E2",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>!️</div>
                   <div>
                     <div style={{fontSize:13,fontWeight:600,color:"#9F1239"}}>AI key required</div>
                     <div style={{fontSize:12,color:"#BE123C",marginTop:1}}>Add your free OpenRouter key in Settings to enable AI features</div>
                   </div>
                 </div>
-                <button onClick={()=>setView("settings")} style={{background:"#9F1239",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure →</button>
+                <button onClick={()=>setView("settings")} style={{background:"#9F1239",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure ></button>
               </div>
             )}
             {settings.openRouterKey&&!settings.resendKey&&(
@@ -1766,11 +1766,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     <div style={{fontSize:12,color:"var(--amber)",marginTop:1}}>Add your Resend API key to send RFQs directly to suppliers</div>
                   </div>
                 </div>
-                <button onClick={()=>setView("settings")} style={{background:"#D97706",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure →</button>
+                <button onClick={()=>setView("settings")} style={{background:"#D97706",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure ></button>
               </div>
             )}
 
-            {/* ── Stat cards ── */}
+            {/* -- Stat cards -- */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
               {[
                 {label:"Total requests",  value:stats.total,    color:"#6366F1", grad:"linear-gradient(135deg,#6366F1,#4338CA)", icon:"📋", nav:()=>setView("requests")},
@@ -1792,7 +1792,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               ))}
             </div>
 
-            {/* ── Quick actions ── */}
+            {/* -- Quick actions -- */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:isMobile?8:12,marginBottom:isMobile?18:24}}>
               {[
                 {label:"New request",  sub:"Voice or type",              icon:"🎤", action:()=>setView("new"),      accent:"#6366F1"},
@@ -1811,21 +1811,21 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               ))}
             </div>
 
-            {/* ── Requests table ── */}
+            {/* -- Requests table -- */}
             <div style={{background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
               <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:darkMode?"rgba(34,197,94,0.04)":"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
                 <div>
                   <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",letterSpacing:"-0.3px"}}>Recent requests</div>
                   <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>{requests.length} total · sorted by most recent</div>
                 </div>
-                <button onClick={()=>setView("requests")} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>View all →</button>
+                <button onClick={()=>setView("requests")} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>View all ></button>
               </div>
 
               {requests.length===0?(
                 <div style={{padding:"80px 24px",textAlign:"center"}}>
                   <div style={{width:80,height:80,background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📋</div>
                   <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8,letterSpacing:"-0.5px"}}>No requests yet</div>
-                  <div style={{fontSize:14,color:"var(--text-tertiary)",marginBottom:28,maxWidth:340,margin:"0 auto 28px",lineHeight:1.6}}>Create your first material request — speak or type what you need, and we'll send RFQs to your suppliers automatically</div>
+                  <div style={{fontSize:14,color:"var(--text-tertiary)",marginBottom:28,maxWidth:340,margin:"0 auto 28px",lineHeight:1.6}}>Create your first material request - speak or type what you need, and we'll send RFQs to your suppliers automatically</div>
                   <button onClick={()=>setView("new")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(34,197,94,0.35)"}}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     Create first request
@@ -1883,7 +1883,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   )})}
                   {requests.length>8&&(
                     <div style={{padding:"14px 28px",borderTop:"1px solid var(--border)",textAlign:"center"}}>
-                      <button onClick={()=>setView("requests")} style={{fontSize:13,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all {requests.length} requests →</button>
+                      <button onClick={()=>setView("requests")} style={{fontSize:13,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all {requests.length} requests ></button>
                     </div>
                   )}
                 </div>
@@ -1892,17 +1892,17 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ NEW REQUEST WIZARD ══ */}
+        {/* == NEW REQUEST WIZARD == */}
         {view==="new"&&(
           <div>
             <div style={{marginBottom:24}}>
               <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>New material request</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Speak or type your list — AI structures it and sends RFQs to suppliers</p>
+              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Speak or type your list - AI structures it and sends RFQs to suppliers</p>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:28,alignItems:"center"}}>
               {["Describe materials","Review & configure","Send RFQs"].map((s,i)=>(
                 <div key={s} style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,background:step>i+1?"#6366F1":step===i+1?"#6366F1":"#E5E7EB",color:step>=i+1?"white":"#9CA3AF",boxShadow:step===i+1?"0 4px 12px rgba(99,102,241,0.35)":"none"}}>{step>i+1?"✓":i+1}</div>
+                  <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,background:step>i+1?"#6366F1":step===i+1?"#6366F1":"#E5E7EB",color:step>=i+1?"white":"#9CA3AF",boxShadow:step===i+1?"0 4px 12px rgba(99,102,241,0.35)":"none"}}>{step>i+1?"v":i+1}</div>
                   <span style={{fontSize:13,color:step===i+1?"#111827":"#9CA3AF",fontWeight:step===i+1?500:400,display:isMobile?"none":"block"}}>{s}</span>
                   {i<2&&<div style={{width:36,height:1,background:"#E5E7EB"}}/>}
                 </div>
@@ -1943,7 +1943,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 </div>
                 {listening&&(
                   <div style={{background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:8,fontSize:13,color:"var(--red)"}}>
-                    <span style={{fontWeight:500}}>Listening… </span>
+                    <span style={{fontWeight:500}}>Listening... </span>
                     {interim?<span style={{color:"var(--red)"}}>{interim}</span>:<span style={{color:"#FCA5A5"}}>speak your list now</span>}
                   </div>
                 )}
@@ -1953,7 +1953,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div style={{marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"#16A34A",background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>📋 Load template</button>
                   <Btn onClick={handleParse} disabled={!rawInput.trim()||loading}>
-                    {loading?<><Spinner/>{loadMsg}</>:"✦ Parse with AI"}
+                    {loading?<><Spinner/>{loadMsg}</>:"* Parse with AI"}
                   </Btn>
                 </div>
               </Card>
@@ -2018,7 +2018,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </td>
                       <td style={{padding:"4px 6px"}}>
                         <input value={item.notes||""} onChange={e=>updateItem("notes",e.target.value)}
-                          placeholder="Add note…"
+                          placeholder="Add note..."
                           style={{...cellStyle,color:"var(--text-secondary)",fontSize:12}}
                           onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--border)",background:"var(--bg-subtle)"})}
                           onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}
@@ -2051,10 +2051,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{s.email}</span>
                       </label>
                     ))}
-                    {filteredSup.length===0&&<div style={{fontSize:13,color:"#9CA3AF"}}>No suppliers for {trade} — add them in Suppliers.</div>}
+                    {filteredSup.length===0&&<div style={{fontSize:13,color:"#9CA3AF"}}>No suppliers for {trade} - add them in Suppliers.</div>}
                   </div>
                 </div>
-                {/* ── Delivery method ── */}
+                {/* -- Delivery method -- */}
                 <div style={{marginTop:16,padding:18,background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)"}}>
                   <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)",marginBottom:14}}>🚚 Delivery requirements</div>
                   <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:14}}>
@@ -2090,28 +2090,28 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:8}}>Leave blank if date is flexible</div>
                         {deliveryDate&&(
                           <div style={{marginTop:8,padding:"8px 12px",background:"var(--green-mint)",borderRadius:6,fontSize:12,color:"var(--green-deep)",fontWeight:500}}>
-                            ✓ Required by {new Date(deliveryDate).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+                            v Required by {new Date(deliveryDate).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
                           </div>
                         )}
                         <div style={{marginTop:12,fontSize:11,color:"var(--text-secondary)",lineHeight:1.6}}>
                           <div style={{fontWeight:500,marginBottom:4}}>This will tell suppliers to:</div>
-                          <div>• Include carriage/delivery charges in their quote</div>
-                          <div>• Confirm they can meet your required date</div>
-                          <div>• State lead times clearly</div>
+                          <div>- Include carriage/delivery charges in their quote</div>
+                          <div>- Confirm they can meet your required date</div>
+                          <div>- State lead times clearly</div>
                         </div>
                       </div>
                     </div>
                   </div>
                   <div style={{background:"var(--bg-card-solid)",borderRadius:8,padding:"10px 14px",border:"1px solid var(--border)",fontSize:12,color:"var(--indigo)"}}>
-                    ℹ️ These delivery details will be included in the RFQ email and the AI will extract carriage charges from supplier responses during quote analysis.
+                    i These delivery details will be included in the RFQ email and the AI will extract carriage charges from supplier responses during quote analysis.
                   </div>
                 </div>
 
                 <div style={{marginTop:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-                  <Btn outline onClick={()=>setStep(1)}>← Back</Btn>
+                  <Btn outline onClick={()=>setStep(1)}><- Back</Btn>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                     <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid #C7D2FE",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>💾 Save as template</button>
-                    <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email →"}</Btn>
+                    <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email >"}</Btn>
                   </div>
                 </div>
               </Card>
@@ -2124,13 +2124,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div style={{fontSize:13,color:"#6B7280",marginBottom:16}}>Will be sent to: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.name).join(", ")}</div>
                 <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:8,padding:20,marginBottom:16}}>
                   <div style={{fontSize:12,color:"#9CA3AF",marginBottom:4}}>To: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.email).join(", ")}</div>
-                  <div style={{fontSize:12,color:"#9CA3AF",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #E5E7EB"}}>Subject: Request for Quotation — {jobRef||parsed?.jobRef||"TBC"}</div>
+                  <div style={{fontSize:12,color:"#9CA3AF",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #E5E7EB"}}>Subject: Request for Quotation - {jobRef||parsed?.jobRef||"TBC"}</div>
                   <pre style={{fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0,color:"var(--text-secondary)"}}>{rfqEmail}</pre>
                 </div>
 
                 {!settings.resendKey&&(
                   <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:"var(--amber)"}}>
-                    ⚠ Resend not configured. <button onClick={()=>setView("settings")} style={{background:"none",border:"none",color:"#B45309",textDecoration:"underline",cursor:"pointer",fontSize:13,padding:0}}>Add it in Settings</button> to send for real. You can still save the request.
+                    ! Resend not configured. <button onClick={()=>setView("settings")} style={{background:"none",border:"none",color:"#B45309",textDecoration:"underline",cursor:"pointer",fontSize:13,padding:0}}>Add it in Settings</button> to send for real. You can still save the request.
                   </div>
                 )}
 
@@ -2139,24 +2139,24 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     {emailRes.map((r,i)=>(
                       <div key={i} style={{padding:"10px 14px",borderRadius:8,marginBottom:8,background:r.success?"#F0FDF4":"#FEF2F2",border:`1px solid ${r.success?"#A7F3D0":"#FECACA"}`}}>
                         <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{color:r.success?"#059669":"#DC2626",fontWeight:600}}>{r.success?"✓":"✗"}</span>
+                          <span style={{color:r.success?"#059669":"#DC2626",fontWeight:600}}>{r.success?"v":"x"}</span>
                           <span style={{fontWeight:500}}>{r.supplier}</span>
                           <span style={{color:r.success?"#059669":"#DC2626"}}>{r.success?"Email sent successfully":`Error ${r.statusCode||""}: ${r.error}`}</span>
                         </div>
                         {r.success&&r.id&&<div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>Message ID: {r.id}</div>}
                         {!r.success&&r.error?.includes("CORS")&&(
                           <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
-                            CORS error — Resend blocks direct browser calls in some environments. Try deploying to Vercel where this works correctly.
+                            CORS error - Resend blocks direct browser calls in some environments. Try deploying to Vercel where this works correctly.
                           </div>
                         )}
                         {!r.success&&r.statusCode===403&&(
                           <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
-                            403 Forbidden — your Resend key may not have send permissions. Go to resend.com → API Keys → check the key has "Full access" not "Read only".
+                            403 Forbidden - your Resend key may not have send permissions. Go to resend.com > API Keys > check the key has "Full access" not "Read only".
                           </div>
                         )}
                         {!r.success&&r.statusCode===422&&(
                           <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
-                            422 — Resend rejected the request. On free accounts you can only send to your own verified email address. Go to resend.com → click your email in the top right → verify it, then use that address as a test recipient in Suppliers.
+                            422 - Resend rejected the request. On free accounts you can only send to your own verified email address. Go to resend.com > click your email in the top right > verify it, then use that address as a test recipient in Suppliers.
                           </div>
                         )}
                       </div>
@@ -2165,11 +2165,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 )}
 
                 <div style={{display:"flex",gap:10,justifyContent:"space-between"}}>
-                  <Btn outline onClick={()=>setStep(2)}>← Back</Btn>
+                  <Btn outline onClick={()=>setStep(2)}><- Back</Btn>
                   <div style={{display:"flex",gap:10}}>
                     {settings.resendKey&&!emailRes&&(
                       <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#16A34A">
-                        {loading?<><Spinner/>{loadMsg}</>:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""} →`}
+                        {loading?<><Spinner/>{loadMsg}</>:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""} >`}
                       </Btn>
                     )}
                     {emailRes&&emailRes.some(r=>r.success)&&(
@@ -2177,7 +2177,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <span style={{fontSize:18}}>✅</span>
                         <div>
                           <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)"}}>Quotes sent successfully</div>
-                          <div style={{fontSize:12,color:"var(--green-dark)",opacity:0.8}}>Redirecting to dashboard…</div>
+                          <div style={{fontSize:12,color:"var(--green-dark)",opacity:0.8}}>Redirecting to dashboard...</div>
                         </div>
                       </div>
                     )}
@@ -2195,7 +2195,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ QUOTE ANALYSIS ══ */}
+        {/* == QUOTE ANALYSIS == */}
         {view==="quotes"&&(
           <div>
             <div style={{marginBottom:24}}>
@@ -2205,7 +2205,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"240px 1fr",gap:isMobile?12:20}}>
               <div>
                 <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Requests</div>
-                {requests.length===0&&<div style={{fontSize:13,color:"#9CA3AF",padding:"20px 0"}}>No requests yet — create one first</div>}
+                {requests.length===0&&<div style={{fontSize:13,color:"#9CA3AF",padding:"20px 0"}}>No requests yet - create one first</div>}
                 {requests.map(r=>{
                   const savedCount = (r.sentTo||[]).filter(s=>s.saved).length;
                   const totalCount = (r.sentTo||[]).length;
@@ -2231,11 +2231,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     <Card style={{marginBottom:16}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
                         <div>
-                          <div style={{fontSize:16,fontWeight:600,color:"#0F172A"}}>{activeReq.id} — {activeReq.jobRef}</div>
+                          <div style={{fontSize:16,fontWeight:600,color:"#0F172A"}}>{activeReq.id} - {activeReq.jobRef}</div>
                           <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:2}}>{activeReq.site} · {activeReq.trade} · {activeReq.items.length} items</div>
                         </div>
                         <div style={{display:"flex",gap:8}}>
-                          <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Edit</button>
+                          <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>️ Edit</button>
                           <button onClick={()=>setActivityModal(activeReq)} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>📋 Log {activeReq.activity?.length?`(${activeReq.activity.length})`:""}</button>
                           <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
                         </div>
@@ -2306,7 +2306,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       )}
                     </Card>
 
-                    {/* Quote input boxes — one per supplier */}
+                    {/* Quote input boxes - one per supplier */}
                     {(activeReq.sentTo&&activeReq.sentTo.length>0)?(
                       <div style={{marginBottom:16}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
@@ -2332,7 +2332,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 </div>
                               </div>
                               {sup.saved
-                                ? <span style={{background:"#D1FAE5",color:"var(--green-deep)",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>✓ Quote saved</span>
+                                ? <span style={{background:"#D1FAE5",color:"var(--green-deep)",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>v Quote saved</span>
                                 : <span style={{background:"#FEF3C7",color:"var(--amber)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>Awaiting quote</span>
                               }
                             </div>
@@ -2343,17 +2343,17 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
                                 window.__piq_or_key__ = settings.openRouterKey;
                                 setFileExtracting(prev=>({...prev,[si]:true}));
-                                showToast(`Reading ${file.name}…`);
+                                showToast(`Reading ${file.name}...`);
                                 try {
                                   const { content, type } = await readFileForExtraction(file);
-                                  showToast(`AI extracting data from ${file.name}…`);
+                                  showToast(`AI extracting data from ${file.name}...`);
                                   const extracted = await extractQuoteFromFile(content, file.name, type);
                                   const newQuote = sup.quote?.trim()
                                     ? sup.quote + "\n\n--- From " + file.name + " ---\n" + extracted
                                     : "--- Extracted from " + file.name + " ---\n" + extracted;
                                   setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:newQuote,saved:false}:s)}:r));
                                   setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:newQuote,saved:false}:s)}));
-                                  showToast(`✓ ${file.name} extracted — review and save`);
+                                  showToast(`v ${file.name} extracted - review and save`);
                                 } catch(err) {
                                   showToast(`Could not read ${file.name}: ${err.message}`,"warn");
                                 }
@@ -2387,7 +2387,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                       <div style={{display:"flex",alignItems:"center",gap:8}}>
                                         <Spinner/>
                                         <div>
-                                          <div style={{fontSize:12,fontWeight:500,color:"#3B82F6"}}>AI reading document…</div>
+                                          <div style={{fontSize:12,fontWeight:500,color:"#3B82F6"}}>AI reading document...</div>
                                           <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>Extracting pricing and availability data</div>
                                         </div>
                                       </div>
@@ -2399,7 +2399,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                     ):(
                                       <div>
                                         <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)"}}>📎 Drag & drop supplier document here</div>
-                                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>PDF · Word · Excel · CSV — AI reads it and fills the box below</div>
+                                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>PDF · Word · Excel · CSV - AI reads it and fills the box below</div>
                                       </div>
                                     )}
                                   </div>
@@ -2411,7 +2411,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                     cursor:fileExtracting[si]?"not-allowed":"pointer",
                                     border:"1px solid #BFDBFE",whiteSpace:"nowrap",flexShrink:0
                                   }}>
-                                    {fileExtracting[si]?"Reading…":"Browse file"}
+                                    {fileExtracting[si]?"Reading...":"Browse file"}
                                     <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt,.ods" disabled={fileExtracting[si]} style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) processFile(e.target.files[0]); e.target.value=""; }}/>
                                   </label>
                                 </div>
@@ -2427,7 +2427,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 }:r));
                                 setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value,saved:false}:s)}));
                               }}
-                              placeholder={`Option 1: Paste ${sup.name}'s quote email directly here\nOption 2: Upload their PDF/Excel above — AI reads it and fills this box automatically\n\nEither way, review the content then click Save quote`}
+                              placeholder={`Option 1: Paste ${sup.name}'s quote email directly here\nOption 2: Upload their PDF/Excel above - AI reads it and fills this box automatically\n\nEither way, review the content then click Save quote`}
                               style={{width:"100%",height:140,padding:"10px 12px",border:`1px solid ${sup.quote?.trim()?"var(--green-dark)":"var(--border)"}`,borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit",background:sup.saved?"var(--green-mint)":"var(--bg-input)"}}
                             />
                             <div style={{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2455,26 +2455,26 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                     setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}));
                                     showToast(`${sup.name} quote saved`);
                                   }}
-                                >{sup.saved?"✓ Saved":"Save quote"}</Btn>
+                                >{sup.saved?"v Saved":"Save quote"}</Btn>
                               </div>
                             </div>
                           </Card>
                         ))}
 
-                        {/* Analyse button — enabled when at least 1 quote saved */}
+                        {/* Analyse button - enabled when at least 1 quote saved */}
                         {activeReq.sentTo.some(s=>s.saved)&&(
                           <div style={{background:"linear-gradient(135deg,#0F172A,#1E3A5F)",borderRadius:14,padding:"20px 24px",marginTop:8}}>
                             <div style={{fontSize:14,fontWeight:600,color:"white",marginBottom:4}}>
                               {activeReq.sentTo.filter(s=>s.saved).length === activeReq.sentTo.length
-                                ? "✓ All quotes received — ready for AI analysis"
-                                : `${activeReq.sentTo.filter(s=>s.saved).length} of ${activeReq.sentTo.length} quotes saved — you can analyse now or wait for more`
+                                ? "v All quotes received - ready for AI analysis"
+                                : `${activeReq.sentTo.filter(s=>s.saved).length} of ${activeReq.sentTo.length} quotes saved - you can analyse now or wait for more`
                               }
                             </div>
                             <div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:16}}>
-                              AI will compare all saved quotes against your original request — pricing, availability, carriage, discounts, alternatives
+                              AI will compare all saved quotes against your original request - pricing, availability, carriage, discounts, alternatives
                             </div>
                             <Btn onClick={handleAnalyseAll} disabled={loading} color="#3B82F6">
-                              {loading?<><Spinner/>{loadMsg}</>:`Analyse ${activeReq.sentTo.filter(s=>s.saved).length} quote${activeReq.sentTo.filter(s=>s.saved).length!==1?"s":""} with AI →`}
+                              {loading?<><Spinner/>{loadMsg}</>:`Analyse ${activeReq.sentTo.filter(s=>s.saved).length} quote${activeReq.sentTo.filter(s=>s.saved).length!==1?"s":""} with AI >`}
                             </Btn>
                           </div>
                         )}
@@ -2495,7 +2495,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           style={{width:"100%",height:120,padding:"12px 14px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
                         <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
                           <Btn onClick={handleAnalyse} disabled={!quoteInput.trim()||loading} color="#7C3AED">
-                            {loading?<><Spinner/>{loadMsg}</>:"Analyse with AI →"}
+                            {loading?<><Spinner/>{loadMsg}</>:"Analyse with AI >"}
                           </Btn>
                         </div>
                       </Card>
@@ -2506,21 +2506,21 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         {/* Comparison summary bar if multiple quotes */}
                         {allAnalyses.length>1&&(
                           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:"20px 24px",marginBottom:20,border:"1px solid var(--border)",boxShadow:"var(--shadow-sm)"}}>
-                            <div style={{fontSize:14,fontWeight:600,marginBottom:16,color:"var(--text-primary)"}}>⚡ AI Comparison Summary — {allAnalyses.length} quotes received</div>
+                            <div style={{fontSize:14,fontWeight:600,marginBottom:16,color:"var(--text-primary)"}}>⚡ AI Comparison Summary - {allAnalyses.length} quotes received</div>
                             <div style={{display:"grid",gridTemplateColumns:`repeat(${allAnalyses.length},1fr)`,gap:12}}>
                               {[...allAnalyses].sort((a,b)=>b.completeness-a.completeness).map((a,i)=>{
                                 const isBest = i===0;
                                 const verdictColor = a.overallVerdict==="excellent"?"#4ADE80":a.overallVerdict==="good"?"#60A5FA":a.overallVerdict==="partial"?"#FBBF24":"#F87171";
                                 return(
                                   <div key={a._id} style={{background:isBest?"var(--green-mint)":"var(--bg-subtle)",borderRadius:10,padding:"14px 16px",border:isBest?"1px solid var(--green-dark)":"1px solid var(--border)"}}>
-                                    {isBest&&<div style={{fontSize:10,fontWeight:700,color:"var(--green-dark)",marginBottom:6,letterSpacing:"0.1em"}}>⭐ RECOMMENDED</div>}
+                                    {isBest&&<div style={{fontSize:10,fontWeight:700,color:"var(--green-dark)",marginBottom:6,letterSpacing:"0.1em"}}>* RECOMMENDED</div>}
                                     <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>{a.supplierName}</div>
                                     <div style={{fontSize:22,fontWeight:700,color:verdictColor||"var(--text-primary)",fontFamily:"monospace"}}>{a.completeness}%</div>
                                     <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:2}}>completeness</div>
-                                    <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)",marginTop:8}}>{a.estimatedTotal||a.subtotal||"—"}</div>
+                                    <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)",marginTop:8}}>{a.estimatedTotal||a.subtotal||"-"}</div>
                                     <div style={{fontSize:11,color:"var(--text-tertiary)"}}>est. total inc. carriage</div>
                                     {a.carriageCharge&&a.carriageCharge!=="Not stated"&&<div style={{fontSize:11,color:"var(--amber)",marginTop:4}}>🚚 {a.carriageCharge}</div>}
-                                    {a.missing?.length>0&&<div style={{fontSize:11,color:"var(--red)",marginTop:4}}>✗ {a.missing.length} item{a.missing.length!==1?"s":""} missing</div>}
+                                    {a.missing?.length>0&&<div style={{fontSize:11,color:"var(--red)",marginTop:4}}>x {a.missing.length} item{a.missing.length!==1?"s":""} missing</div>}
                                   </div>
                                 );
                               })}
@@ -2551,7 +2551,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
                                   <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
                                   <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
-                                  {approvedQuoteId===qa._id&&<span style={{background:"var(--green-light)",color:"var(--green-deep)",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99}}>✓ Approved</span>}
+                                  {approvedQuoteId===qa._id&&<span style={{background:"var(--green-light)",color:"var(--green-deep)",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99}}>v Approved</span>}
                                 </div>
                                 <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{qa.recommendation}</div>
                               </div>
@@ -2583,9 +2583,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {/* Financial summary strip */}
                             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
                               {[
-                                {label:"Subtotal (ex VAT)",value:qa.subtotal||"—",color:"var(--text-primary)"},
+                                {label:"Subtotal (ex VAT)",value:qa.subtotal||"-",color:"var(--text-primary)"},
                                 {label:"Carriage / delivery",value:qa.carriageCharge||"Not stated",color:qa.carriageCharge==="Free"?"var(--green-dark)":qa.carriageCharge==="Not stated"?"var(--text-muted)":"var(--red)"},
-                                {label:"Estimated total",value:qa.estimatedTotal||qa.subtotal||"—",color:"var(--text-primary)",bold:true},
+                                {label:"Estimated total",value:qa.estimatedTotal||qa.subtotal||"-",color:"var(--text-primary)",bold:true},
                                 {label:"Lead time",value:qa.leadTime||"Not stated",color:"var(--text-secondary)"},
                               ].map(f=>(
                                 <div key={f.label} style={{background:"var(--bg-subtle)",borderRadius:10,padding:"12px 14px"}}>
@@ -2599,7 +2599,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {qa.positives?.length>0&&(
                               <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:8}}>
                                 {qa.positives.map((p,i)=>(
-                                  <span key={i} style={{fontSize:12,color:"var(--green-deep)",display:"flex",alignItems:"center",gap:4}}>✓ {p}</span>
+                                  <span key={i} style={{fontSize:12,color:"var(--green-deep)",display:"flex",alignItems:"center",gap:4}}>v {p}</span>
                                 ))}
                               </div>
                             )}
@@ -2610,7 +2610,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:8}}>🏷️ Discounts available</div>
                                 {qa.discounts.map((d,i)=>(
                                   <div key={i} style={{fontSize:13,color:"var(--text-primary)",marginBottom:4}}>
-                                    <span style={{fontWeight:500}}>{d.item}</span> — {d.discount} {d.detail&&<span style={{color:"var(--amber)"}}>({d.detail})</span>}
+                                    <span style={{fontWeight:500}}>{d.item}</span> - {d.discount} {d.detail&&<span style={{color:"var(--amber)"}}>({d.detail})</span>}
                                   </div>
                                 ))}
                               </div>
@@ -2619,11 +2619,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {/* Matched items table */}
                             {qa.matched?.length>0&&(
                               <div style={{marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#059669",marginBottom:8}}>✓ Quoted items ({qa.matched.length})</div>
+                                <div style={{fontSize:12,fontWeight:600,color:"#059669",marginBottom:8}}>v Quoted items ({qa.matched.length})</div>
                                 <div style={{overflowX:"auto"}}>
                                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                                     <thead><tr style={{background:"var(--green-mint)"}}>
-                                      {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty ✓","Notes",""].map(h=>(
+                                      {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty v","Notes",""].map(h=>(
                                         <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{h}</th>
                                       ))}
                                     </tr></thead>
@@ -2632,21 +2632,21 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                         <td style={{padding:"9px 10px",fontWeight:500,color:"#0F172A"}}>{m.item}</td>
                                         <td style={{padding:"9px 10px",color:"var(--text-secondary)",fontFamily:"monospace",fontSize:12}}>{m.requestedQty} {m.requestedUnit}</td>
                                         <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,color:m.qtyMatch?"#0F172A":"#DC2626",fontWeight:m.qtyMatch?400:600}}>{m.quotedQty||m.requestedQty} {m.quotedUnit||m.requestedUnit}</td>
-                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#059669",fontFamily:"monospace",fontSize:12}}>{m.unitPrice||m.quotedPrice||"—"}</td>
-                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#0F172A",fontFamily:"monospace",fontSize:12}}>{m.lineTotal||"—"}</td>
+                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#059669",fontFamily:"monospace",fontSize:12}}>{m.unitPrice||m.quotedPrice||"-"}</td>
+                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#0F172A",fontFamily:"monospace",fontSize:12}}>{m.lineTotal||"-"}</td>
                                         <td style={{padding:"9px 10px"}}>
                                           <Badge bg={m.inStock?"#D1FAE5":"#FEE2E2"} text={m.inStock?"#065F46":"#991B1B"}>{m.inStock?(m.stockQty&&m.stockQty!=="unknown"?`${m.stockQty} in stock`:"In stock"):"Out of stock"}</Badge>
                                         </td>
                                         <td style={{padding:"9px 10px"}}>
                                           {m.qtyMatch===false
-                                            ? <span style={{fontSize:11,color:"var(--red)",fontWeight:600}}>⚠ Mismatch</span>
-                                            : <span style={{fontSize:11,color:"#059669"}}>✓ Match</span>
+                                            ? <span style={{fontSize:11,color:"var(--red)",fontWeight:600}}>! Mismatch</span>
+                                            : <span style={{fontSize:11,color:"#059669"}}>v Match</span>
                                           }
                                         </td>
-                                        <td style={{padding:"9px 10px",fontSize:12,color:"var(--text-secondary)"}}>{m.notes||"—"}</td>
+                                        <td style={{padding:"9px 10px",fontSize:12,color:"var(--text-secondary)"}}>{m.notes||"-"}</td>
                                         <td style={{padding:"9px 10px"}}>
-                                          {m.confidence==="low"&&<span title="Low confidence match — please verify" style={{fontSize:11,background:"var(--amber-light)",color:"var(--amber)",fontWeight:700,padding:"2px 8px",borderRadius:99,cursor:"help"}}>⚠ Check</span>}
-                                          {m.confidence==="medium"&&<span title="Medium confidence — likely correct" style={{fontSize:11,background:"var(--bg-subtle2)",color:"var(--text-tertiary)",padding:"2px 8px",borderRadius:99}}>~</span>}
+                                          {m.confidence==="low"&&<span title="Low confidence match - please verify" style={{fontSize:11,background:"var(--amber-light)",color:"var(--amber)",fontWeight:700,padding:"2px 8px",borderRadius:99,cursor:"help"}}>! Check</span>}
+                                          {m.confidence==="medium"&&<span title="Medium confidence - likely correct" style={{fontSize:11,background:"var(--bg-subtle2)",color:"var(--text-tertiary)",padding:"2px 8px",borderRadius:99}}>~</span>}
                                         </td>
                                       </tr>
                                     ))}</tbody>
@@ -2658,11 +2658,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {/* Missing items */}
                             {qa.missing?.length>0&&(
                               <div style={{background:"var(--red-light)",border:"1px solid var(--red)",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--red)",marginBottom:8}}>✗ Not quoted ({qa.missing.length} item{qa.missing.length!==1?"s":""})</div>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--red)",marginBottom:8}}>x Not quoted ({qa.missing.length} item{qa.missing.length!==1?"s":""})</div>
                                 <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                                   {qa.missing.map((m,i)=>(
                                     <div key={i} style={{background:"#FEE2E2",borderRadius:6,padding:"4px 10px",fontSize:12,color:"var(--red)"}}>
-                                      {m.item||m} {m.reason&&<span style={{color:"#B91C1C"}}>— {m.reason}</span>}
+                                      {m.item||m} {m.reason&&<span style={{color:"#B91C1C"}}>- {m.reason}</span>}
                                     </div>
                                   ))}
                                 </div>
@@ -2676,7 +2676,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 {qa.alternatives.map((a,i)=>(
                                   <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,border:"1px solid #E0F2FE"}}>
                                     <div style={{fontSize:12,color:"var(--text-secondary)"}}>Instead of: <span style={{fontWeight:500,color:"#0F172A"}}>{a.requestedItem}</span></div>
-                                    <div style={{fontSize:13,fontWeight:500,color:"var(--indigo)",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>— {a.altPrice}</span>}</div>
+                                    <div style={{fontSize:13,fontWeight:500,color:"var(--indigo)",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>- {a.altPrice}</span>}</div>
                                     {a.reason&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{a.reason}</div>}
                                     {a.recommended&&<span style={{fontSize:10,background:"#0369A1",color:"white",padding:"1px 7px",borderRadius:10,marginTop:4,display:"inline-block"}}>AI recommends</span>}
                                   </div>
@@ -2687,45 +2687,45 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {/* Warnings */}
                             {qa.warnings?.length>0&&(
                               <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:6}}>⚠ Warnings</div>
-                                {qa.warnings.map((w,i)=><div key={i} style={{fontSize:13,color:"#78350F",marginTop:3}}>• {w}</div>)}
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:6}}>! Warnings</div>
+                                {qa.warnings.map((w,i)=><div key={i} style={{fontSize:13,color:"#78350F",marginTop:3}}>- {w}</div>)}
                               </div>
                             )}
 
                             {/* VAT note */}
                             {qa.vatNote&&<div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
 
-                            {/* Action buttons — smart conditional */}
+                            {/* Action buttons - smart conditional */}
                             <div style={{paddingTop:16,borderTop:"1px solid var(--border)",marginTop:16}}>
                               {approvedQuoteId===qa._id ? (
-                                /* ── This quote IS the approved one ── */
+                                /* -- This quote IS the approved one -- */
                                 <div>
                                   <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 18px",background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,border:"1px solid #A7F3D0",marginBottom:12}}>
-                                    <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,boxShadow:"0 4px 12px rgba(34,197,94,0.3)",flexShrink:0}}>✓</div>
+                                    <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,boxShadow:"0 4px 12px rgba(34,197,94,0.3)",flexShrink:0}}>v</div>
                                     <div style={{flex:1}}>
-                                      <div style={{fontSize:14,fontWeight:700,color:"var(--green-deep)"}}>Quote approved — PO generated</div>
+                                      <div style={{fontSize:14,fontWeight:700,color:"var(--green-deep)"}}>Quote approved - PO generated</div>
                                       <div style={{fontSize:12,color:"#16A34A",marginTop:2}}>This quote has been approved and sent to Orders. The PO has been downloaded.</div>
                                     </div>
                                     <button onClick={handleUndoApproval} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-                                      ↩ Undo approval
+                                      Undo Undo approval
                                     </button>
                                   </div>
                                   <button onClick={()=>setView("orders")} style={{fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600}}>
-                                    View in Orders →
+                                    View in Orders >
                                   </button>
                                 </div>
                               ) : approvedQuoteId && approvedQuoteId!==qa._id ? (
-                                /* ── Another quote has been approved — show reduced options ── */
+                                /* -- Another quote has been approved - show reduced options -- */
                                 <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                                   <div style={{fontSize:12,color:"var(--text-tertiary)",flex:1}}>Another quote has been approved for this job.</div>
                                   <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft</Btn>
                                   <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
                                 </div>
                               ) : (
-                                /* ── No quote approved yet — show all options ── */
+                                /* -- No quote approved yet - show all options -- */
                                 <div>
                                   <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
-                                    <Btn onClick={()=>handleApprovePO(qa)} color="#16A34A">✓ Approve &amp; generate PO</Btn>
+                                    <Btn onClick={()=>handleApprovePO(qa)} color="#16A34A">v Approve &amp; generate PO</Btn>
                                     <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft PDF</Btn>
                                     <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
                                   </div>
@@ -2743,7 +2743,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         })}
                       </div>
                     )}
-                    {/* ── Document store ── */}
+                    {/* -- Document store -- */}
                     <Card style={{marginTop:8}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
                         <div>
@@ -2751,7 +2751,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Generated POs, draft quotes, and uploaded third-party documents</div>
                         </div>
                         <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"var(--indigo-light)",color:"#2563EB",fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,cursor:"pointer",border:"1px solid #BFDBFE"}}>
-                          ↑ Upload document
+                          Upload document
                           <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) handleUploadDocument(e.target.files[0]); e.target.value=""; }}/>
                         </label>
                       </div>
@@ -2759,15 +2759,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       {(!activeReq.documents||activeReq.documents.length===0)?(
                         <div style={{textAlign:"center",padding:"30px 0",color:"var(--text-tertiary)",fontSize:13}}>
                           <div style={{fontSize:28,marginBottom:8}}>📄</div>
-                          No documents yet — approve a quote to generate a PO, save a draft, or upload a third-party document
+                          No documents yet - approve a quote to generate a PO, save a draft, or upload a third-party document
                         </div>
                       ):(
                         <div>
                           {activeReq.documents.map((doc,i)=>{
                             const typeConfig = {
-                              generated:{ bg:"#D1FAE5", text:"#065F46", icon:"✓", label:"Approved PO" },
-                              draft:    { bg:"#EDE9FE", text:"#5B21B6", icon:"◎", label:"Draft PDF" },
-                              uploaded: { bg:"#DBEAFE", text:"#1E40AF", icon:"↑", label:"Uploaded" },
+                              generated:{ bg:"#D1FAE5", text:"#065F46", icon:"v", label:"Approved PO" },
+                              draft:    { bg:"#EDE9FE", text:"#5B21B6", icon:"o", label:"Draft PDF" },
+                              uploaded: { bg:"#DBEAFE", text:"#1E40AF", icon:"^", label:"Uploaded" },
                             }[doc.type]||{ bg:"#F1F5F9", text:"#475569", icon:"📄", label:"Document" };
                             return(
                               <div key={doc.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:"1px solid var(--border)"}}>
@@ -2799,7 +2799,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ ORDERS ══ */}
+        {/* == ORDERS == */}
         {view==="orders"&&(
           <div style={{animation:"fadeIn 0.25s ease"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
@@ -2832,7 +2832,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   Orders appear here when you approve a PO in Quote Analysis, or when you promote an uploaded document to an order. Once here, send them directly to your supplier with one click.
                 </div>
                 <button onClick={()=>setView("quotes")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(99,102,241,0.3)"}}>
-                  Go to Quote Analysis →
+                  Go to Quote Analysis >
                 </button>
               </div>
             ):(
@@ -2859,7 +2859,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   return(
                   <div key={order.id} className="card-hover" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isConfirmed?"var(--green-dark)":isPending?"var(--green)":isSent?"var(--indigo)":"var(--border)"}`,overflow:"hidden",boxShadow:isExpanded?"var(--shadow-lg)":"var(--shadow-sm)",opacity:isDelivered?0.85:1,transition:"all 0.25s ease"}}>
 
-                    {/* ── Clickable order header row ── */}
+                    {/* -- Clickable order header row -- */}
                     <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)} style={{padding:"16px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",background:isExpanded?`linear-gradient(135deg,${currentStep.bg},var(--bg-card-solid))`:"var(--bg-card-solid)",transition:"background 0.2s"}}>
                       <div style={{display:"flex",alignItems:"center",gap:14,flex:1,minWidth:0}}>
                         <div style={{width:40,height:40,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":isConfirmed?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#4B5563,#374151)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0,boxShadow:`0 4px 12px ${currentStep.color}40`}}>
@@ -2886,10 +2886,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                     </div>
 
-                    {/* ── Expanded order body ── */}
+                    {/* -- Expanded order body -- */}
                     {isExpanded&&(
 
-                    {/* ── Status timeline ── */}
+                    {/* -- Status timeline -- */}
                     <div style={{padding:"16px 28px",borderBottom:"1px solid var(--border)",background:"#FAFFFE"}}>
                       <div style={{display:"flex",alignItems:"center",gap:0}}>
                         {STATUS_STEPS.map((step,si)=>{
@@ -2899,7 +2899,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             <div key={step.key} style={{display:"flex",alignItems:"center",flex:si<STATUS_STEPS.length-1?1:"none"}}>
                               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                                 <div style={{width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,background:done?step.color:"#F1F5F9",boxShadow:active?`0 0 0 4px ${step.color}20`:"none",transition:"all 0.3s",flexShrink:0}}>
-                                  {done?<span style={{fontSize:12}}>{si<stepIdx?"✓":step.icon}</span>:<span style={{fontSize:12,color:"var(--text-muted)"}}>○</span>}
+                                  {done?<span style={{fontSize:12}}>{si<stepIdx?"v":step.icon}</span>:<span style={{fontSize:12,color:"var(--text-muted)"}}>o</span>}
                                 </div>
                                 <span style={{fontSize:9,fontWeight:active?700:400,color:active?step.color:"var(--text-tertiary)",whiteSpace:"nowrap"}}>{step.label}</span>
                               </div>
@@ -2912,11 +2912,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                     </div>
 
-                    {/* ── Order body ── */}
+                    {/* -- Order body -- */}
                     <div style={{padding:"20px 28px"}}>
                       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:isMobile?14:20}}>
 
-                        {/* Left — details + activity */}
+                        {/* Left - details + activity */}
                         <div>
                           <div style={{marginBottom:16}}>
                             <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Items ordered ({order.items?.length||0})</div>
@@ -2972,10 +2972,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           )}
                         </div>
 
-                        {/* Right — action panel */}
+                        {/* Right - action panel */}
                         <div style={{background:"var(--bg-subtle)",borderRadius:14,padding:"20px"}}>
 
-                          {/* PENDING — send panel */}
+                          {/* PENDING - send panel */}
                           {isPending&&(
                             <>
                               <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Send this order to supplier</div>
@@ -2986,20 +2986,20 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               </div>
                               <div style={{marginBottom:14}}>
                                 <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Notes (optional)</label>
-                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions…" style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"var(--bg-card-solid)"}}/>
+                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions..." style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"var(--bg-card-solid)"}}/>
                               </div>
                               <button onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id||!order.supplierEmail} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:sendingOrder===order.id||!order.supplierEmail?"#D1FAE5":"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:sendingOrder===order.id||!order.supplierEmail?"not-allowed":"pointer",boxShadow:"0 4px 16px rgba(34,197,94,0.3)",marginBottom:8}}>
-                                {sendingOrder===order.id?<><Spinner/>Sending…</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
+                                {sendingOrder===order.id?<><Spinner/>Sending...</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
                               </button>
                             </>
                           )}
 
-                          {/* SENT — awaiting confirmation */}
+                          {/* SENT - awaiting confirmation */}
                           {isSent&&(
                             <>
                               <div style={{background:"var(--indigo-light)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
                                 <div style={{fontSize:13,fontWeight:600,color:"#4338CA",marginBottom:2}}>✈️ Order sent</div>
-                                <div style={{fontSize:11,color:"var(--indigo)"}}>Sent to {order.supplierEmail} · {order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</div>
+                                <div style={{fontSize:11,color:"var(--indigo)"}}>Sent to {order.supplierEmail} · {order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"-"}</div>
                               </div>
 
                               <div style={{marginBottom:14}}>
@@ -3009,7 +3009,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                   📎 Upload confirmation document
                                   <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
                                 </label>
-                                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:6,textAlign:"center"}}>PDF, Word, or image — drag and drop or click to browse</div>
+                                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:6,textAlign:"center"}}>PDF, Word, or image - drag and drop or click to browse</div>
                               </div>
 
                               <div style={{marginBottom:10}}>
@@ -3035,7 +3035,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             </>
                           )}
 
-                          {/* CONFIRMED — awaiting delivery */}
+                          {/* CONFIRMED - awaiting delivery */}
                           {isConfirmed&&(
                             <>
                               <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
@@ -3064,19 +3064,19 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               <button onClick={()=>{
                                 const entry={ts:new Date().toISOString(),action:"Materials delivered",detail:"Order marked as delivered",user:settings.contactName||"You"};
                                 setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),activity:[...(o.activity||[]),entry]}:o));
-                                showToast("Order marked as delivered — job complete");
+                                showToast("Order marked as delivered - job complete");
                               }} style={{width:"100%",background:"linear-gradient(135deg,#374151,#1F2937)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8}}>
                                 🏁 Mark as delivered
                               </button>
                             </>
                           )}
 
-                          {/* DELIVERED — complete */}
+                          {/* DELIVERED - complete */}
                           {isDelivered&&(
                             <div style={{background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,padding:"16px",textAlign:"center"}}>
                               <div style={{fontSize:24,marginBottom:8}}>🏁</div>
                               <div style={{fontSize:14,fontWeight:700,color:"var(--green-deep)",marginBottom:4}}>Order complete</div>
-                              <div style={{fontSize:12,color:"#16A34A"}}>Delivered {order.deliveredAt?new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"—"}</div>
+                              <div style={{fontSize:12,color:"#16A34A"}}>Delivered {order.deliveredAt?new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"-"}</div>
                             </div>
                           )}
 
@@ -3108,7 +3108,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       <div style={{fontSize:12,color:"var(--text-secondary)"}}>{d._req.jobRef} · {d._req.site} · {d.date}</div>
                     </div>
                     <button onClick={()=>handleCreateOrderFromDoc(d,d._req)} style={{background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                      Add to Orders →
+                      Add to Orders >
                     </button>
                   </div>
                 ))}
@@ -3117,12 +3117,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ SUPPLIERS ══ */}
+        {/* == SUPPLIERS == */}
         {view==="suppliers"&&(
           <div>
             <div style={{marginBottom:24}}>
               <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Suppliers</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Your supplier accounts — add your real ones here</p>
+              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Your supplier accounts - add your real ones here</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:isMobile?10:16,marginBottom:isMobile?16:24}}>
               {suppliers.map(s=>(
@@ -3178,7 +3178,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ ALL REQUESTS ══ */}
+        {/* == ALL REQUESTS == */}
         {view==="requests"&&(
           <div>
             <div style={{marginBottom:24}}>
@@ -3202,7 +3202,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     <td style={{padding:"13px 16px",fontSize:12,color:"#9CA3AF"}}>{r.created}</td>
                     <td style={{padding:"13px 16px"}}>
                       <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                        <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>View →</button>
+                        <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>View ></button>
                         <button onClick={()=>handleDuplicate(r)} style={{fontSize:12,color:"#16A34A",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
                         <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
                         <button onClick={()=>setActivityModal(r)} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer",fontWeight:r.activity?.length?"500":"400"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
@@ -3217,14 +3217,14 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ QUOTE LIBRARY ══ */}
+        {/* == QUOTE LIBRARY == */}
         {view==="library"&&(
           <div style={{animation:"fadeIn 0.25s ease"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
               <div>
                 <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>PRICE HISTORY</div>
                 <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-1px",margin:0,color:"var(--text-primary)"}}>Quote Library</h1>
-                <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Every supplier quote ever received — track price changes over time</p>
+                <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Every supplier quote ever received - track price changes over time</p>
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
                 <div style={{background:"var(--green-mint)",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"var(--green-deep)",fontWeight:500}}>
@@ -3291,7 +3291,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div style={{background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
                   <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",background:"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
                     <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>Full quote history</div>
-                    <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>All quotes saved from AI analysis — newest first</div>
+                    <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>All quotes saved from AI analysis - newest first</div>
                   </div>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead><tr style={{background:"var(--bg-subtle)"}}>
@@ -3313,9 +3313,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             <span style={{fontSize:12,fontWeight:600,color:q.completeness>=80?"#22C55E":q.completeness>=60?"#F59E0B":"#EF4444"}}>{q.completeness}%</span>
                           </div>
                         </td>
-                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{q.totalEstimate||"—"}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,color:q.carriageCharge==="Free"?"#22C55E":q.carriageCharge==="Not stated"?"#94A3B8":"#DC2626",fontWeight:500}}>{q.carriageCharge||"—"}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.leadTime||"—"}</td>
+                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{q.totalEstimate||"-"}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,color:q.carriageCharge==="Free"?"#22C55E":q.carriageCharge==="Not stated"?"#94A3B8":"#DC2626",fontWeight:500}}>{q.carriageCharge||"-"}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.leadTime||"-"}</td>
                         <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.items?.length||0}</td>
                         <td style={{padding:"12px 14px"}}>
                           {q.missing?.length>0?<span style={{background:"var(--red-light)",color:"var(--red)",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>{q.missing.length} missing</span>:<span style={{background:"var(--green-mint)",color:"#16A34A",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>Complete</span>}
@@ -3332,7 +3332,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ HELP ══ */}
+        {/* == HELP == */}
         {view==="help"&&(
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:900}}>
             {/* Header */}
@@ -3378,12 +3378,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                     </div>
                   ))}
-                  {helpLoading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"var(--bg-subtle)",borderRadius:"14px 14px 14px 4px",padding:"10px 14px",fontSize:13,color:"var(--text-secondary)",display:"flex",alignItems:"center",gap:8}}><Spinner/>Thinking…</div></div>}
+                  {helpLoading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"var(--bg-subtle)",borderRadius:"14px 14px 14px 4px",padding:"10px 14px",fontSize:13,color:"var(--text-secondary)",display:"flex",alignItems:"center",gap:8}}><Spinner/>Thinking...</div></div>}
                 </div>
                 <div style={{padding:"12px 16px",borderTop:"1px solid var(--border)",display:"flex",gap:8}}>
                   <input value={helpInput} onChange={e=>setHelpInput(e.target.value)}
                     onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&handleHelpChat(helpInput)}
-                    placeholder={settings.openRouterKey?"Ask me anything about ProQuote…":"Add your OpenRouter key in Settings to use the AI assistant"}
+                    placeholder={settings.openRouterKey?"Ask me anything about ProQuote...":"Add your OpenRouter key in Settings to use the AI assistant"}
                     disabled={!settings.openRouterKey}
                     style={{flex:1,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}
                   />
@@ -3416,7 +3416,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   ))}
                 </div>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
-                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>⌨️ Keyboard shortcuts</div>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>️ Keyboard shortcuts</div>
                   {[["N","New request"],["Q","Quote analysis"],["O","Orders"],["D","Dashboard"],["S","Settings"],["H","Help"],["Esc","Close modals"]].map(([k,l])=>(
                     <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid var(--border)"}}>
                       <span style={{fontSize:12,color:"var(--text-secondary)"}}>{l}</span>
@@ -3434,21 +3434,21 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 const faqs = [
                   {cat:"Getting started",qs:[
                     {q:"What is ProQuote?",a:"ProQuote is an AI-powered procurement platform for trades contractors. It automates the full procurement workflow from creating a material request on site through to sending a purchase order to your supplier."},
-                    {q:"What trades does ProQuote support?",a:"ProQuote supports Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas — with General as a catch-all category for any other trade."},
+                    {q:"What trades does ProQuote support?",a:"ProQuote supports Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas - with General as a catch-all category for any other trade."},
                     {q:"Does ProQuote work on my phone?",a:"Yes. ProQuote is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar. Voice input works natively on both iOS and Android."},
-                    {q:"Do I need to install anything?",a:"No. ProQuote runs entirely in a browser — Chrome, Safari, Edge, Firefox. No app download, no installation."},
+                    {q:"Do I need to install anything?",a:"No. ProQuote runs entirely in a browser - Chrome, Safari, Edge, Firefox. No app download, no installation."},
                     {q:"Where is my data stored?",a:"Currently all data is stored in your browser's local storage and persists across sessions. Cloud backup and multi-device sync are coming in the next major update."},
                   ]},
                   {cat:"Creating requests",qs:[
-                    {q:"How does voice input work?",a:"Tap the microphone button on the new request page and speak your list naturally — just as you would on a phone call. The app transcribes in real time and the AI structures it into a clean itemised list."},
-                    {q:"Can I edit the parsed list before sending?",a:"Yes. Every field in the parsed items table is editable — description, quantity, unit, category, and notes per line. You can also add new items or remove incorrect ones."},
+                    {q:"How does voice input work?",a:"Tap the microphone button on the new request page and speak your list naturally - just as you would on a phone call. The app transcribes in real time and the AI structures it into a clean itemised list."},
+                    {q:"Can I edit the parsed list before sending?",a:"Yes. Every field in the parsed items table is editable - description, quantity, unit, category, and notes per line. You can also add new items or remove incorrect ones."},
                     {q:"What are templates?",a:"Templates let you save common material lists for instant reuse. They're grouped by trade so you can find them quickly. When loaded, the full item list populates into Step 2 ready to send immediately."},
                     {q:"Can I set a deadline for supplier responses?",a:"Yes. In Step 2 there's a response deadline date picker. The date appears prominently in the RFQ email and shows as a countdown on the dashboard."},
                   ]},
                   {cat:"Quotes & analysis",qs:[
                     {q:"How do I enter a supplier quote?",a:"In Quote Analysis, each supplier you contacted has their own box. Paste their email response or upload their PDF/Excel document. The AI reads documents and extracts all pricing automatically."},
                     {q:"What does the AI check in a quote?",a:"The AI checks every item for price, stock availability, quantity accuracy, carriage charges, lead times, discounts, and alternatives. It produces a completeness score and recommends the best supplier."},
-                    {q:"What happens to other quotes when I approve one?",a:"All other quotes are automatically saved to the Quote Library in the background. They're not lost — you can reference them at any time in the Library page."},
+                    {q:"What happens to other quotes when I approve one?",a:"All other quotes are automatically saved to the Quote Library in the background. They're not lost - you can reference them at any time in the Library page."},
                     {q:"Can I undo an approval?",a:"Yes. The approved quote card shows an Undo button. Tapping it reverses the approval, removes the order from Orders, and returns the job to received status."},
                   ]},
                   {cat:"Orders",qs:[
@@ -3460,8 +3460,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   {cat:"Settings & troubleshooting",qs:[
                     {q:"Why isn't the AI working?",a:"You need a free OpenRouter API key. Go to openrouter.ai, sign up (no credit card for basic use), copy your key, and paste it in ProQuote Settings. The status dot in the sidebar will turn green."},
                     {q:"Why aren't emails sending?",a:"Email sending requires a Resend API key and a verified sending domain. Go to resend.com, create a free account, verify your domain, and add the key in Settings."},
-                    {q:"My data disappeared after refreshing — what happened?",a:"Data is stored in your browser's local storage. Clearing your browser data or using a different browser/device will not show your data. Full cloud sync is coming soon."},
-                    {q:"Can I use ProQuote on multiple devices?",a:"Not yet — data is currently local to the browser you use. Cloud sync across devices is part of the upcoming backend storage update."},
+                    {q:"My data disappeared after refreshing - what happened?",a:"Data is stored in your browser's local storage. Clearing your browser data or using a different browser/device will not show your data. Full cloud sync is coming soon."},
+                    {q:"Can I use ProQuote on multiple devices?",a:"Not yet - data is currently local to the browser you use. Cloud sync across devices is part of the upcoming backend storage update."},
                   ]},
                 ];
                 return faqs.map(section=>(
@@ -3493,15 +3493,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <span style={{fontSize:11,color:"var(--text-muted)"}}>Smart Procurement Platform · Version 1.0</span>
               </div>
               <div style={{display:"flex",gap:16}}>
-                <button onClick={()=>setView("contact")} style={{fontSize:12,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Contact support →</button>
-                <button onClick={()=>setView("settings")} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Settings →</button>
+                <button onClick={()=>setView("contact")} style={{fontSize:12,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Contact support ></button>
+                <button onClick={()=>setView("settings")} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Settings ></button>
               </div>
             </div>
           </div>
           );
         })()}
 
-        {/* ══ CONTACT ══ */}
+        {/* == CONTACT == */}
         {view==="contact"&&(()=>{
           if(!contactForm.name&&settings.contactName) setContactForm(p=>({...p,name:settings.contactName,email:settings.fromEmail||p.email}));
           return(
@@ -3521,7 +3521,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
             {contactSent?(
               <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-lg)",padding:"48px 40px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
-                <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.25)"}}>✓</div>
+                <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.25)"}}>v</div>
                 <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request sent</div>
                 <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24,lineHeight:1.6}}>Thank you for getting in touch. We'll respond to your request as soon as possible.</div>
                 <div style={{display:"flex",gap:10,justifyContent:"center"}}>
@@ -3563,12 +3563,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     <textarea value={contactForm.description} onChange={e=>setContactForm(p=>({...p,description:e.target.value}))} placeholder="Please describe your issue or request in as much detail as possible. Include any steps to reproduce a bug, or what you'd like to see improved." style={{width:"100%",height:140,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",background:"var(--bg-input)",color:"var(--text-primary)",lineHeight:1.6}}/>
                   </div>
                   <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",padding:"10px 14px",marginBottom:16,fontSize:12,color:"var(--text-secondary)"}}>
-                    ℹ️ App version: 1.0 · {settings.company||"Company not set"} · {requests.length} requests · {orders.length} orders
+                    i App version: 1.0 · {settings.company||"Company not set"} · {requests.length} requests · {orders.length} orders
                   </div>
                   <button
                     onClick={()=>{
                       if(!contactForm.description.trim()){showToast("Please add a description","warn");return;}
-                      showToast("Support request submitted — we'll be in touch soon");
+                      showToast("Support request submitted - we'll be in touch soon");
                       setContactSent(true);
                       setContactForm(p=>({...p,description:""}));
                     }}
@@ -3612,7 +3612,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           </div>
         )}
 
-        {/* ══ SETTINGS ══ */}
+        {/* == SETTINGS == */}
         {view==="settings"&&(
           <div>
             <div style={{marginBottom:24}}>
@@ -3636,13 +3636,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             </Card>
 
             <Card style={{marginBottom:20}}>
-              <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>AI key — OpenRouter (free, no credit card)</div>
+              <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>AI key - OpenRouter (free, no credit card)</div>
               <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>OpenRouter gives you free AI access. No credit card. Takes 2 minutes.</p>
               <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"var(--text-secondary)",lineHeight:2}}>
                 <strong>Setup (2 minutes, completely free):</strong><br/>
-                1. Go to <a href="https://openrouter.ai/signup" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>openrouter.ai/signup</a> — sign up free, no card needed<br/>
-                2. Click your avatar → <strong>Keys</strong> → <strong>Create key</strong> — copy it<br/>
-                3. Paste it below and save — AI features work immediately<br/>
+                1. Go to <a href="https://openrouter.ai/signup" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>openrouter.ai/signup</a> - sign up free, no card needed<br/>
+                2. Click your avatar > <strong>Keys</strong> > <strong>Create key</strong> - copy it<br/>
+                3. Paste it below and save - AI features work immediately<br/>
                 4. Free tier uses Gemini Flash which is excellent for this use case<br/>
                 <span style={{color:"#9CA3AF",fontSize:12}}>Key stored only in your browser. Never sent anywhere except OpenRouter.</span>
               </div>
@@ -3650,19 +3650,19 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>OpenRouter API key</label>
                 <input type="password" value={sForm.openRouterKey||""} onChange={e=>setSForm(p=>({...p,openRouterKey:e.target.value}))} placeholder="sk-or-v1-xxxxxxxxxxxxxxxx" style={{width:"60%",padding:"9px 12px",border:`1px solid ${sForm.openRouterKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
                 {sForm.openRouterKey
-                  ? <div style={{fontSize:11,color:"#059669",marginTop:4}}>✓ Key entered — AI features active</div>
-                  : <div style={{fontSize:11,color:"#F59E0B",marginTop:4}}>⚠ No key yet — AI features will redirect you to Settings when used</div>
+                  ? <div style={{fontSize:11,color:"#059669",marginTop:4}}>v Key entered - AI features active</div>
+                  : <div style={{fontSize:11,color:"#F59E0B",marginTop:4}}>! No key yet - AI features will redirect you to Settings when used</div>
                 }
               </div>
             </Card>
 
             <Card style={{marginBottom:20}}>
-              <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>Email sending — Resend</div>
+              <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>Email sending - Resend</div>
               <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>Free tier: 3,000 emails/month. No credit card. Works on Vercel.</p>
               <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"var(--text-secondary)",lineHeight:2}}>
                 <strong>Setup (2 minutes, completely free):</strong><br/>
-                1. Go to <a href="https://resend.com" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>resend.com</a> → log in<br/>
-                2. Click <strong>API Keys</strong> → <strong>Create API Key</strong> → Full Access → copy it<br/>
+                1. Go to <a href="https://resend.com" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>resend.com</a> > log in<br/>
+                2. Click <strong>API Keys</strong> > <strong>Create API Key</strong> > Full Access > copy it<br/>
                 3. Paste below. Use <code style={{background:"#E5E7EB",padding:"1px 6px",borderRadius:4,fontSize:12}}>onboarding@resend.dev</code> as From address for now<br/>
                 4. To send to any supplier email, add your domain under <strong>Domains</strong> in Resend (free, 5 mins)
               </div>
@@ -3670,7 +3670,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div>
                   <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Resend API key</label>
                   <input type="password" value={sForm.resendKey||""} onChange={e=>setSForm(p=>({...p,resendKey:e.target.value}))} placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx" style={{width:"100%",padding:"9px 12px",border:`1px solid ${sForm.resendKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
-                  {sForm.resendKey&&<div style={{fontSize:11,color:"#059669",marginTop:4}}>✓ Key entered</div>}
+                  {sForm.resendKey&&<div style={{fontSize:11,color:"#059669",marginTop:4}}>v Key entered</div>}
                 </div>
                 <div>
                   <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>From email address</label>
@@ -3692,7 +3692,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
       </>);
       })()}
 
-      {/* ══ TEMPLATE MODAL ══ */}
+      {/* == TEMPLATE MODAL == */}
       {templateModal&&(()=>{
         const tradeOrder = ["Plumbing","HVAC","Electrical","Mechanical","Ventilation","Gas","General"];
         const grouped = tradeOrder.reduce((acc,tr)=>{
@@ -3712,15 +3712,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
                 <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Request templates</div>
-                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Material list templates — grouped by trade</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Material list templates - grouped by trade</div>
               </div>
-              <button onClick={()=>setTemplateModal(false)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"var(--text-muted)"}}>✕</button>
+              <button onClick={()=>setTemplateModal(false)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"var(--text-muted)"}}>x</button>
             </div>
 
             {/* Save current as template */}
             {parsed&&(
               <div style={{background:"var(--green-mint)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20}}>
-                <div style={{fontSize:12,fontWeight:600,color:"var(--green-deep)",marginBottom:8}}>💾 Save current list — {currentTrade}</div>
+                <div style={{fontSize:12,fontWeight:600,color:"var(--green-deep)",marginBottom:8}}>💾 Save current list - {currentTrade}</div>
                 <div style={{display:"flex",gap:10}}>
                   <input value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)}
                     placeholder={`Name e.g. "Standard ${currentTrade} pack"`}
@@ -3747,7 +3747,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   <div key={tradeName} style={{marginBottom:16}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
                       <span style={{fontSize:11,fontWeight:700,color:tradeName===currentTrade?"var(--green-dark)":"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.1em"}}>
-                        {tradeName===currentTrade?"★ ":""}{tradeName}
+                        {tradeName===currentTrade?"* ":""}{tradeName}
                       </span>
                       <span style={{fontSize:10,color:"var(--text-muted)",background:"var(--bg-subtle2)",padding:"1px 7px",borderRadius:99}}>{grouped[tradeName].length}</span>
                     </div>
@@ -3759,11 +3759,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {t.usageCount>0&&<span style={{fontSize:9,color:"var(--text-muted)",background:"var(--bg-subtle2)",padding:"1px 6px",borderRadius:99,flexShrink:0}}>used {t.usageCount}×</span>}
                           </div>
                           <div style={{fontSize:11,color:"var(--text-secondary)"}}>{t.items.length} items{t.lastUsed?` · last used ${t.lastUsed}`:` · saved ${t.created}`}</div>
-                          <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.items.slice(0,3).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join(", ")}{t.items.length>3?"…":""}</div>
+                          <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.items.slice(0,3).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join(", ")}{t.items.length>3?"...":""}</div>
                         </div>
                         <div style={{display:"flex",gap:6,flexShrink:0}}>
                           <button onClick={()=>handleLoadTemplate(t)} style={{fontSize:12,color:"white",background:"var(--green-dark)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:600}}>Load</button>
-                          <button onClick={()=>saveTemplates(templates.filter(x=>x.id!==t.id))} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer"}}>✕</button>
+                          <button onClick={()=>saveTemplates(templates.filter(x=>x.id!==t.id))} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer"}}>x</button>
                         </div>
                       </div>
                     ))}
@@ -3776,7 +3776,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         );
       })()}
 
-      {/* ══ APPROVE CONFIRMATION MODAL ══ */}
+      {/* == APPROVE CONFIRMATION MODAL == */}
       {approveConfirm&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
@@ -3789,11 +3789,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div>
                   <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>SUPPLIER</div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{approveConfirm?.supplierName||"—"}</div>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{approveConfirm?.supplierName||"-"}</div>
                 </div>
                 <div>
                   <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>ESTIMATED TOTAL</div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--green-dark)"}}>{approveConfirm?.estimatedTotal||approveConfirm?.subtotal||"—"}</div>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--green-dark)"}}>{approveConfirm?.estimatedTotal||approveConfirm?.subtotal||"-"}</div>
                 </div>
                 <div>
                   <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>COMPLETENESS</div>
@@ -3801,7 +3801,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 </div>
                 <div>
                   <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>OTHER QUOTES</div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-secondary)"}}>{allAnalyses.length-1} → auto-saved to library</div>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-secondary)"}}>{allAnalyses.length-1} > auto-saved to library</div>
                 </div>
               </div>
             </div>
@@ -3813,11 +3813,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         </div>
       )}
 
-      {/* ══ APPROVE SUCCESS MODAL ══ */}
+      {/* == APPROVE SUCCESS MODAL == */}
       {approveSuccess&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"36px 40px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--green-dark)",textAlign:"center",animation:"fadeIn 0.3s ease"}}>
-            <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>✓</div>
+            <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>v</div>
             <div style={{fontSize:22,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.5px",marginBottom:6}}>PO Approved</div>
             <div style={{fontSize:15,fontWeight:600,color:"var(--green-dark)",marginBottom:16,fontFamily:"'JetBrains Mono',monospace"}}>{approveSuccess.poNum}</div>
             <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20,textAlign:"left"}}>
@@ -3837,7 +3837,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:20}}>Other quotes have been saved to the Quote Library. An order has been created in Orders ready to dispatch to the supplier.</div>
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
               <button onClick={()=>{setApproveSuccess(null);setView("orders");}} style={{background:"linear-gradient(135deg,var(--green),var(--green-dark))",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 12px rgba(34,197,94,0.3)"}}>
-                View in Orders →
+                View in Orders >
               </button>
               <button onClick={()=>setApproveSuccess(null)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
                 Stay here
@@ -3847,7 +3847,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         </div>
       )}
 
-      {/* ══ DELETE CONFIRM MODAL ══ */}
+      {/* == DELETE CONFIRM MODAL == */}
       {deleteConfirm&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
@@ -3862,11 +3862,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         </div>
       )}
 
-      {/* ══ EDIT MODAL ══ */}
+      {/* == EDIT MODAL == */}
       {editModal&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:540,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:20}}>Edit request — {editModal.id}</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:20}}>Edit request - {editModal.id}</div>
             <div style={{display:"grid",gap:14}}>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Job reference</label>
@@ -3898,16 +3898,16 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         </div>
       )}
 
-      {/* ══ ACTIVITY LOG MODAL ══ */}
+      {/* == ACTIVITY LOG MODAL == */}
       {activityModal&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:560,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
-                <div style={{fontSize:16,fontWeight:600}}>{activityModal.id} — Activity log</div>
+                <div style={{fontSize:16,fontWeight:600}}>{activityModal.id} - Activity log</div>
                 <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>{activityModal.jobRef} · {activityModal.site}</div>
               </div>
-              <button onClick={()=>setActivityModal(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9CA3AF"}}>✕</button>
+              <button onClick={()=>setActivityModal(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9CA3AF"}}>x</button>
             </div>
             {(!activityModal.activity||activityModal.activity.length===0)?(
               <div style={{textAlign:"center",padding:"40px 0",color:"#9CA3AF",fontSize:13}}>No activity recorded yet</div>
