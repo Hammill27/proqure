@@ -2332,7 +2332,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 </div>
                               </div>
                               {sup.saved
-                                ? <span style={{background:"#D1FAE5",color:"var(--green-deep)",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>v Quote saved</span>
+                                ? <span style={{background:"#D1FAE5",color:"var(--green-deep)",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>Quote saved</span>
                                 : <span style={{background:"#FEF3C7",color:"var(--amber)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>Awaiting quote</span>
                               }
                             </div>
@@ -2551,7 +2551,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
                                   <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
                                   <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
-                                  {approvedQuoteId===qa._id&&<span style={{background:"var(--green-light)",color:"var(--green-deep)",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99}}>v Approved</span>}
+                                  {approvedQuoteId===qa._id&&<span style={{background:"var(--green-light)",color:"var(--green-deep)",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99}}>Approved</span>}
                                 </div>
                                 <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{qa.recommendation}</div>
                               </div>
@@ -2619,7 +2619,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {/* Matched items table */}
                             {qa.matched?.length>0&&(
                               <div style={{marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#059669",marginBottom:8}}>v Quoted items ({qa.matched.length})</div>
+                                <div style={{fontSize:12,fontWeight:600,color:"#059669",marginBottom:8}>Matched items ({qa.matched.length})</div>
                                 <div style={{overflowX:"auto"}}>
                                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                                     <thead><tr style={{background:"var(--green-mint)"}}>
@@ -2640,7 +2640,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                         <td style={{padding:"9px 10px"}}>
                                           {m.qtyMatch===false
                                             ? <span style={{fontSize:11,color:"var(--red)",fontWeight:600}}>! Mismatch</span>
-                                            : <span style={{fontSize:11,color:"#059669"}}>v Match</span>
+                                            : <span style={{fontSize:11,color:"#059669"}}>Match</span>
                                           }
                                         </td>
                                         <td style={{padding:"9px 10px",fontSize:12,color:"var(--text-secondary)"}}>{m.notes||"-"}</td>
@@ -2725,7 +2725,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 /* -- No quote approved yet - show all options -- */
                                 <div>
                                   <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
-                                    <Btn onClick={()=>handleApprovePO(qa)} color="#16A34A">v Approve &amp; generate PO</Btn>
+                                    <Btn onClick={()=>handleApprovePO(qa)} color="#16A34A">Approve &amp; generate PO</Btn>
                                     <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft PDF</Btn>
                                     <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
                                   </div>
@@ -2734,7 +2734,6 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                   </div>
                                 </div>
                               )}
-                            </div>
                             </div>
                             </div>
                             )}
@@ -3650,7 +3649,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>OpenRouter API key</label>
                 <input type="password" value={sForm.openRouterKey||""} onChange={e=>setSForm(p=>({...p,openRouterKey:e.target.value}))} placeholder="sk-or-v1-xxxxxxxxxxxxxxxx" style={{width:"60%",padding:"9px 12px",border:`1px solid ${sForm.openRouterKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
                 {sForm.openRouterKey
-                  ? <div style={{fontSize:11,color:"#059669",marginTop:4}}>v Key entered - AI features active</div>
+                  ? <div style={{fontSize:11,color:"#059669",marginTop:4}}>Key active - AI features enabled</div>
                   : <div style={{fontSize:11,color:"#F59E0B",marginTop:4}}>! No key yet - AI features will redirect you to Settings when used</div>
                 }
               </div>
@@ -3670,7 +3669,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div>
                   <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Resend API key</label>
                   <input type="password" value={sForm.resendKey||""} onChange={e=>setSForm(p=>({...p,resendKey:e.target.value}))} placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx" style={{width:"100%",padding:"9px 12px",border:`1px solid ${sForm.resendKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
-                  {sForm.resendKey&&<div style={{fontSize:11,color:"#059669",marginTop:4}}>v Key entered</div>}
+                  {sForm.resendKey&&<div style={{fontSize:11,color:"#059669",marginTop:4}}>Key entered</div>}
                 </div>
                 <div>
                   <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>From email address</label>
