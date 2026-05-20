@@ -57,23 +57,27 @@ const STATUS = {
 };
 
 // ─── AI helpers ───────────────────────────────────────────────────────────────
-async function callAI(system, user) {
+async function callAI(system, user, history=[]) {
   const key = window.__piq_or_key__ || "";
   if (!key) throw new Error("NO_KEY");
-  // Try models in order until one works
   const models = [
     "deepseek/deepseek-chat",
     "meta-llama/llama-3.1-8b-instruct",
     "mistralai/mistral-7b-instruct",
     "google/gemini-flash-1.5",
   ];
+  const messages = [
+    {role:"system",content:system},
+    ...history.slice(-8),
+    {role:"user",content:user}
+  ];
   let lastErr = "";
   for (const model of models) {
     try {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://quotient.app","X-Title":"ProQuote"},
-        body: JSON.stringify({ model, messages:[{role:"system",content:system},{role:"user",content:user}] })
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://proquote.app","X-Title":"ProQuote"},
+        body: JSON.stringify({ model, messages })
       });
       const d = await res.json();
       if (d.error) { lastErr = d.error.message||"API error"; continue; }
@@ -81,7 +85,7 @@ async function callAI(system, user) {
       if (text) return text;
     } catch(e) { lastErr = e.message; }
   }
-  throw new Error("No free models available: "+lastErr);
+  throw new Error("No models available: "+lastErr);
 }
 async function parseMaterialList(raw) {
   const sys = `You are a procurement assistant for UK plumbing, HVAC, and electrical trades. Parse a material request into structured JSON. Return ONLY valid JSON, no markdown.
@@ -446,6 +450,34 @@ export default function App() {
   const [deliveryMethod, setDeliveryMethod] = useState("direct");
   const [deliveryDate,   setDeliveryDate]   = useState("");
   const [altAddress,     setAltAddress]     = useState("");
+
+  // Help AI chat
+  const [helpMessages, setHelpMessages] = useState([]);
+  const [helpInput, setHelpInput] = useState("");
+  const [helpLoading, setHelpLoading] = useState(false);
+
+  // Contact form
+  const [contactForm, setContactForm] = useState({name:settings.contactName||"",email:settings.fromEmail||"",category:"Bug report",priority:"Normal",description:""});
+  const [contactSent, setContactSent] = useState(false);
+
+  // Keyboard shortcuts
+  useEffect(()=>{
+    const handler = e=>{
+      if (e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT") return;
+      if (e.key==="n"||e.key==="N") { setView("new"); resetNewRequest(); }
+      else if (e.key==="q"||e.key==="Q") setView("quotes");
+      else if (e.key==="o"||e.key==="O") setView("orders");
+      else if (e.key==="d"||e.key==="D") setView("dashboard");
+      else if (e.key==="s"||e.key==="S") setView("settings");
+      else if (e.key==="h"||e.key==="H") setView("help");
+      else if (e.key==="Escape") {
+        setDeleteConfirm(null); setEditModal(null); setActivityModal(null);
+        setApproveConfirm(null); setApproveSuccess(null); setTemplateModal(false);
+      }
+    };
+    window.addEventListener("keydown",handler);
+    return ()=>window.removeEventListener("keydown",handler);
+  },[]);
 
   // Templates
   const [templates, setTemplates] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_templates")||"[]")}catch{return []} });
@@ -841,6 +873,23 @@ export default function App() {
     showToast("Approval undone — you can re-approve a different quote");
   }
 
+  async function handleHelpChat(question) {
+    if (!question.trim()) return;
+    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings to use the AI assistant","warn"); return; }
+    window.__piq_or_key__ = settings.openRouterKey;
+    const userMsg = {role:"user",content:question};
+    setHelpMessages(p=>[...p,userMsg]);
+    setHelpInput("");
+    setHelpLoading(true);
+    const sys = `You are the ProQuote AI assistant. ProQuote is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use the platform. Be concise, friendly, and accurate. Key features: voice material requests, AI parsing of lists, RFQ email generation, supplier management, AI quote analysis and comparison, purchase order generation, orders tracking with status timeline (Ready→Sent→Confirmed→Delivered), quote library with supplier scorecards, request templates by trade, dark/light theme, mobile app with bottom nav. If asked about something not in ProQuote, say so clearly. Answer in 2-4 sentences unless a longer explanation is genuinely needed.`;
+    const history = [...helpMessages,userMsg].slice(-10).map(m=>({role:m.role,content:m.content}));
+    try {
+      const raw = await callAI(sys, question, history);
+      setHelpMessages(p=>[...p,{role:"assistant",content:raw}]);
+    } catch(e) { setHelpMessages(p=>[...p,{role:"assistant",content:"Sorry, I couldn't process that. Please try again."}]); }
+    setHelpLoading(false);
+  }
+
   async function handleSaveDraftQuote(qa) {
     const poNum = `DRAFT-${Date.now().toString().slice(-6)}`;
     const dateStr = new Date().toLocaleDateString("en-GB");
@@ -1101,6 +1150,8 @@ ${settings.company||""}`;
           {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
           {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
+          {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
+          {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
         ];
         const handleNav = (id) => { setView(id); setMoreMenuOpen(false); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); if(id==="new")resetNewRequest(); };
         const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
@@ -1217,7 +1268,9 @@ ${settings.company||""}`;
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",        icon:"📋", d:"M4 6h16M4 12h10M4 18h6"},
                     {id:"suppliers",label:"Suppliers",      sub:"Manage your supplier accounts",   icon:"🏢", d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
                     {id:"library",  label:"Quote library",  sub:"Price history and supplier scores",icon:"📚", d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
-                    {id:"settings", label:"Settings",       sub:"API keys, email, company details", icon:"⚙️", d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
+                    {id:"settings", label:"Settings",       sub:"API keys, email, company details", icon:"⚙️", d:"M12 15a3 3 0 100-6 3 3 0 000 6z"},
+                    {id:"help",     label:"Help & FAQ",      sub:"Guides, AI assistant, FAQs",        icon:"❓", d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
+                    {id:"contact",  label:"Contact support", sub:"Raise a request or report a bug",   icon:"📧", d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
                   ].map(item=>(
                     <button key={item.id} onClick={()=>{ setView(item.id); setMoreMenuOpen(false); }} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:view===item.id?"rgba(34,197,94,0.12)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
                       <div style={{width:44,height:44,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{item.icon}</div>
@@ -1844,6 +1897,38 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           </span>
                         ))}
                       </div>
+                      {/* Pending status timeline */}
+                      {activeReq.status==="pending"&&(activeReq.sentTo||[]).every(s=>!s.saved)&&(
+                        <div style={{marginTop:12,padding:"12px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)"}}>
+                          <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:8}}>⏳ Awaiting supplier responses</div>
+                          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                            {(activeReq.sentTo||[]).map(sup=>{
+                              const sent = activeReq.activity?.find(a=>a.action==="RFQ emails sent")?.ts;
+                              const hoursAgo = sent?Math.floor((Date.now()-new Date(sent).getTime())/3600000):0;
+                              return(
+                                <div key={sup.id} style={{display:"flex",alignItems:"center",gap:6,background:"var(--bg-card-solid)",border:`1px solid ${sup.saved?"var(--green-dark)":"var(--border)"}`,borderRadius:8,padding:"6px 12px"}}>
+                                  <div style={{width:8,height:8,borderRadius:"50%",background:sup.saved?"var(--green-dark)":"var(--amber)",flexShrink:0}}/>
+                                  <div>
+                                    <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{sup.name}</div>
+                                    <div style={{fontSize:10,color:"var(--text-tertiary)"}}>{sup.saved?"Quote received":sent?`Sent ${hoursAgo}h ago`:"Pending"}</div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {(()=>{
+                            const sent = activeReq.activity?.find(a=>a.action==="RFQ emails sent")?.ts;
+                            const hoursAgo = sent?Math.floor((Date.now()-new Date(sent).getTime())/3600000):0;
+                            if(hoursAgo>=24&&settings.resendKey){
+                              return <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center"}}>
+                                <span style={{fontSize:11,color:"var(--amber)"}}>No responses after {Math.floor(hoursAgo/24)}d {hoursAgo%24}h</span>
+                                <button style={{fontSize:11,fontWeight:600,color:"white",background:"var(--amber)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>Send reminder</button>
+                              </div>;
+                            }
+                          })()}
+                        </div>
+                      )}
+
                       {(activeReq.deliveryMethod||activeReq.deliveryDate)&&(
                         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                           {activeReq.deliveryMethod&&(
@@ -2655,11 +2740,26 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       <button onClick={()=>saveSuppliers(suppliers.filter(x=>x.id!==s.id))} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
                     </div>
                   </div>
-                  <div style={{fontSize:15,fontWeight:500,marginBottom:4}}>{s.name}</div>
-                  <div style={{fontSize:12,color:"#6B7280",marginBottom:12}}>{s.email}</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                    {s.categories.map(c=><Badge key={c} bg="#EFF6FF" text="#1D4ED8">{c}</Badge>)}
+                  <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:3}}>{s.name}</div>
+                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>{s.email}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+                    {s.categories.map(cat=><Badge key={cat} bg="var(--green-light)" text="var(--green-deep)">{cat}</Badge>)}
                   </div>
+                  {(()=>{
+                    const rfqsSent = requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length;
+                    const responded = requests.filter(r=>r.sentTo?.some(st=>st.id===s.id&&st.saved)).length;
+                    const libEntries = quoteLibrary.filter(q=>q.supplierName===s.name);
+                    const avgScore = libEntries.length?Math.round(libEntries.reduce((a,q)=>a+q.completeness,0)/libEntries.length):null;
+                    if(!rfqsSent&&!libEntries.length) return <div style={{fontSize:11,color:"var(--text-muted)"}}>No activity yet</div>;
+                    return(
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        {rfqsSent>0&&<span style={{fontSize:10,color:"var(--text-tertiary)",background:"var(--bg-subtle2)",padding:"2px 8px",borderRadius:99}}>{rfqsSent} RFQ{rfqsSent!==1?"s":""} sent</span>}
+                        {responded>0&&rfqsSent>0&&<span style={{fontSize:10,color:"var(--green-dark)",background:"var(--green-light)",padding:"2px 8px",borderRadius:99}}>{Math.round(responded/rfqsSent*100)}% response rate</span>}
+                        {avgScore!==null&&<span style={{fontSize:10,color:avgScore>=80?"var(--green-dark)":avgScore>=60?"var(--amber)":"var(--red)",background:avgScore>=80?"var(--green-light)":avgScore>=60?"var(--amber-light)":"var(--red-light)",padding:"2px 8px",borderRadius:99}}>Avg {avgScore}% completeness</span>}
+                        {libEntries.length>0&&<span style={{fontSize:10,color:"var(--text-tertiary)",background:"var(--bg-subtle2)",padding:"2px 8px",borderRadius:99}}>{libEntries.length} quote{libEntries.length!==1?"s":""} in library</span>}
+                      </div>
+                    );
+                  })()}
                 </Card>
               ))}
             </div>
@@ -2832,6 +2932,283 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </tr>
                     ))}</tbody>
                   </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══ HELP ══ */}
+        {view==="help"&&(
+          <div style={{animation:"fadeIn 0.25s ease",maxWidth:900}}>
+            {/* Header */}
+            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
+              <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.15),transparent 70%)",borderRadius:"50%"}}/>
+              <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",gap:20}}>
+                <div style={{width:56,height:56,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>
+                  <svg width="28" height="28" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:4}}>ProQuote Help Centre</div>
+                  <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px"}}>How can we help?</h1>
+                  <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:"6px 0 0"}}>Ask the AI assistant, browse FAQs, or raise a support request</p>
+                </div>
+              </div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:20,marginBottom:28}}>
+              {/* AI Assistant */}
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",boxShadow:"var(--shadow-sm)",display:"flex",flexDirection:"column"}}>
+                <div style={{padding:"18px 20px",borderBottom:"1px solid var(--border)",background:darkMode?"rgba(34,197,94,0.05)":"linear-gradient(135deg,#F0FDF4,#FAFFFE)"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🤖</div>
+                    <div>
+                      <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>AI Assistant</div>
+                      <div style={{fontSize:11,color:"var(--text-secondary)"}}>Ask anything about ProQuote</div>
+                    </div>
+                    {settings.openRouterKey&&<span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:"var(--green-dark)",background:"var(--green-light)",padding:"2px 8px",borderRadius:99}}>Online</span>}
+                  </div>
+                </div>
+                <div style={{flex:1,padding:"16px",overflowY:"auto",maxHeight:320,display:"flex",flexDirection:"column",gap:10}}>
+                  {helpMessages.length===0&&(
+                    <div style={{textAlign:"center",padding:"24px 0",color:"var(--text-tertiary)"}}>
+                      <div style={{fontSize:28,marginBottom:8}}>💬</div>
+                      <div style={{fontSize:13,fontWeight:500,color:"var(--text-secondary)",marginBottom:4}}>Start a conversation</div>
+                      <div style={{fontSize:12,lineHeight:1.6}}>Try: "How do I send an RFQ?" or "Where are my saved quotes?"</div>
+                    </div>
+                  )}
+                  {helpMessages.map((m,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+                      <div style={{maxWidth:"85%",padding:"10px 14px",borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",background:m.role==="user"?"linear-gradient(135deg,#22C55E,#16A34A)":"var(--bg-subtle)",color:m.role==="user"?"white":"var(--text-primary)",fontSize:13,lineHeight:1.6}}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ))}
+                  {helpLoading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"var(--bg-subtle)",borderRadius:"14px 14px 14px 4px",padding:"10px 14px",fontSize:13,color:"var(--text-secondary)",display:"flex",alignItems:"center",gap:8}}><Spinner/>Thinking…</div></div>}
+                </div>
+                <div style={{padding:"12px 16px",borderTop:"1px solid var(--border)",display:"flex",gap:8}}>
+                  <input value={helpInput} onChange={e=>setHelpInput(e.target.value)}
+                    onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&handleHelpChat(helpInput)}
+                    placeholder={settings.openRouterKey?"Ask me anything about ProQuote…":"Add your OpenRouter key in Settings to use the AI assistant"}
+                    disabled={!settings.openRouterKey}
+                    style={{flex:1,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}
+                  />
+                  <button onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey}
+                    style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 16px",fontSize:13,fontWeight:600,cursor:"pointer",opacity:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?0.5:1}}>
+                    Send
+                  </button>
+                </div>
+                {helpMessages.length>0&&<div style={{padding:"8px 16px",borderTop:"1px solid var(--border)",textAlign:"right"}}><button onClick={()=>setHelpMessages([])} style={{fontSize:11,color:"var(--text-muted)",background:"none",border:"none",cursor:"pointer"}}>Clear conversation</button></div>}
+              </div>
+
+              {/* Quick links + keyboard shortcuts */}
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>⚡ Quick actions</div>
+                  {[
+                    {label:"Create a new request",    action:()=>{setView("new");resetNewRequest();},  icon:"🎤"},
+                    {label:"Analyse supplier quotes",  action:()=>setView("quotes"),                    icon:"🔍"},
+                    {label:"View & send orders",       action:()=>setView("orders"),                    icon:"📦"},
+                    {label:"Manage suppliers",         action:()=>setView("suppliers"),                 icon:"🏢"},
+                    {label:"Configure settings",       action:()=>setView("settings"),                  icon:"⚙️"},
+                  ].map(l=>(
+                    <button key={l.label} onClick={l.action} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"var(--radius-sm)",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",marginBottom:2,transition:"background 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background="var(--bg-subtle)"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <span style={{fontSize:16}}>{l.icon}</span>
+                      <span style={{fontSize:13,color:"var(--text-primary)",fontWeight:500}}>{l.label}</span>
+                      <svg style={{marginLeft:"auto"}} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
+                  ))}
+                </div>
+                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>⌨️ Keyboard shortcuts</div>
+                  {[["N","New request"],["Q","Quote analysis"],["O","Orders"],["D","Dashboard"],["S","Settings"],["H","Help"],["Esc","Close modals"]].map(([k,l])=>(
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid var(--border)"}}>
+                      <span style={{fontSize:12,color:"var(--text-secondary)"}}>{l}</span>
+                      <kbd style={{background:"var(--bg-subtle2)",color:"var(--text-primary)",border:"1px solid var(--border)",borderRadius:5,padding:"2px 8px",fontSize:11,fontFamily:"monospace",fontWeight:600}}>{k}</kbd>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* FAQ */}
+            <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px 28px",boxShadow:"var(--shadow-sm)",marginBottom:20}}>
+              <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Frequently asked questions</div>
+              {(()=>{
+                const faqs = [
+                  {cat:"Getting started",qs:[
+                    {q:"What is ProQuote?",a:"ProQuote is an AI-powered procurement platform for trades contractors. It automates the full procurement workflow from creating a material request on site through to sending a purchase order to your supplier."},
+                    {q:"What trades does ProQuote support?",a:"ProQuote supports Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas — with General as a catch-all category for any other trade."},
+                    {q:"Does ProQuote work on my phone?",a:"Yes. ProQuote is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar. Voice input works natively on both iOS and Android."},
+                    {q:"Do I need to install anything?",a:"No. ProQuote runs entirely in a browser — Chrome, Safari, Edge, Firefox. No app download, no installation."},
+                    {q:"Where is my data stored?",a:"Currently all data is stored in your browser's local storage and persists across sessions. Cloud backup and multi-device sync are coming in the next major update."},
+                  ]},
+                  {cat:"Creating requests",qs:[
+                    {q:"How does voice input work?",a:"Tap the microphone button on the new request page and speak your list naturally — just as you would on a phone call. The app transcribes in real time and the AI structures it into a clean itemised list."},
+                    {q:"Can I edit the parsed list before sending?",a:"Yes. Every field in the parsed items table is editable — description, quantity, unit, category, and notes per line. You can also add new items or remove incorrect ones."},
+                    {q:"What are templates?",a:"Templates let you save common material lists for instant reuse. They're grouped by trade so you can find them quickly. When loaded, the full item list populates into Step 2 ready to send immediately."},
+                    {q:"Can I set a deadline for supplier responses?",a:"Yes. In Step 2 there's a response deadline date picker. The date appears prominently in the RFQ email and shows as a countdown on the dashboard."},
+                  ]},
+                  {cat:"Quotes & analysis",qs:[
+                    {q:"How do I enter a supplier quote?",a:"In Quote Analysis, each supplier you contacted has their own box. Paste their email response or upload their PDF/Excel document. The AI reads documents and extracts all pricing automatically."},
+                    {q:"What does the AI check in a quote?",a:"The AI checks every item for price, stock availability, quantity accuracy, carriage charges, lead times, discounts, and alternatives. It produces a completeness score and recommends the best supplier."},
+                    {q:"What happens to other quotes when I approve one?",a:"All other quotes are automatically saved to the Quote Library in the background. They're not lost — you can reference them at any time in the Library page."},
+                    {q:"Can I undo an approval?",a:"Yes. The approved quote card shows an Undo button. Tapping it reverses the approval, removes the order from Orders, and returns the job to received status."},
+                  ]},
+                  {cat:"Orders",qs:[
+                    {q:"How do I send a PO to a supplier?",a:"In the Orders page, find the order and tap Send order. An email is sent to the supplier with the full PO details and any notes you add. The order moves to Sent status."},
+                    {q:"How do I attach a supplier confirmation?",a:"When an order is in Sent status, the right panel shows an upload area. Upload the supplier's confirmation PDF and the order automatically moves to Confirmed."},
+                    {q:"Do completed orders disappear?",a:"No. All orders stay permanently. Use the All / Active / Delivered filter to manage what you see. Delivered orders are kept for reference with their full history."},
+                    {q:"Can I upload a PO from my own software?",a:"Yes. In Quote Analysis, the Documents section allows you to upload any PDF or document. Uploaded documents can be promoted to the Orders page for dispatch."},
+                  ]},
+                  {cat:"Settings & troubleshooting",qs:[
+                    {q:"Why isn't the AI working?",a:"You need a free OpenRouter API key. Go to openrouter.ai, sign up (no credit card for basic use), copy your key, and paste it in ProQuote Settings. The status dot in the sidebar will turn green."},
+                    {q:"Why aren't emails sending?",a:"Email sending requires a Resend API key and a verified sending domain. Go to resend.com, create a free account, verify your domain, and add the key in Settings."},
+                    {q:"My data disappeared after refreshing — what happened?",a:"Data is stored in your browser's local storage. Clearing your browser data or using a different browser/device will not show your data. Full cloud sync is coming soon."},
+                    {q:"Can I use ProQuote on multiple devices?",a:"Not yet — data is currently local to the browser you use. Cloud sync across devices is part of the upcoming backend storage update."},
+                  ]},
+                ];
+                return faqs.map(section=>(
+                  <div key={section.cat} style={{marginBottom:20}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:10,paddingBottom:6,borderBottom:`2px solid var(--green-light)`}}>{section.cat}</div>
+                    {section.qs.map((faq,i)=>(
+                      <details key={i} style={{marginBottom:6}}>
+                        <summary style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",cursor:"pointer",padding:"10px 12px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",listStyle:"none",display:"flex",justifyContent:"space-between",alignItems:"center",userSelect:"none"}}>
+                          {faq.q}
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
+                        <div style={{fontSize:13,color:"var(--text-secondary)",padding:"10px 12px",lineHeight:1.7,borderLeft:"3px solid var(--green-dark)",marginLeft:4,marginTop:4}}>
+                          {faq.a}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                ));
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:28,height:28,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
+                </div>
+                <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>Pro<span style={{color:"var(--green-dark)"}}>Quote</span></span>
+                <span style={{fontSize:11,color:"var(--text-muted)"}}>Smart Procurement Platform · Version 1.0</span>
+              </div>
+              <div style={{display:"flex",gap:16}}>
+                <button onClick={()=>setView("contact")} style={{fontSize:12,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Contact support →</button>
+                <button onClick={()=>setView("settings")} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Settings →</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ CONTACT ══ */}
+        {view==="contact"&&(
+          <div style={{animation:"fadeIn 0.25s ease",maxWidth:760}}>
+            {/* Header */}
+            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
+              <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.12),transparent 70%)",borderRadius:"50%"}}/>
+              <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",gap:20}}>
+                <div style={{width:56,height:56,background:"linear-gradient(135deg,#6366F1,#4338CA)",borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 8px 24px rgba(99,102,241,0.3)",fontSize:26}}>📧</div>
+                <div>
+                  <div style={{fontSize:11,color:"#818CF8",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:4}}>ProQuote Support</div>
+                  <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px"}}>Contact us</h1>
+                  <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:"6px 0 0"}}>Raise a support request, report a bug, or suggest a feature</p>
+                </div>
+              </div>
+            </div>
+
+            {contactSent?(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-lg)",padding:"48px 40px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
+                <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.25)"}}>✓</div>
+                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request sent</div>
+                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24,lineHeight:1.6}}>Thank you for getting in touch. We'll respond to your request as soon as possible.</div>
+                <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+                  <button onClick={()=>setContactSent(false)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Send another</button>
+                  <button onClick={()=>setView("dashboard")} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Back to dashboard</button>
+                </div>
+              </div>
+            ):(
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 300px",gap:20}}>
+                {/* Form */}
+                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px 28px",boxShadow:"var(--shadow-sm)"}}>
+                  <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Submit a support request</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Your name</label>
+                      <input value={contactForm.name} onChange={e=>setContactForm(p=>({...p,name:e.target.value}))} placeholder="Andy Hammill" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}/>
+                    </div>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Email address</label>
+                      <input type="email" value={contactForm.email} onChange={e=>setContactForm(p=>({...p,email:e.target.value}))} placeholder="andy@company.co.uk" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}/>
+                    </div>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Category</label>
+                      <select value={contactForm.category} onChange={e=>setContactForm(p=>({...p,category:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}>
+                        {["Bug report","Feature request","Account issue","Billing","General enquiry"].map(o=><option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Priority</label>
+                      <select value={contactForm.priority} onChange={e=>setContactForm(p=>({...p,priority:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}>
+                        {["Low","Normal","High","Urgent"].map(o=><option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{marginBottom:14}}>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Description</label>
+                    <textarea value={contactForm.description} onChange={e=>setContactForm(p=>({...p,description:e.target.value}))} placeholder="Please describe your issue or request in as much detail as possible. Include any steps to reproduce a bug, or what you'd like to see improved." style={{width:"100%",height:140,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",background:"var(--bg-input)",color:"var(--text-primary)",lineHeight:1.6}}/>
+                  </div>
+                  <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",padding:"10px 14px",marginBottom:16,fontSize:12,color:"var(--text-secondary)"}}>
+                    ℹ️ App version: 1.0 · {settings.company||"Company not set"} · {requests.length} requests · {orders.length} orders
+                  </div>
+                  <button
+                    onClick={()=>{
+                      if(!contactForm.description.trim()){showToast("Please add a description","warn");return;}
+                      showToast("Support request submitted — we'll be in touch soon");
+                      setContactSent(true);
+                      setContactForm(p=>({...p,description:""}));
+                    }}
+                    disabled={!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim()}
+                    style={{background:"linear-gradient(135deg,#6366F1,#4338CA)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 12px rgba(99,102,241,0.3)",opacity:(!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
+                    Submit request
+                  </button>
+                </div>
+
+                {/* Info sidebar */}
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>⏱ Response times</div>
+                    {[["Urgent","Within 2 hours","var(--red)"],["High","Within 4 hours","var(--amber)"],["Normal","Within 1 business day","var(--green-dark)"],["Low","Within 2 business days","var(--text-secondary)"]].map(([p,t,col])=>(
+                      <div key={p} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
+                        <span style={{fontSize:12,fontWeight:600,color:col}}>{p}</span>
+                        <span style={{fontSize:11,color:"var(--text-secondary)"}}>{t}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>🔗 Quick links</div>
+                    <button onClick={()=>setView("help")} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 0",background:"none",border:"none",cursor:"pointer",borderBottom:"1px solid var(--border)"}}>
+                      <span style={{fontSize:13}}>❓</span><span style={{fontSize:12,color:"var(--text-secondary)"}}>Help & FAQ</span>
+                    </button>
+                    <button onClick={()=>setView("settings")} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 0",background:"none",border:"none",cursor:"pointer"}}>
+                      <span style={{fontSize:13}}>⚙️</span><span style={{fontSize:12,color:"var(--text-secondary)"}}>Settings</span>
+                    </button>
+                  </div>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)",textAlign:"center"}}>
+                    <div style={{width:40,height:40,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}>
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
+                    </div>
+                    <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:2}}>Pro<span style={{color:"var(--green-dark)"}}>Quote</span></div>
+                    <div style={{fontSize:11,color:"var(--text-muted)"}}>Smart Procurement · v1.0</div>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Plumbing · HVAC · Electrical · Mechanical</div>
+                  </div>
                 </div>
               </div>
             )}
