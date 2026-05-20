@@ -466,6 +466,37 @@ export default function App() {
   const [activeOrder, setActiveOrder] = useState(null);
   const [sendingOrder, setSendingOrder] = useState(null);
   const [orderNote, setOrderNote] = useState({});
+  const [expectedDelivery, setExpectedDelivery] = useState({}); // {orderId: dateStr}
+
+  function handleOrderConfirmationUpload(file, orderId) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const doc = {
+        id: `CONF-${Date.now()}`,
+        type: "confirmation",
+        label: file.name,
+        date: new Date().toLocaleDateString("en-GB"),
+        fileSize: `${(file.size/1024).toFixed(1)} KB`,
+        dataUrl: e.target.result,
+        fileType: file.type,
+      };
+      const entry = {
+        ts: new Date().toISOString(),
+        action: "Supplier confirmation attached",
+        detail: `${file.name} uploaded`,
+        user: settings.contactName||"You"
+      };
+      setOrders(p=>p.map(o=>o.id===orderId?{
+        ...o,
+        status:"confirmed",
+        confirmationDoc: doc,
+        activity:[...(o.activity||[]),entry]
+      }:o));
+      showToast(`Confirmation attached — order marked as Confirmed`);
+    };
+    reader.readAsDataURL(file);
+  }
 
   // Quote library — persisted
   const [quoteLibrary, setQuoteLibrary] = useState(() => {
@@ -2068,8 +2099,17 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <p style={{fontSize:15,color:"#64748B",marginTop:6}}>Send approved purchase orders to suppliers and track their status</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"#166534",fontWeight:500}}>
-                  {orders.filter(o=>o.status==="pending-send").length} pending · {orders.filter(o=>o.status==="sent").length} sent
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {[
+                    {label:"Ready",     color:"#166534", bg:"#DCFCE7", count:orders.filter(o=>o.status==="pending-send").length},
+                    {label:"Sent",      color:"#4338CA", bg:"#EEF2FF", count:orders.filter(o=>o.status==="sent").length},
+                    {label:"Confirmed", color:"#059669", bg:"#D1FAE5", count:orders.filter(o=>o.status==="confirmed").length},
+                    {label:"Delivered", color:"#374151", bg:"#F1F5F9", count:orders.filter(o=>o.status==="delivered").length},
+                  ].map(s=>(
+                    <div key={s.label} style={{background:s.bg,borderRadius:8,padding:"6px 14px",fontSize:12,color:s.color,fontWeight:600}}>
+                      {s.count} {s.label}
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -2088,22 +2128,33 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:16}}>
                 {orders.map(order=>{
+                  const STATUS_STEPS = [
+                    {key:"pending-send", label:"Ready to send", icon:"📦", color:"#22C55E", bg:"#F0FDF4"},
+                    {key:"sent",         label:"Sent",          icon:"✈️", color:"#6366F1", bg:"#EEF2FF"},
+                    {key:"confirmed",    label:"Confirmed",     icon:"✅", color:"#059669", bg:"#DCFCE7"},
+                    {key:"delivered",    label:"Delivered",     icon:"🏁", color:"#0A0F1E", bg:"#F1F5F9"},
+                  ];
+                  const stepIdx = STATUS_STEPS.findIndex(s=>s.key===order.status);
+                  const currentStep = STATUS_STEPS[stepIdx]||STATUS_STEPS[0];
                   const isPending = order.status==="pending-send";
-                  const isSent = order.status==="sent";
-                  return(
-                  <div key={order.id} style={{background:"white",borderRadius:20,border:`1px solid ${isPending?"#BBF7D0":isSent?"#E0E7FF":"#F1F5F9"}`,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
+                  const isSent    = order.status==="sent";
+                  const isConfirmed = order.status==="confirmed";
+                  const isDelivered = order.status==="delivered";
 
-                    {/* Order header */}
-                    <div style={{padding:"20px 28px",borderBottom:"1px solid #F8FAFC",display:"flex",justifyContent:"space-between",alignItems:"center",background:isPending?"linear-gradient(135deg,#F0FDF4,#FAFFFE)":isSent?"linear-gradient(135deg,#EEF2FF,#FAFFFE)":"white"}}>
+                  return(
+                  <div key={order.id} style={{background:"white",borderRadius:20,border:`1px solid ${isConfirmed?"#A7F3D0":isPending?"#BBF7D0":isSent?"#E0E7FF":"#F1F5F9"}`,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
+
+                    {/* ── Order header ── */}
+                    <div style={{padding:"20px 28px",borderBottom:"1px solid #F8FAFC",display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,${currentStep.bg},#FAFFFE)`}}>
                       <div style={{display:"flex",alignItems:"center",gap:16}}>
-                        <div style={{width:48,height:48,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":"#F1F5F9",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,boxShadow:isPending?"0 4px 12px rgba(34,197,94,0.3)":isSent?"0 4px 12px rgba(99,102,241,0.3)":"none"}}>
-                          {isPending?"📦":isSent?"✈️":"📄"}
+                        <div style={{width:48,height:48,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":isConfirmed?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#374151,#1F2937)",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,boxShadow:`0 4px 12px ${currentStep.color}30`}}>
+                          {currentStep.icon}
                         </div>
                         <div>
                           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
                             <span style={{fontSize:16,fontWeight:700,color:"#0A0F1E",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
-                            <span style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,background:isPending?"#DCFCE7":isSent?"#EEF2FF":"#F1F5F9",color:isPending?"#166534":isSent?"#4338CA":"#64748B"}}>
-                              {isPending?"Ready to send":isSent?"Sent":"Draft"}
+                            <span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,background:currentStep.bg,color:currentStep.color,border:`1px solid ${currentStep.color}30`}}>
+                              {currentStep.label}
                             </span>
                           </div>
                           <div style={{fontSize:13,color:"#64748B"}}>{order.jobRef} · {order.site} · {order.trade}</div>
@@ -2116,13 +2167,35 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                     </div>
 
-                    {/* Order body */}
+                    {/* ── Status timeline ── */}
+                    <div style={{padding:"16px 28px",borderBottom:"1px solid #F8FAFC",background:"#FAFFFE"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:0}}>
+                        {STATUS_STEPS.map((step,si)=>{
+                          const done = si<=stepIdx;
+                          const active = si===stepIdx;
+                          return(
+                            <div key={step.key} style={{display:"flex",alignItems:"center",flex:si<STATUS_STEPS.length-1?1:"none"}}>
+                              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                                <div style={{width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,background:done?step.color:"#F1F5F9",boxShadow:active?`0 0 0 4px ${step.color}20`:"none",transition:"all 0.3s",flexShrink:0}}>
+                                  {done?<span style={{fontSize:12}}>{si<stepIdx?"✓":step.icon}</span>:<span style={{fontSize:12,color:"#CBD5E1"}}>○</span>}
+                                </div>
+                                <span style={{fontSize:9,fontWeight:active?700:400,color:active?step.color:"#94A3B8",whiteSpace:"nowrap"}}>{step.label}</span>
+                              </div>
+                              {si<STATUS_STEPS.length-1&&(
+                                <div style={{flex:1,height:2,background:si<stepIdx?"#22C55E":"#F1F5F9",margin:"0 4px",marginBottom:14,transition:"background 0.3s"}}/>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* ── Order body ── */}
                     <div style={{padding:"20px 28px"}}>
                       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:isMobile?14:20}}>
 
-                        {/* Left — order details */}
+                        {/* Left — details + activity */}
                         <div>
-                          {/* Items summary */}
                           <div style={{marginBottom:16}}>
                             <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Items ordered ({order.items?.length||0})</div>
                             <div style={{background:"#F8FAFC",borderRadius:10,padding:"12px 14px",maxHeight:120,overflowY:"auto"}}>
@@ -2135,22 +2208,36 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             </div>
                           </div>
 
-                          {/* Delivery info */}
                           {(order.deliveryMethod||order.deliveryDate)&&(
                             <div style={{marginBottom:16}}>
                               <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Delivery</div>
                               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                                 {order.deliveryMethod&&<span style={{background:"#F0F9FF",border:"1px solid #BAE6FD",color:"#0369A1",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🚚 {{"direct":"To site","alternative":"Alt. address","collect":"Collect","tbc":"TBC"}[order.deliveryMethod]||order.deliveryMethod}</span>}
                                 {order.deliveryDate&&<span style={{background:"#F0FDF4",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>📅 {new Date(order.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
+                                {order.expectedDelivery&&<span style={{background:"#FFFBEB",border:"1px solid #FDE68A",color:"#92400E",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🗓 Expected {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
                               </div>
                             </div>
                           )}
 
-                          {/* Activity log */}
+                          {/* Confirmation document */}
+                          {order.confirmationDoc&&(
+                            <div style={{marginBottom:16,background:"#F0FDF4",border:"1px solid #A7F3D0",borderRadius:10,padding:"12px 14px"}}>
+                              <div style={{fontSize:12,fontWeight:600,color:"#166534",marginBottom:6}}>✅ Supplier confirmation attached</div>
+                              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                                <div style={{width:32,height:32,background:"#D1FAE5",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📎</div>
+                                <div style={{flex:1}}>
+                                  <div style={{fontSize:12,fontWeight:500,color:"#0A0F1E"}}>{order.confirmationDoc.label}</div>
+                                  <div style={{fontSize:11,color:"#64748B"}}>{order.confirmationDoc.date} · {order.confirmationDoc.fileSize}</div>
+                                </div>
+                                <a href={order.confirmationDoc.dataUrl} download={order.confirmationDoc.label} style={{fontSize:11,color:"#059669",fontWeight:600,textDecoration:"none",background:"#D1FAE5",padding:"4px 10px",borderRadius:6}}>Download</a>
+                              </div>
+                            </div>
+                          )}
+
                           {order.activity?.length>0&&(
                             <div>
                               <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Activity</div>
-                              {order.activity.slice(-3).reverse().map((a,i)=>(
+                              {order.activity.slice(-4).reverse().map((a,i)=>(
                                 <div key={i} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid #F8FAFC"}}>
                                   <div style={{width:6,height:6,borderRadius:"50%",background:"#22C55E",marginTop:5,flexShrink:0}}/>
                                   <div style={{flex:1}}>
@@ -2163,73 +2250,113 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           )}
                         </div>
 
-                        {/* Right — send panel */}
+                        {/* Right — action panel */}
                         <div style={{background:"#F8FAFC",borderRadius:14,padding:"20px"}}>
-                          <div style={{fontSize:13,fontWeight:600,color:"#0A0F1E",marginBottom:4}}>
-                            {isSent?"Order sent":"Send this order to supplier"}
-                          </div>
-                          <div style={{fontSize:12,color:"#64748B",marginBottom:16,lineHeight:1.6}}>
-                            {isSent
-                              ? `Sent to ${order.supplierEmail} on ${order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—"}`
-                              : "An email will be sent to the supplier with the PO details and any notes you add below. They will be asked to confirm receipt."
-                            }
-                          </div>
 
-                          {/* Supplier email override */}
-                          <div style={{marginBottom:12}}>
-                            <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Supplier email</label>
-                            <input
-                              value={order.supplierEmail||""}
-                              onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))}
-                              placeholder="supplier@company.co.uk"
-                              style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",background:"white"}}
-                            />
-                          </div>
+                          {/* PENDING — send panel */}
+                          {isPending&&(
+                            <>
+                              <div style={{fontSize:13,fontWeight:600,color:"#0A0F1E",marginBottom:4}}>Send this order to supplier</div>
+                              <div style={{fontSize:12,color:"#64748B",marginBottom:12,lineHeight:1.6}}>An email will be sent with the full PO details. The supplier will be asked to confirm receipt.</div>
+                              <div style={{marginBottom:10}}>
+                                <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Supplier email</label>
+                                <input value={order.supplierEmail||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))} placeholder="supplier@company.co.uk" style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",background:"white"}}/>
+                              </div>
+                              <div style={{marginBottom:14}}>
+                                <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Notes (optional)</label>
+                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions…" style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"white"}}/>
+                              </div>
+                              <button onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id||!order.supplierEmail} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:sendingOrder===order.id||!order.supplierEmail?"#D1FAE5":"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:sendingOrder===order.id||!order.supplierEmail?"not-allowed":"pointer",boxShadow:"0 4px 16px rgba(34,197,94,0.3)",marginBottom:8}}>
+                                {sendingOrder===order.id?<><Spinner/>Sending…</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
+                              </button>
+                            </>
+                          )}
 
-                          {/* Notes */}
-                          <div style={{marginBottom:16}}>
-                            <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Additional notes (optional)</label>
-                            <textarea
-                              value={orderNote[order.id]||""}
-                              onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))}
-                              placeholder="Any special instructions, delivery access notes, contact on site..."
-                              style={{width:"100%",height:80,padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"white"}}
-                            />
-                          </div>
+                          {/* SENT — awaiting confirmation */}
+                          {isSent&&(
+                            <>
+                              <div style={{background:"#EEF2FF",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+                                <div style={{fontSize:13,fontWeight:600,color:"#4338CA",marginBottom:2}}>✈️ Order sent</div>
+                                <div style={{fontSize:11,color:"#6366F1"}}>Sent to {order.supplierEmail} · {order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</div>
+                              </div>
 
-                          {/* Send button */}
-                          {isPending?(
-                            <button
-                              onClick={()=>handleSendOrder(order)}
-                              disabled={sendingOrder===order.id||!order.supplierEmail}
-                              style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:sendingOrder===order.id||!order.supplierEmail?"#D1FAE5":"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:sendingOrder===order.id||!order.supplierEmail?"not-allowed":"pointer",boxShadow:sendingOrder===order.id?"none":"0 4px 16px rgba(34,197,94,0.3)",marginBottom:8}}>
-                              {sendingOrder===order.id?<><Spinner/>Sending…</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
-                            </button>
-                          ):(
-                            <div style={{background:"#DCFCE7",borderRadius:10,padding:"12px",textAlign:"center",fontSize:13,fontWeight:600,color:"#166534",marginBottom:8}}>
-                              ✓ Order sent successfully
+                              <div style={{marginBottom:14}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Attach supplier confirmation</div>
+                                <div style={{fontSize:12,color:"#64748B",marginBottom:10,lineHeight:1.6}}>When the supplier emails back with an order confirmation PDF, upload it here. The order will automatically move to Confirmed.</div>
+                                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"white",border:"2px dashed #BBF7D0",borderRadius:10,padding:"16px",cursor:"pointer",fontSize:13,fontWeight:600,color:"#16A34A"}}>
+                                  📎 Upload confirmation document
+                                  <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
+                                </label>
+                                <div style={{fontSize:11,color:"#94A3B8",marginTop:6,textAlign:"center"}}>PDF, Word, or image — drag and drop or click to browse</div>
+                              </div>
+
+                              <div style={{marginBottom:10}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Expected delivery date</div>
+                                <input type="date" value={expectedDelivery[order.id]||""} onChange={e=>{
+                                  setExpectedDelivery(p=>({...p,[order.id]:e.target.value}));
+                                  setOrders(p=>p.map(o=>o.id===order.id?{...o,expectedDelivery:e.target.value}:o));
+                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none"}}/>
+                              </div>
+
+                              <div style={{display:"flex",gap:8}}>
+                                <button onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"pending-send"}:o))} style={{flex:1,fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Resend</button>
+                                <button onClick={()=>{
+                                  const entry={ts:new Date().toISOString(),action:"Manually marked as confirmed",detail:"No document uploaded",user:settings.contactName||"You"};
+                                  setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",activity:[...(o.activity||[]),entry]}:o));
+                                  showToast("Order marked as confirmed");
+                                }} style={{flex:1,fontSize:12,color:"#059669",background:"#DCFCE7",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Mark confirmed</button>
+                              </div>
+                            </>
+                          )}
+
+                          {/* CONFIRMED — awaiting delivery */}
+                          {isConfirmed&&(
+                            <>
+                              <div style={{background:"#F0FDF4",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+                                <div style={{fontSize:13,fontWeight:600,color:"#166534",marginBottom:2}}>✅ Order confirmed by supplier</div>
+                                {order.expectedDelivery&&<div style={{fontSize:11,color:"#16A34A"}}>Expected delivery: {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>}
+                              </div>
+
+                              {!order.confirmationDoc&&(
+                                <div style={{marginBottom:14}}>
+                                  <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Attach confirmation document</div>
+                                  <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"white",border:"2px dashed #BBF7D0",borderRadius:10,padding:"14px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#16A34A"}}>
+                                    📎 Upload supplier confirmation
+                                    <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
+                                  </label>
+                                </div>
+                              )}
+
+                              <div style={{marginBottom:10}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Expected delivery date</div>
+                                <input type="date" value={expectedDelivery[order.id]||order.expectedDelivery||""} onChange={e=>{
+                                  setExpectedDelivery(p=>({...p,[order.id]:e.target.value}));
+                                  setOrders(p=>p.map(o=>o.id===order.id?{...o,expectedDelivery:e.target.value}:o));
+                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none"}}/>
+                              </div>
+
+                              <button onClick={()=>{
+                                const entry={ts:new Date().toISOString(),action:"Materials delivered",detail:"Order marked as delivered",user:settings.contactName||"You"};
+                                setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),activity:[...(o.activity||[]),entry]}:o));
+                                showToast("Order marked as delivered — job complete");
+                              }} style={{width:"100%",background:"linear-gradient(135deg,#374151,#1F2937)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8}}>
+                                🏁 Mark as delivered
+                              </button>
+                            </>
+                          )}
+
+                          {/* DELIVERED — complete */}
+                          {isDelivered&&(
+                            <div style={{background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,padding:"16px",textAlign:"center"}}>
+                              <div style={{fontSize:24,marginBottom:8}}>🏁</div>
+                              <div style={{fontSize:14,fontWeight:700,color:"#166534",marginBottom:4}}>Order complete</div>
+                              <div style={{fontSize:12,color:"#16A34A"}}>Delivered {order.deliveredAt?new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"—"}</div>
                             </div>
                           )}
 
-                          {/* Resend / mark as acknowledged */}
-                          <div style={{display:"flex",gap:8}}>
-                            {isSent&&(
-                              <button onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"pending-send"}:o))} style={{flex:1,fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>
-                                Resend
-                              </button>
-                            )}
-                            {isSent&&(
-                              <button onClick={()=>{
-                                const entry={ts:new Date().toISOString(),action:"Order acknowledged by supplier",detail:"Manually marked as acknowledged",user:settings.contactName||"You"};
-                                setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"acknowledged",activity:[...(o.activity||[]),entry]}:o));
-                                showToast("Marked as acknowledged");
-                              }} style={{flex:1,fontSize:12,color:"#059669",background:"#DCFCE7",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>
-                                Mark acknowledged
-                              </button>
-                            )}
-                            <button onClick={()=>setOrders(p=>p.filter(o=>o.id!==order.id))} style={{flex:isSent?0:1,fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600,minWidth:isSent?80:undefined}}>
-                              Remove
-                            </button>
+                          {/* Remove always available */}
+                          <div style={{marginTop:10,textAlign:"right"}}>
+                            <button onClick={()=>setOrders(p=>p.filter(o=>o.id!==order.id))} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Remove order</button>
                           </div>
                         </div>
                       </div>
