@@ -728,8 +728,8 @@ const Btn = ({ onClick, disabled, color="#6366F1", outline=false, children }) =>
 const Badge = ({ children, bg, text }) => (
   <span style={{ background:bg, color:text, fontSize:11, fontWeight:600, padding:"3px 11px", borderRadius:20, whiteSpace:"nowrap", letterSpacing:"0.01em" }}>{children}</span>
 );
-const Card = ({ children, style={} }) => (
-  <div style={{ background:"var(--bg-card-solid)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"24px 28px", boxShadow:"var(--shadow-sm)", ...style }}>{children}</div>
+const Card = ({ children, style={}, hover=false }) => (
+  <div className={hover?"card-hover":""} style={{ background:"var(--bg-card-solid)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"24px 28px", boxShadow:"var(--shadow-sm)", position:"relative", overflow:"hidden", ...style }}>{children}</div>
 );
 const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
@@ -782,7 +782,7 @@ export default function App() {
   const [helpLoading, setHelpLoading] = useState(false);
 
   // Contact form
-  const [contactForm, setContactForm] = useState({name:settings.contactName||"",email:settings.fromEmail||"",category:"Bug report",priority:"Normal",description:""});
+  const [contactForm, setContactForm] = useState({name:"",email:"",category:"Bug report",priority:"Normal",description:""});
   const [contactSent, setContactSent] = useState(false);
 
   // Keyboard shortcuts
@@ -823,7 +823,9 @@ export default function App() {
 
   const [activeOrder, setActiveOrder] = useState(null);
   const [sendingOrder, setSendingOrder] = useState(null);
-  const [orderFilter, setOrderFilter] = useState("all"); // all | active | delivered
+  const [orderFilter, setOrderFilter] = useState("all");
+  const [expandedOrder, setExpandedOrder] = useState(null);
+  const [expandedQuote, setExpandedQuote] = useState(null);
   const [orderNote, setOrderNote] = useState({});
   const [expectedDelivery, setExpectedDelivery] = useState({}); // {orderId: dateStr}
 
@@ -1439,14 +1441,26 @@ ${settings.company||""}`;
       *{box-sizing:border-box;-webkit-font-smoothing:antialiased}
       @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
       @keyframes spin{to{transform:rotate(360deg)}}
-      @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
       @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+      @keyframes float{0%,100%{transform:translateY(0px) rotate(0deg)}50%{transform:translateY(-20px) rotate(3deg)}}
+      @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+      @keyframes glow{0%,100%{opacity:0.4}50%{opacity:0.8}}
+      @keyframes cardExpand{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
       ::-webkit-scrollbar{width:5px;height:5px}
       ::-webkit-scrollbar-track{background:transparent}
-      ::-webkit-scrollbar-thumb{background:#374151;border-radius:99px}
+      ::-webkit-scrollbar-thumb{background:rgba(34,197,94,0.3);border-radius:99px}
+      ::-webkit-scrollbar-thumb:hover{background:rgba(34,197,94,0.5)}
       ::selection{background:#DCFCE7;color:#166534}
       input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important;background:var(--bg-input)!important;color:var(--text-primary)!important;border-color:var(--border-solid)!important}
       button{transition:all 0.15s ease!important}
+      .card-hover{transition:transform 0.2s ease,box-shadow 0.2s ease!important}
+      .card-hover:hover{transform:translateY(-2px)!important;box-shadow:0 8px 32px rgba(34,197,94,0.12)!important}
+      .glass{background:rgba(255,255,255,0.7)!important;backdrop-filter:blur(20px)!important;-webkit-backdrop-filter:blur(20px)!important}
+      [data-theme="dark"] .glass{background:rgba(17,24,39,0.7)!important}
+      .shimmer{background:linear-gradient(90deg,transparent 25%,rgba(255,255,255,0.08) 50%,transparent 75%);background-size:200% 100%;animation:shimmer 2s infinite}
+      .orb{position:fixed;border-radius:50%;pointer-events:none;z-index:0;filter:blur(80px);animation:float 8s ease-in-out infinite}
       @media(max-width:768px){
         .desktop-only{display:none!important}
         .mobile-only{display:flex!important}
@@ -1620,13 +1634,24 @@ ${settings.company||""}`;
         </div>
       )}
 
+      {/* Floating background orbs */}
+      {!isMobile&&(
+        <>
+          <div className="orb" style={{width:400,height:400,background:darkMode?"rgba(34,197,94,0.04)":"rgba(34,197,94,0.06)",top:"10%",right:"5%",animationDelay:"0s"}}/>
+          <div className="orb" style={{width:300,height:300,background:darkMode?"rgba(99,102,241,0.04)":"rgba(99,102,241,0.05)",top:"60%",right:"15%",animationDelay:"3s"}}/>
+          <div className="orb" style={{width:250,height:250,background:darkMode?"rgba(34,197,94,0.03)":"rgba(34,197,94,0.04)",top:"40%",left:"50%",animationDelay:"6s"}}/>
+        </>
+      )}
+
       {/* Main content */}
       <div style={{
         marginLeft:isMobile?0:240,
         padding:isMobile?"76px 16px 88px":"32px 40px",
         maxWidth:isMobile?"100%":"100%",
         animation:"fadeIn 0.2s ease",
-        minHeight:"100vh"
+        minHeight:"100vh",
+        position:"relative",
+        zIndex:1
       }}>
 
         {/* ══ DASHBOARD ══ */}
@@ -1775,7 +1800,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#22C55E"},
                 {label:"Suppliers",    sub:"Manage accounts",            icon:"🏢", action:()=>setView("suppliers"), accent:"#F59E0B"},
               ].map(q=>(
-                <button key={q.label} onClick={q.action} style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"12px 14px":"18px 20px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:16,cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"all 0.15s",position:"relative",overflow:"hidden",minHeight:isMobile?90:100}}>
+                <button key={q.label} onClick={q.action} style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"12px 14px":"18px 20px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:16,cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"all 0.2s ease",position:"relative",overflow:"hidden",minHeight:isMobile?90:100}}>
                   <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:q.accent,borderRadius:"16px 16px 0 0"}}/>
                   <div style={{fontSize:20,marginTop:2}}>{q.icon}</div>
                   <div>
@@ -1813,9 +1838,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     const savedCount=(r.sentTo||[]).filter(s=>s.saved).length;
                     const totalCount=(r.sentTo||[]).length;
                     return(
-                    <div key={r.id} onClick={()=>{setActiveReq(r);setView("quotes");}} style={{display:"flex",alignItems:"center",gap:0,padding:"0 28px",borderTop:idx===0?"none":"1px solid #F8FAFC",cursor:"pointer",transition:"background 0.1s"}}
-                      onMouseEnter={e=>e.currentTarget.style.background=darkMode?"rgba(34,197,94,0.04)":"#FAFFFE"}
-                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div key={r.id} onClick={()=>{setActiveReq(r);setView("quotes");}} style={{display:"flex",alignItems:"center",gap:0,padding:"0 24px",borderTop:idx===0?"none":"1px solid var(--border)",cursor:"pointer",transition:"all 0.15s ease",borderRadius:idx===0?0:0}}
+                      onMouseEnter={e=>{e.currentTarget.style.background=darkMode?"rgba(34,197,94,0.06)":"rgba(34,197,94,0.03)";e.currentTarget.style.transform="translateX(2px)"}}
+                      onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.transform="translateX(0)"}}>
                       {/* Status bar */}
                       <div style={{width:3,height:40,background:sc.text,borderRadius:99,marginRight:20,flexShrink:0,opacity:0.6}}/>
                       {/* ID */}
@@ -2511,23 +2536,47 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             partial:  {bg:"var(--amber-light)",  border:"var(--amber)",      text:"var(--amber)",      label:"Partial"},
                             poor:     {bg:"var(--red-light)",    border:"var(--red)",        text:"var(--red)",        label:"Poor"},
                           }[qa.overallVerdict||"good"]||{bg:"var(--indigo-light)",border:"var(--indigo)",text:"var(--indigo)",label:"Good"};
+                          const isQExp = expandedQuote===qa._id;
+                          const scoreCol = qa.completeness>=80?"var(--green-dark)":qa.completeness>=60?"var(--amber)":"var(--red)";
                           return(
-                          <Card key={qa._id} style={{marginBottom:20,borderTop:`3px solid ${verdictConfig.border}`,transition:"all 0.2s"}}>
-                            {/* Quote header */}
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,paddingBottom:16,borderBottom:"1px solid var(--border)"}}>
-                              <div>
-                                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
-                                  <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</div>
-                                  <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
+                          <div key={qa._id} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid var(--border)`,borderTop:`3px solid ${verdictConfig.border}`,overflow:"hidden",boxShadow:isQExp?"var(--shadow-lg)":"var(--shadow-sm)",transition:"all 0.25s ease"}}>
+                            {/* Clickable header */}
+                            <div onClick={()=>setExpandedQuote(isQExp?null:qa._id)} style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isQExp?verdictConfig.bg:"var(--bg-card-solid)",transition:"background 0.2s"}}>
+                              <div style={{width:52,height:52,borderRadius:"50%",background:`conic-gradient(${scoreCol} ${qa.completeness*3.6}deg, var(--bg-subtle2) 0deg)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                                <div style={{width:40,height:40,borderRadius:"50%",background:"var(--bg-card-solid)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                  <span style={{fontSize:12,fontWeight:800,color:scoreCol,fontFamily:"'JetBrains Mono',monospace"}}>{qa.completeness}%</span>
                                 </div>
+                              </div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
+                                  <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
+                                  <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
+                                  {approvedQuoteId===qa._id&&<span style={{background:"var(--green-light)",color:"var(--green-deep)",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99}}>✓ Approved</span>}
+                                </div>
+                                <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{qa.recommendation}</div>
+                              </div>
+                              <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+                                {qa.estimatedTotal&&qa.estimatedTotal!=="Not calculated"&&(
+                                  <div style={{textAlign:"right"}}>
+                                    <div style={{fontSize:11,color:"var(--text-muted)"}}>Est. total</div>
+                                    <div style={{fontSize:14,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}}>{qa.estimatedTotal}</div>
+                                  </div>
+                                )}
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{transform:isQExp?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.25s ease",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
+                              </div>
+                            </div>
+                            {/* Expanded body */}
+                            {isQExp&&(
+                            <div style={{borderTop:"1px solid var(--border)",padding:"20px",animation:"cardExpand 0.2s ease"}}>
+                            {/* Detail header */}
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,paddingBottom:16,borderBottom:"1px solid var(--border)"}}>
+                              <div>
                                 <div style={{fontSize:13,color:"var(--text-secondary)"}}>{qa.recommendation}</div>
-                                {qa._stages&&<div style={{fontSize:10,color:"var(--text-muted)",marginTop:4}}>
-                                  {qa._stages.extracted} lines extracted · {qa._stages.matched} items matched · JS-validated
-                                </div>}
+                                {qa._stages&&<div style={{fontSize:10,color:"var(--text-muted)",marginTop:4}}>{qa._stages.extracted} lines extracted · {qa._stages.matched} items matched · JS-validated</div>}
                               </div>
                               <div style={{textAlign:"right",flexShrink:0,marginLeft:20}}>
                                 <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:2}}>Completeness</div>
-                                <div style={{fontSize:32,fontWeight:700,fontFamily:"monospace",color:qa.completeness>=80?"#059669":qa.completeness>=60?"#D97706":"#DC2626",lineHeight:1}}>{qa.completeness}%</div>
+                                <div style={{fontSize:32,fontWeight:700,fontFamily:"monospace",color:scoreCol,lineHeight:1}}>{qa.completeness}%</div>
                               </div>
                             </div>
 
@@ -2647,7 +2696,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {qa.vatNote&&<div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
 
                             {/* Action buttons — smart conditional */}
-                            <div style={{paddingTop:16,borderTop:"1px solid var(--border)"}}>
+                            <div style={{paddingTop:16,borderTop:"1px solid var(--border)",marginTop:16}}>
                               {approvedQuoteId===qa._id ? (
                                 /* ── This quote IS the approved one ── */
                                 <div>
@@ -2686,7 +2735,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 </div>
                               )}
                             </div>
-                          </Card>
+                            </div>
+                            </div>
+                            )}
+                          </div>
                           );
                         })}
                       </div>
@@ -2753,15 +2805,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
               <div>
                 <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>ORDER MANAGEMENT</div>
-                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"var(--text-primary)"}}>Orders</h1>
+                <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-1px",margin:0,color:"var(--text-primary)"}}>Orders</h1>
                 <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Send approved purchase orders to suppliers and track their status</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {[
-                    {label:"Ready",     color:"var(--green-deep)", bg:"#DCFCE7", count:orders.filter(o=>o.status==="pending-send").length},
-                    {label:"Sent",      color:"#4338CA", bg:"#EEF2FF", count:orders.filter(o=>o.status==="sent").length},
-                    {label:"Confirmed", color:"#059669", bg:"#D1FAE5", count:orders.filter(o=>o.status==="confirmed").length},
+                    {label:"Ready",     color:"var(--green-deep)", bg:"var(--green-light)", count:orders.filter(o=>o.status==="pending-send").length},
+                    {label:"Sent",      color:"var(--indigo)", bg:"var(--indigo-light)", count:orders.filter(o=>o.status==="sent").length},
+                    {label:"Confirmed", color:"var(--green-dark)", bg:"var(--green-light)", count:orders.filter(o=>o.status==="confirmed").length},
                     {label:"Delivered", color:"var(--text-secondary)", bg:"#F1F5F9", count:orders.filter(o=>o.status==="delivered").length},
                   ].map(s=>(
                     <div key={s.label} style={{background:s.bg,borderRadius:8,padding:"6px 14px",fontSize:12,color:s.color,fontWeight:600}}>
@@ -2784,17 +2836,17 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 </button>
               </div>
             ):(
-              <div style={{display:"flex",flexDirection:"column",gap:16}}>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 {orders.filter(o=>{
                   if(orderFilter==="active") return o.status!=="delivered";
                   if(orderFilter==="delivered") return o.status==="delivered";
                   return true;
                 }).map(order=>{
                   const STATUS_STEPS = [
-                    {key:"pending-send", label:"Ready to send", icon:"📦", color:"#22C55E", bg:"#F0FDF4"},
-                    {key:"sent",         label:"Sent",          icon:"✈️", color:"var(--indigo)", bg:"#EEF2FF"},
-                    {key:"confirmed",    label:"Confirmed",     icon:"✅", color:"#059669", bg:"#DCFCE7"},
-                    {key:"delivered",    label:"Delivered",     icon:"🏁", color:"var(--text-primary)", bg:"#F1F5F9"},
+                    {key:"pending-send", label:"Ready to send", icon:"📦", color:"#22C55E", bg:"var(--green-mint)"},
+                    {key:"sent",         label:"Sent",          icon:"✈️", color:"var(--indigo)", bg:"var(--indigo-light)"},
+                    {key:"confirmed",    label:"Confirmed",     icon:"✅", color:"var(--green-dark)", bg:"var(--green-light)"},
+                    {key:"delivered",    label:"Delivered",     icon:"🏁", color:"var(--text-secondary)", bg:"var(--bg-subtle2)"},
                   ];
                   const stepIdx = STATUS_STEPS.findIndex(s=>s.key===order.status);
                   const currentStep = STATUS_STEPS[stepIdx]||STATUS_STEPS[0];
@@ -2802,32 +2854,40 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   const isSent    = order.status==="sent";
                   const isConfirmed = order.status==="confirmed";
                   const isDelivered = order.status==="delivered";
+                  const isExpanded = expandedOrder === order.id;
 
                   return(
-                  <div key={order.id} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isConfirmed?"var(--green-dark)":isPending?"var(--green)":isSent?"var(--indigo)":"var(--border)"}`,overflow:"hidden",boxShadow:"var(--shadow-sm)",opacity:isDelivered?0.8:1,transition:"opacity 0.2s"}}>
+                  <div key={order.id} className="card-hover" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isConfirmed?"var(--green-dark)":isPending?"var(--green)":isSent?"var(--indigo)":"var(--border)"}`,overflow:"hidden",boxShadow:isExpanded?"var(--shadow-lg)":"var(--shadow-sm)",opacity:isDelivered?0.85:1,transition:"all 0.25s ease"}}>
 
-                    {/* ── Order header ── */}
-                    <div style={{padding:"20px 28px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,${currentStep.bg},#FAFFFE)`}}>
-                      <div style={{display:"flex",alignItems:"center",gap:16}}>
-                        <div style={{width:48,height:48,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":isConfirmed?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#374151,#1F2937)",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,boxShadow:`0 4px 12px ${currentStep.color}30`}}>
+                    {/* ── Clickable order header row ── */}
+                    <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)} style={{padding:"16px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",background:isExpanded?`linear-gradient(135deg,${currentStep.bg},var(--bg-card-solid))`:"var(--bg-card-solid)",transition:"background 0.2s"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:14,flex:1,minWidth:0}}>
+                        <div style={{width:40,height:40,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":isConfirmed?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#4B5563,#374151)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0,boxShadow:`0 4px 12px ${currentStep.color}40`}}>
                           {currentStep.icon}
                         </div>
-                        <div>
-                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-                            <span style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
-                            <span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,background:currentStep.bg,color:currentStep.color,border:`1px solid ${currentStep.color}30`}}>
-                              {currentStep.label}
-                            </span>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
+                            <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:currentStep.bg,color:currentStep.color}}>{currentStep.label}</span>
                           </div>
-                          <div style={{fontSize:13,color:"var(--text-secondary)"}}>{order.jobRef} · {order.site} · {order.trade}</div>
+                          <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{order.supplier} · {order.jobRef} · {order.site}</div>
                         </div>
                       </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{order.supplier}</div>
-                        <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>{order.supplierEmail||"No email set"}</div>
-                        <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>{order.poDate}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+                        {order.expectedDelivery&&!isDelivered&&(
+                          <span style={{fontSize:11,color:"var(--green-dark)",background:"var(--green-light)",padding:"3px 10px",borderRadius:99,fontWeight:500}}>
+                            📅 {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
+                          </span>
+                        )}
+                        <div style={{fontSize:11,color:"var(--text-muted)"}}>{order.poDate}</div>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{transform:isExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.25s ease",flexShrink:0}}>
+                          <polyline points="6 9 12 15 18 9"/>
+                        </svg>
                       </div>
                     </div>
+
+                    {/* ── Expanded order body ── */}
+                    {isExpanded&&(
 
                     {/* ── Status timeline ── */}
                     <div style={{padding:"16px 28px",borderBottom:"1px solid var(--border)",background:"#FAFFFE"}}>
@@ -3028,6 +3088,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                     </div>
                   </div>
+                    )}
+                  </div>
                   );
                 })}
               </div>
@@ -3161,7 +3223,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
               <div>
                 <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>PRICE HISTORY</div>
-                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"var(--text-primary)"}}>Quote Library</h1>
+                <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-1px",margin:0,color:"var(--text-primary)"}}>Quote Library</h1>
                 <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Every supplier quote ever received — track price changes over time</p>
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -3436,10 +3498,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ══ CONTACT ══ */}
-        {view==="contact"&&(
+        {view==="contact"&&(()=>{
+          if(!contactForm.name&&settings.contactName) setContactForm(p=>({...p,name:settings.contactName,email:settings.fromEmail||p.email}));
+          return(
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:760}}>
             {/* Header */}
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
