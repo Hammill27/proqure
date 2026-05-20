@@ -275,13 +275,11 @@ Extract all pricing lines as JSON.`
 async function matchQuoteToRequest(requestedItems, extractedLines, supplierName) {
   const reqList = requestedItems.map((item,i) =>
     `${i+1}. ${item.quantity} ${item.unit} of "${item.description}"${item.notes?` [Note: ${item.notes}]`:""}`
-  ).join("
-");
+  ).join("\n")
 
   const lineList = (extractedLines.lines||[]).map((l,i) =>
     `${i+1}. "${l.rawText}" | product: ${l.product} | qty: ${l.qty??'?'} | unit: ${l.unit??'?'} | unitPrice: ${l.unitPrice??'?'} | lineTotal: ${l.lineTotal??'?'}`
-  ).join("
-");
+  ).join("\n")
 
   const sys = `You are a procurement matching specialist. Match supplier quote lines to requested items. Be STRICT — only match if you are genuinely confident. Return ONLY valid JSON, no markdown.
 
