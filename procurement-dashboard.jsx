@@ -400,7 +400,7 @@ const Badge = ({ children, bg, text }) => (
   <span style={{ background:bg, color:text, fontSize:11, fontWeight:600, padding:"3px 11px", borderRadius:20, whiteSpace:"nowrap", letterSpacing:"0.01em" }}>{children}</span>
 );
 const Card = ({ children, style={} }) => (
-  <div style={{ background:"var(--bg-card)", backdropFilter:"blur(8px)", border:"1px solid var(--border)", borderRadius:20, padding:"24px 28px", boxShadow:"var(--shadow-sm)", ...style }}>{children}</div>
+  <div style={{ background:"var(--bg-card-solid)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"24px 28px", boxShadow:"var(--shadow-sm)", ...style }}>{children}</div>
 );
 const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
@@ -427,7 +427,8 @@ export default function App() {
   const showToast = (msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),4000); };
 
   // Requests
-  const [requests, setRequests] = useState([]);
+  const [requests, setRequests] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_requests")||"[]")}catch{return []} });
+  const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
 
   // Wizard state
   const [step,     setStep]     = useState(1);
@@ -462,7 +463,7 @@ export default function App() {
   const [activityModal, setActivityModal] = useState(null); // request to show log
 
   // Orders state
-  const [orders, setOrders] = useState([]);
+
   const [activeOrder, setActiveOrder] = useState(null);
   const [sendingOrder, setSendingOrder] = useState(null);
   const [orderNote, setOrderNote] = useState({});
@@ -624,15 +625,13 @@ export default function App() {
     const toSend = suppliers.filter(s=>selSup.includes(s.id));
     const subject = `Request for Quotation — ${jobRef||parsed?.jobRef||"TBC"}`;
     const results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev");
-    setEmailRes(results);
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
-    showToast(`${ok} of ${results.length} emails sent`);
-    // Auto-save the request after sending
     if (ok > 0) {
       const sentSuppliers = toSend.map(s=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false }));
+      const newId = `RFQ-${String(requests.length+1).padStart(3,"0")}`;
       const r = {
-        id:`RFQ-${String(requests.length+1).padStart(3,"0")}`,
+        id: newId,
         jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
         status:"pending",
         created: new Date().toISOString().split("T")[0],
@@ -642,7 +641,20 @@ export default function App() {
         activity:[{ ts:new Date().toISOString(), action:"Created", detail:`RFQ sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}`, user:settings.contactName||"You" }]
       };
       setRequests(p=>[r,...p]);
-      showToast(`Emails sent & request saved as ${r.id}`);
+      // Show success state briefly then redirect and reset
+      showToast(`✓ ${ok} RFQ${ok!==1?"s":""} sent — ${newId} saved`);
+      setTimeout(()=>{
+        // Full reset — ready for next request
+        setStep(1);
+        setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
+        setRfqEmail(""); setEmailRes(null); setSelSup([]);
+        setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
+        setView("dashboard");
+      }, 1800);
+      setEmailRes(results); // show brief success UI
+    } else {
+      setEmailRes(results);
+      showToast(`Send failed — check your Resend key and supplier emails`,"warn");
     }
   }
 
@@ -680,18 +692,27 @@ export default function App() {
     showToast(`Template "${t.name}" loaded`);
   }
 
+  function resetNewRequest() {
+    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
+    setRfqEmail(""); setEmailRes(null); setSelSup([]);
+    setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
+  }
+
   function handleFinalise() {
-    const r = {
-      id:`RFQ-${String(requests.length+1).padStart(3,"0")}`,
-      jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
-      status: emailRes?.some(r=>r.success) ? "pending" : "draft",
-      created: new Date().toISOString().split("T")[0],
-      items: parsed.items
-    };
-    setRequests(p=>[r,...p]);
+    if (parsed) {
+      const r = {
+        id:`RFQ-${String(requests.length+1).padStart(3,"0")}`,
+        jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
+        status: "draft",
+        created: new Date().toISOString().split("T")[0],
+        items: parsed.items,
+        activity:[{ ts:new Date().toISOString(), action:"Saved as draft", detail:"No emails sent", user:settings.contactName||"You" }]
+      };
+      setRequests(p=>[r,...p]);
+      showToast("Saved as draft");
+    }
+    resetNewRequest();
     setView("dashboard");
-    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setRfqEmail(""); setEmailRes(null); setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
-    showToast("Request saved");
   }
 
   async function handleAnalyse() {
@@ -900,68 +921,117 @@ ${settings.company||""}`;
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; localStorage.setItem("piq_dark",n?"1":"0"); return n; });
 
+  // ── Persist to localStorage ──
+  useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
+  useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
+
   // ── Render ──
   return (
-    <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",backgroundAttachment:"fixed",transition:"background 0.4s,color 0.3s"}}>
+    <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
       <style>{`
+      /* ── LIGHT THEME (default) ── */
       :root {
-        --bg-page:       linear-gradient(160deg,#F8FAFC 0%,#EFF6FF 50%,#F5F3FF 100%);
-        --bg-card:       rgba(255,255,255,0.85);
-        --bg-card-solid: #FFFFFF;
-        --bg-input:      #FFFFFF;
-        --bg-subtle:     #F8FAFC;
-        --bg-subtle2:    #F1F5F9;
-        --border:        rgba(226,232,240,0.8);
-        --border-solid:  #E2E8F0;
-        --text-primary:  #0A0F1E;
-        --text-secondary:#64748B;
-        --text-tertiary: #94A3B8;
-        --text-muted:    #CBD5E1;
-        --green:         #22C55E;
-        --green-dark:    #16A34A;
-        --green-deep:    #166534;
-        --green-light:   #DCFCE7;
-        --green-mint:    #F0FDF4;
-        --indigo:        #6366F1;
-        --indigo-light:  #EEF2FF;
-        --shadow-sm:     0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03);
-        --shadow-md:     0 4px 20px rgba(0,0,0,0.08);
-        --sidebar-bg:    linear-gradient(180deg,#0A0F1E 0%,#0D1117 60%,#0A0F1E 100%);
-        --sidebar-text:  #64748B;
-        --sidebar-active:#22C55E;
-        --sidebar-activebg: rgba(34,197,94,0.12);
-        --topbar-bg:     linear-gradient(135deg,#0A0F1E,#111827);
-        --bottombar-bg:  rgba(10,15,30,0.97);
+        --bg-page:        #F3F4F6;
+        --bg-card:        #FFFFFF;
+        --bg-card-solid:  #FFFFFF;
+        --bg-input:       #FFFFFF;
+        --bg-subtle:      #F9FAFB;
+        --bg-subtle2:     #F3F4F6;
+        --bg-header:      #FFFFFF;
+        --border:         #E5E7EB;
+        --border-solid:   #E5E7EB;
+        --text-primary:   #111827;
+        --text-secondary: #6B7280;
+        --text-tertiary:  #9CA3AF;
+        --text-muted:     #D1D5DB;
+        --green:          #22C55E;
+        --green-dark:     #16A34A;
+        --green-deep:     #166534;
+        --green-light:    #DCFCE7;
+        --green-mint:     #F0FDF4;
+        --indigo:         #6366F1;
+        --indigo-light:   #EEF2FF;
+        --amber:          #F59E0B;
+        --amber-light:    #FFFBEB;
+        --red:            #EF4444;
+        --red-light:      #FEF2F2;
+        --shadow-sm:      0 1px 2px rgba(0,0,0,0.05);
+        --shadow-md:      0 4px 12px rgba(0,0,0,0.08);
+        --shadow-lg:      0 8px 24px rgba(0,0,0,0.10);
+        --sidebar-bg:     #111827;
+        --sidebar-border: #1F2937;
+        --sidebar-text:   #9CA3AF;
+        --sidebar-active: #22C55E;
+        --sidebar-activebg: rgba(34,197,94,0.1);
+        --sidebar-activeborder: #22C55E;
+        --topbar-bg:      #111827;
+        --bottombar-bg:   #111827;
+        --radius-sm:      8px;
+        --radius-md:      12px;
+        --radius-lg:      16px;
       }
+
+      /* ── DARK THEME — Microsoft Admin inspired ── */
+      /* Clean slate surfaces, consistent elevation, green brand accents */
       [data-theme="dark"] {
-        --bg-page:       #0A0F1E;
-        --bg-card:       rgba(15,21,36,0.95);
-        --bg-card-solid: #0F1524;
-        --bg-input:      #1A2238;
-        --bg-subtle:     #131C2E;
-        --bg-subtle2:    #1A2238;
-        --border:        rgba(34,197,94,0.1);
-        --border-solid:  rgba(34,197,94,0.15);
-        --text-primary:  #F0FDF4;
-        --text-secondary:#86EFAC;
-        --text-tertiary: #4ADE80;
-        --text-muted:    #166534;
-        --green:         #4ADE80;
-        --green-dark:    #22C55E;
-        --green-deep:    #86EFAC;
-        --green-light:   rgba(34,197,94,0.12);
-        --green-mint:    rgba(34,197,94,0.06);
-        --indigo:        #818CF8;
-        --indigo-light:  rgba(99,102,241,0.12);
-        --shadow-sm:     0 1px 3px rgba(0,0,0,0.4),0 4px 16px rgba(0,0,0,0.3);
-        --shadow-md:     0 4px 20px rgba(0,0,0,0.5);
-        --sidebar-bg:    linear-gradient(180deg,#050810 0%,#060B14 60%,#050810 100%);
-        --sidebar-text:  #4ADE80;
-        --sidebar-active:#4ADE80;
-        --sidebar-activebg: rgba(74,222,128,0.1);
-        --topbar-bg:     linear-gradient(135deg,#050810,#080D16);
-        --bottombar-bg:  rgba(5,8,16,0.98);
+        --bg-page:        #1F2937;
+        --bg-card:        #111827;
+        --bg-card-solid:  #111827;
+        --bg-input:       #1F2937;
+        --bg-subtle:      #1F2937;
+        --bg-subtle2:     #374151;
+        --bg-header:      #111827;
+        --border:         #374151;
+        --border-solid:   #374151;
+        --text-primary:   #F9FAFB;
+        --text-secondary: #D1D5DB;
+        --text-tertiary:  #9CA3AF;
+        --text-muted:     #6B7280;
+        --green:          #34D399;
+        --green-dark:     #10B981;
+        --green-deep:     #6EE7B7;
+        --green-light:    rgba(52,211,153,0.12);
+        --green-mint:     rgba(52,211,153,0.07);
+        --indigo:         #818CF8;
+        --indigo-light:   rgba(129,140,248,0.12);
+        --amber:          #FBBF24;
+        --amber-light:    rgba(251,191,36,0.1);
+        --red:            #F87171;
+        --red-light:      rgba(248,113,113,0.1);
+        --shadow-sm:      0 1px 2px rgba(0,0,0,0.3);
+        --shadow-md:      0 4px 12px rgba(0,0,0,0.4);
+        --shadow-lg:      0 8px 24px rgba(0,0,0,0.5);
+        --sidebar-bg:     #0D1117;
+        --sidebar-border: #21262D;
+        --sidebar-text:   #8B949E;
+        --sidebar-active: #34D399;
+        --sidebar-activebg: rgba(52,211,153,0.08);
+        --sidebar-activeborder: #34D399;
+        --topbar-bg:      #0D1117;
+        --bottombar-bg:   #0D1117;
+        --radius-sm:      8px;
+        --radius-md:      12px;
+        --radius-lg:      16px;
+      }
+
+      /* ── Global dark mode overrides ── */
+      [data-theme="dark"] input,
+      [data-theme="dark"] textarea,
+      [data-theme="dark"] select {
+        background: var(--bg-input) !important;
+        color: var(--text-primary) !important;
+        border-color: var(--border-solid) !important;
+      }
+      [data-theme="dark"] input::placeholder,
+      [data-theme="dark"] textarea::placeholder {
+        color: var(--text-muted) !important;
+      }
+      [data-theme="dark"] table thead tr {
+        background: var(--bg-subtle) !important;
+      }
+      [data-theme="dark"] tr {
+        border-color: var(--border) !important;
       }
       *{box-sizing:border-box;-webkit-font-smoothing:antialiased}
       @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
@@ -1003,29 +1073,29 @@ ${settings.company||""}`;
           {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
           {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
         ];
-        const handleNav = (id) => { setView(id); setMoreMenuOpen(false); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); };
+        const handleNav = (id) => { setView(id); setMoreMenuOpen(false); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); if(id==="new")resetNewRequest(); };
         const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
         return (<>
 
       {/* ── DESKTOP SIDEBAR ── */}
       {!isMobile&&(
       <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0A0F1E 0%,#111827 60%,#0F172A 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 40px rgba(0,0,0,0.25)"}}>
-        <div style={{padding:"28px 24px 24px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+        <div style={{padding:"28px 24px 24px",borderBottom:"1px solid var(--sidebar-border)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 20px rgba(34,197,94,0.4)"}}>
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
             </div>
             <div>
               <div style={{fontSize:17,fontWeight:700,color:"white",letterSpacing:"-0.8px",fontFamily:"'Inter',sans-serif"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></div>
-              <div style={{fontSize:10,color:"#475569",marginTop:3,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:500}}>Smart Procurement</div>
+              <div style={{fontSize:10,color:"var(--text-secondary)",marginTop:3,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:500}}>Smart Procurement</div>
             </div>
           </div>
         </div>
         <nav style={{padding:"20px 16px",flex:1,overflowY:"auto"}}>
-          <div style={{fontSize:10,color:"#334155",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4}}>Navigation</div>
+          <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
           {navItems.map(item=>(
             <button key={item.id} onClick={()=>handleNav(item.id)}
-              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"rgba(99,102,241,0.18)":"transparent",color:view===item.id?"#A5B4FC":"#64748B",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:2,textAlign:"left",borderLeft:view===item.id?"3px solid #818CF8":"3px solid transparent",transition:"all 0.15s"}}>
+              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-activeborder)":"3px solid transparent",transition:"all 0.15s",borderRadius:"0 8px 8px 0"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
               <span style={{flex:1}}>{item.label}</span>
               {item.id==="orders"&&pendingOrders>0&&(
@@ -1034,18 +1104,18 @@ ${settings.company||""}`;
             </button>
           ))}
         </nav>
-        <div style={{padding:"16px 24px",borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+        <div style={{padding:"16px 24px",borderTop:"1px solid var(--sidebar-border)"}}>
           {/* Dark mode toggle with iOS-style slider */}
-          <button onClick={toggleDark} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
+          <button onClick={toggleDark} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg-subtle2)",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:14}}>{darkMode?"☀️":"🌙"}</span>
               <span style={{fontSize:12,color:darkMode?"#FCD34D":"#6B7280",fontWeight:500}}>{darkMode?"Light mode":"Dark mode"}</span>
             </div>
             <div style={{width:38,height:22,background:darkMode?"#22C55E":"rgba(255,255,255,0.12)",borderRadius:11,position:"relative",transition:"background 0.3s",flexShrink:0}}>
-              <div style={{position:"absolute",top:3,left:darkMode?19:3,width:16,height:16,background:"white",borderRadius:"50%",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
+              <div style={{position:"absolute",top:3,left:darkMode?19:3,width:16,height:16,background:"var(--bg-card-solid)",borderRadius:"50%",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
             </div>
           </button>
-          <div style={{fontSize:11,background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid rgba(255,255,255,0.06)"}}>
+          <div style={{fontSize:11,background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid var(--sidebar-border)"}}>
             <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B",marginRight:6}}>●</span>
             <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B"}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · no email"):"Setup needed"}</span>
           </div>
@@ -1055,7 +1125,7 @@ ${settings.company||""}`;
 
       {/* ── MOBILE TOP HEADER ── */}
       {isMobile&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"linear-gradient(135deg,#0A0F1E,#111827)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,boxShadow:"0 2px 20px rgba(0,0,0,0.3)"}}>
+        <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"var(--topbar-bg)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,borderBottom:"1px solid var(--sidebar-border)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:32,height:32,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(34,197,94,0.4)"}}>
               <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
@@ -1076,7 +1146,7 @@ ${settings.company||""}`;
 
       {/* ── MOBILE BOTTOM TAB BAR ── */}
       {isMobile&&(
-        <div style={{position:"fixed",bottom:0,left:0,right:0,height:68,background:"rgba(10,15,30,0.97)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(255,255,255,0.08)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
+        <div style={{position:"fixed",bottom:0,left:0,right:0,height:68,background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
           {[
             {id:"dashboard",label:"Home",    d:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"},
             {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
@@ -1110,7 +1180,7 @@ ${settings.company||""}`;
               {/* Backdrop */}
               <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,bottom:68,background:"rgba(10,15,30,0.6)",backdropFilter:"blur(4px)",zIndex:198}}/>
               {/* Menu sheet */}
-              <div style={{position:"relative",zIndex:199,background:darkMode?"#050810":"#111827",borderRadius:"20px 20px 0 0",padding:"8px 0 12px",boxShadow:"0 -8px 40px rgba(0,0,0,0.4)"}}>
+              <div style={{position:"relative",zIndex:199,background:"var(--topbar-bg)",borderRadius:"20px 20px 0 0",padding:"8px 0 12px",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)",border:"1px solid var(--sidebar-border)"}}>
                 {/* Handle bar */}
                 <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
                 <div style={{padding:"0 8px"}}>
@@ -1146,8 +1216,8 @@ ${settings.company||""}`;
       {/* Main content */}
       <div style={{
         marginLeft:isMobile?0:240,
-        padding:isMobile?"76px 16px 88px":"40px 48px",
-        maxWidth:isMobile?"100%":1160,
+        padding:isMobile?"76px 16px 88px":"32px 40px",
+        maxWidth:isMobile?"100%":"100%",
         animation:"fadeIn 0.2s ease",
         minHeight:"100vh"
       }}>
@@ -1158,13 +1228,13 @@ ${settings.company||""}`;
 
             {/* ── Hero header ── */}
             <div style={{
-              background:darkMode?"linear-gradient(135deg,#060B14,#0A1428)":"linear-gradient(135deg,#0A0F1E,#1a2744)",
+              background:darkMode?"#111827":"linear-gradient(135deg,#0A0F1E,#1a2744)",
               borderRadius:24,padding:isMobile?"24px":"36px 40px",marginBottom:24,
               position:"relative",overflow:"hidden",
               boxShadow:"0 8px 40px rgba(0,0,0,0.2)"
             }}>
               {/* Background glow */}
-              <div style={{position:"absolute",top:-60,right:-60,width:300,height:300,background:"radial-gradient(circle,rgba(34,197,94,0.15) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
+              <div style={{position:"absolute",top:-60,right:-60,width:300,height:300,background:darkMode?"radial-gradient(circle,rgba(52,211,153,0.08) 0%,transparent 70%)":"radial-gradient(circle,rgba(34,197,94,0.15) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
               <div style={{position:"absolute",bottom:-40,left:100,width:200,height:200,background:"radial-gradient(circle,rgba(99,102,241,0.08) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
               <div style={{position:"relative",zIndex:1,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:16}}>
                 <div>
@@ -1181,27 +1251,13 @@ ${settings.company||""}`;
                     }
                   </p>
                 </div>
-                <button onClick={()=>setView("new")} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",letterSpacing:"-0.2px",whiteSpace:"nowrap",flexShrink:0}}>
+                <button onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",letterSpacing:"-0.2px",whiteSpace:"nowrap",flexShrink:0}}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   New request
                 </button>
               </div>
 
-              {/* Mini stats inside hero */}
-              <div style={{position:"relative",zIndex:1,display:"flex",gap:isMobile?12:24,marginTop:24,flexWrap:"wrap"}}>
-                {[
-                  {n:stats.total,   l:"Total requests",  c:"#94A3B8"},
-                  {n:stats.pending, l:"Awaiting quotes",  c:"#FCD34D"},
-                  {n:stats.received,l:"Quotes ready",     c:"#818CF8"},
-                  {n:stats.approved,l:"Approved POs",     c:"#4ADE80"},
-                ].map(s=>(
-                  <div key={s.l} style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:isMobile?20:28,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",color:s.c,letterSpacing:"-1px"}}>{s.n}</span>
-                    <span style={{fontSize:11,color:"rgba(148,163,184,0.7)",fontWeight:500,lineHeight:1.3}}>{s.l}</span>
-                    {!isMobile&&<div style={{width:1,height:24,background:"rgba(255,255,255,0.08)",marginLeft:8}}/>}
-                  </div>
-                ))}
-              </div>
+
             </div>
 
             {/* ── Overdue quote reminders ── */}
@@ -1285,20 +1341,22 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             {/* ── Stat cards ── */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
               {[
-                {label:"Total requests",  value:stats.total,    color:"#6366F1", grad:"linear-gradient(135deg,#6366F1,#4338CA)", icon:"📋"},
-                {label:"Awaiting quotes", value:stats.pending,  color:"#F59E0B", grad:"linear-gradient(135deg,#F59E0B,#D97706)", icon:"⏳"},
-                {label:"Quotes received", value:stats.received, color:"#8B5CF6", grad:"linear-gradient(135deg,#8B5CF6,#7C3AED)", icon:"📬"},
-                {label:"Approved POs",    value:stats.approved, color:"#22C55E", grad:"linear-gradient(135deg,#22C55E,#16A34A)", icon:"✅"},
+                {label:"Total requests",  value:stats.total,    color:"#6366F1", grad:"linear-gradient(135deg,#6366F1,#4338CA)", icon:"📋", nav:()=>setView("requests")},
+                {label:"Awaiting quotes", value:stats.pending,  color:"#F59E0B", grad:"linear-gradient(135deg,#F59E0B,#D97706)", icon:"⏳", nav:()=>setView("quotes")},
+                {label:"Quotes received", value:stats.received, color:"#8B5CF6", grad:"linear-gradient(135deg,#8B5CF6,#7C3AED)", icon:"📬", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
+                {label:"Approved POs",    value:stats.approved, color:"#22C55E", grad:"linear-gradient(135deg,#22C55E,#16A34A)", icon:"✅", nav:()=>setView("orders")},
               ].map(s=>(
-                <div key={s.label} style={{background:"var(--bg-card-solid)",borderRadius:16,padding:isMobile?"14px 16px":"18px 22px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-                    <div style={{width:38,height:38,background:s.value>0?s.grad:"var(--bg-subtle2)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,boxShadow:s.value>0?`0 4px 12px ${s.color}33`:"none"}}>{s.icon}</div>
-                    <div style={{fontSize:9,fontWeight:700,color:s.value>0?s.color:"var(--text-muted)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{s.value>0?"active":"empty"}</div>
+                <button key={s.label} onClick={s.nav} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"14px 16px":"20px 22px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",transition:"all 0.15s",display:"block",width:"100%"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 4px 16px ${s.color}22`;}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                    <div style={{fontSize:22}}>{s.icon}</div>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
                   </div>
-                  <div style={{fontSize:isMobile?28:38,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:5}}>{s.value}</div>
-                  <div style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:500}}>{s.label}</div>
-                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:2,background:s.value>0?s.grad:"transparent"}}/>
-                </div>
+                  <div style={{fontSize:isMobile?26:36,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:4}}>{s.value}</div>
+                  <div style={{fontSize:12,color:"var(--text-secondary)",fontWeight:500}}>{s.label}</div>
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:s.value>0?s.grad:"transparent",borderRadius:"0 0 var(--radius-md) var(--radius-md)"}}/>
+                </button>
               ))}
             </div>
 
@@ -1365,7 +1423,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                       {/* Trade badge */}
                       <div style={{width:110,padding:"16px 0",flexShrink:0}}>
-                        <span style={{background:"var(--bg-subtle2)",color:"#475569",fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:20}}>{r.trade}</span>
+                        <span style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:20}}>{r.trade}</span>
                       </div>
                       {/* Items count */}
                       <div style={{width:80,padding:"16px 0",flexShrink:0,textAlign:"center"}}>
@@ -1425,19 +1483,19 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:isMobile?12:16,marginBottom:20}}>
                   {[{label:"Job reference",val:jobRef,set:setJobRef,ph:"e.g. JOB-2024-056"},{label:"Site / location",val:site,set:setSite,ph:"e.g. Unit 7, High Street"}].map(f=>(
                     <div key={f.label}>
-                      <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
+                      <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>{f.label}</label>
                       <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                     </div>
                   ))}
                   <div>
-                    <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Trade</label>
-                    <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"white",outline:"none"}}>
+                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Trade</label>
+                    <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"var(--bg-card-solid)",outline:"none"}}>
                       {TRADES.map(t=><option key={t}>{t}</option>)}
                     </select>
                   </div>
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <label style={{fontSize:12,fontWeight:500,color:"#374151"}}>Material requirements <span style={{color:"#9CA3AF",fontWeight:400}}>(speak or type naturally)</span></label>
+                  <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)"}}>Material requirements <span style={{color:"#9CA3AF",fontWeight:400}}>(speak or type naturally)</span></label>
                   {voiceOk?(
                     <button onClick={()=>listening?micStop():micStart()}
                       style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${listening?"#DC2626":"#6366F1"}`,background:listening?"#FEF2F2":"#EEF2FF",color:listening?"#DC2626":"#6366F1",boxShadow:listening?"none":"0 2px 8px rgba(99,102,241,0.2)",fontSize:12,fontWeight:500,cursor:"pointer"}}>
@@ -1498,7 +1556,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             setParsed(p=>({...p,items:updated}));
                           }}
                           placeholder="Add note…"
-                          style={{width:"100%",padding:"5px 8px",border:"1px solid var(--border-solid)",borderRadius:6,fontSize:11,outline:"none",color:"#374151",fontFamily:"inherit"}}
+                          style={{width:"100%",padding:"5px 8px",border:"1px solid var(--border-solid)",borderRadius:6,fontSize:11,outline:"none",color:"var(--text-secondary)",fontFamily:"inherit"}}
                         />
                       </td>
                     </tr>
@@ -1522,7 +1580,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   <div style={{fontSize:13,fontWeight:600,color:"#0369A1",marginBottom:14}}>🚚 Delivery requirements</div>
                   <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:14}}>
                     <div>
-                      <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Delivery method</div>
+                      <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",marginBottom:8}}>Delivery method</div>
                       <div style={{display:"flex",flexDirection:"column",gap:8}}>
                         {[
                           {val:"direct",    icon:"📍", label:"Deliver direct to site",         sub:`${site||"site address"}`},
@@ -1541,14 +1599,14 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                       {deliveryMethod==="alternative"&&(
                         <div style={{marginTop:10}}>
-                          <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Alternative delivery address</label>
+                          <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Alternative delivery address</label>
                           <textarea value={altAddress} onChange={e=>setAltAddress(e.target.value)} placeholder="Full delivery address..." style={{width:"100%",height:70,padding:"8px 10px",border:"1px solid #BFDBFE",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
                         </div>
                       )}
                     </div>
                     <div>
-                      <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Required delivery date</div>
-                      <div style={{background:"white",borderRadius:10,padding:14,border:"1px solid var(--border-solid)"}}>
+                      <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",marginBottom:8}}>Required delivery date</div>
+                      <div style={{background:"var(--bg-card-solid)",borderRadius:10,padding:14,border:"1px solid var(--border-solid)"}}>
                         <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} min={new Date().toISOString().split("T")[0]} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:14,outline:"none",color:deliveryDate?"#1E293B":"#94A3B8"}}/>
                         <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:8}}>Leave blank if date is flexible</div>
                         {deliveryDate&&(
@@ -1565,7 +1623,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                     </div>
                   </div>
-                  <div style={{background:"white",borderRadius:8,padding:"10px 14px",border:"1px solid #BAE6FD",fontSize:12,color:"#0369A1"}}>
+                  <div style={{background:"var(--bg-card-solid)",borderRadius:8,padding:"10px 14px",border:"1px solid #BAE6FD",fontSize:12,color:"#0369A1"}}>
                     ℹ️ These delivery details will be included in the RFQ email and the AI will extract carriage charges from supplier responses during quote analysis.
                   </div>
                 </div>
@@ -1588,7 +1646,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:8,padding:20,marginBottom:16}}>
                   <div style={{fontSize:12,color:"#9CA3AF",marginBottom:4}}>To: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.email).join(", ")}</div>
                   <div style={{fontSize:12,color:"#9CA3AF",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #E5E7EB"}}>Subject: Request for Quotation — {jobRef||parsed?.jobRef||"TBC"}</div>
-                  <pre style={{fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0,color:"#374151"}}>{rfqEmail}</pre>
+                  <pre style={{fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0,color:"var(--text-secondary)"}}>{rfqEmail}</pre>
                 </div>
 
                 {!settings.resendKey&&(
@@ -1631,9 +1689,18 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   <Btn outline onClick={()=>setStep(2)}>← Back</Btn>
                   <div style={{display:"flex",gap:10}}>
                     {settings.resendKey&&!emailRes&&(
-                      <Btn onClick={handleSendEmails} disabled={loading} color="#16A34A">
+                      <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#16A34A">
                         {loading?<><Spinner/>{loadMsg}</>:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""} →`}
                       </Btn>
+                    )}
+                    {emailRes&&emailRes.some(r=>r.success)&&(
+                      <div style={{display:"flex",alignItems:"center",gap:10,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:10,padding:"10px 16px"}}>
+                        <span style={{fontSize:18}}>✅</span>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)"}}>Quotes sent successfully</div>
+                          <div style={{fontSize:12,color:"var(--green-dark)",opacity:0.8}}>Redirecting to dashboard…</div>
+                        </div>
+                      </div>
                     )}
                     {!settings.resendKey&&(
                       <div style={{fontSize:13,color:"var(--text-tertiary)",display:"flex",alignItems:"center",gap:6}}>
@@ -1658,7 +1725,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             </div>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"240px 1fr",gap:isMobile?12:20}}>
               <div>
-                <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Requests</div>
+                <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Requests</div>
                 {requests.length===0&&<div style={{fontSize:13,color:"#9CA3AF",padding:"20px 0"}}>No requests yet — create one first</div>}
                 {requests.map(r=>{
                   const savedCount = (r.sentTo||[]).filter(s=>s.saved).length;
@@ -1696,7 +1763,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
                         {activeReq.items.map((item,i)=>(
-                          <span key={i} style={{background:"var(--bg-subtle2)",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#334155"}}>
+                          <span key={i} style={{background:"var(--bg-subtle2)",borderRadius:6,padding:"4px 10px",fontSize:12,color:"var(--text-secondary)"}}>
                             <span style={{fontWeight:600}}>{item.quantity} {item.unit}</span> {item.description}
                           </span>
                         ))}
@@ -1820,7 +1887,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                       </div>
                                     ):(
                                       <div>
-                                        <div style={{fontSize:12,fontWeight:500,color:"#334155"}}>📎 Drag & drop supplier document here</div>
+                                        <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)"}}>📎 Drag & drop supplier document here</div>
                                         <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>PDF · Word · Excel · CSV — AI reads it and fills the box below</div>
                                       </div>
                                     )}
@@ -1908,7 +1975,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:12}}>This request has no supplier tracking. Enter supplier name and paste their quote.</div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                           <div>
-                            <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Supplier name</label>
+                            <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Supplier name</label>
                             <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                           </div>
                         </div>
@@ -2019,7 +2086,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                                     <thead><tr style={{background:"var(--green-mint)"}}>
                                       {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty ✓","Notes"].map(h=>(
-                                        <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:600,color:"#374151",whiteSpace:"nowrap"}}>{h}</th>
+                                        <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{h}</th>
                                       ))}
                                     </tr></thead>
                                     <tbody>{qa.matched.map((m,i)=>(
@@ -2065,7 +2132,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               <div style={{background:"#F0F9FF",border:"1px solid #BAE6FD",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
                                 <div style={{fontSize:12,fontWeight:600,color:"#0369A1",marginBottom:8}}>💡 Alternative options offered</div>
                                 {qa.alternatives.map((a,i)=>(
-                                  <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"white",borderRadius:8,border:"1px solid #E0F2FE"}}>
+                                  <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,border:"1px solid #E0F2FE"}}>
                                     <div style={{fontSize:12,color:"var(--text-secondary)"}}>Instead of: <span style={{fontWeight:500,color:"#0F172A"}}>{a.requestedItem}</span></div>
                                     <div style={{fontSize:13,fontWeight:500,color:"#0369A1",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>— {a.altPrice}</span>}</div>
                                     {a.reason&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{a.reason}</div>}
@@ -2202,7 +2269,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     {label:"Ready",     color:"#166534", bg:"#DCFCE7", count:orders.filter(o=>o.status==="pending-send").length},
                     {label:"Sent",      color:"#4338CA", bg:"#EEF2FF", count:orders.filter(o=>o.status==="sent").length},
                     {label:"Confirmed", color:"#059669", bg:"#D1FAE5", count:orders.filter(o=>o.status==="confirmed").length},
-                    {label:"Delivered", color:"#374151", bg:"#F1F5F9", count:orders.filter(o=>o.status==="delivered").length},
+                    {label:"Delivered", color:"var(--text-secondary)", bg:"#F1F5F9", count:orders.filter(o=>o.status==="delivered").length},
                   ].map(s=>(
                     <div key={s.label} style={{background:s.bg,borderRadius:8,padding:"6px 14px",fontSize:12,color:s.color,fontWeight:600}}>
                       {s.count} {s.label}
@@ -2240,7 +2307,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   const isDelivered = order.status==="delivered";
 
                   return(
-                  <div key={order.id} style={{background:"white",borderRadius:20,border:`1px solid ${isConfirmed?"#A7F3D0":isPending?"#BBF7D0":isSent?"#E0E7FF":"#F1F5F9"}`,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
+                  <div key={order.id} style={{background:"var(--bg-card-solid)",borderRadius:20,border:`1px solid ${isConfirmed?"#A7F3D0":isPending?"#BBF7D0":isSent?"#E0E7FF":"#F1F5F9"}`,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
 
                     {/* ── Order header ── */}
                     <div style={{padding:"20px 28px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,${currentStep.bg},#FAFFFE)`}}>
@@ -2299,7 +2366,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             <div style={{background:"var(--bg-subtle)",borderRadius:10,padding:"12px 14px",maxHeight:120,overflowY:"auto"}}>
                               {(order.items||[]).map((item,i)=>(
                                 <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:i<order.items.length-1?"1px solid #F1F5F9":"none"}}>
-                                  <span style={{fontSize:13,color:"#334155"}}>{item.description}</span>
+                                  <span style={{fontSize:13,color:"var(--text-secondary)"}}>{item.description}</span>
                                   <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{item.quantity} {item.unit}</span>
                                 </div>
                               ))}
@@ -2339,7 +2406,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div key={i} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid var(--border)"}}>
                                   <div style={{width:6,height:6,borderRadius:"50%",background:"#22C55E",marginTop:5,flexShrink:0}}/>
                                   <div style={{flex:1}}>
-                                    <div style={{fontSize:12,fontWeight:500,color:"#334155"}}>{a.action}</div>
+                                    <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)"}}>{a.action}</div>
                                     <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>{new Date(a.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})} · {a.user}</div>
                                   </div>
                                 </div>
@@ -2358,11 +2425,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12,lineHeight:1.6}}>An email will be sent with the full PO details. The supplier will be asked to confirm receipt.</div>
                               <div style={{marginBottom:10}}>
                                 <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Supplier email</label>
-                                <input value={order.supplierEmail||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))} placeholder="supplier@company.co.uk" style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",background:"white"}}/>
+                                <input value={order.supplierEmail||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))} placeholder="supplier@company.co.uk" style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",background:"var(--bg-card-solid)"}}/>
                               </div>
                               <div style={{marginBottom:14}}>
                                 <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Notes (optional)</label>
-                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions…" style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"white"}}/>
+                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions…" style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"var(--bg-card-solid)"}}/>
                               </div>
                               <button onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id||!order.supplierEmail} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:sendingOrder===order.id||!order.supplierEmail?"#D1FAE5":"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:sendingOrder===order.id||!order.supplierEmail?"not-allowed":"pointer",boxShadow:"0 4px 16px rgba(34,197,94,0.3)",marginBottom:8}}>
                                 {sendingOrder===order.id?<><Spinner/>Sending…</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
@@ -2381,7 +2448,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               <div style={{marginBottom:14}}>
                                 <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Attach supplier confirmation</div>
                                 <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,lineHeight:1.6}}>When the supplier emails back with an order confirmation PDF, upload it here. The order will automatically move to Confirmed.</div>
-                                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"white",border:"2px dashed #BBF7D0",borderRadius:10,padding:"16px",cursor:"pointer",fontSize:13,fontWeight:600,color:"#16A34A"}}>
+                                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"var(--bg-card-solid)",border:"2px dashed #BBF7D0",borderRadius:10,padding:"16px",cursor:"pointer",fontSize:13,fontWeight:600,color:"#16A34A"}}>
                                   📎 Upload confirmation document
                                   <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
                                 </label>
@@ -2418,7 +2485,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               {!order.confirmationDoc&&(
                                 <div style={{marginBottom:14}}>
                                   <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Attach confirmation document</div>
-                                  <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"white",border:"2px dashed #BBF7D0",borderRadius:10,padding:"14px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#16A34A"}}>
+                                  <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"var(--bg-card-solid)",border:"2px dashed #BBF7D0",borderRadius:10,padding:"14px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#16A34A"}}>
                                     📎 Upload supplier confirmation
                                     <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
                                   </label>
@@ -2517,7 +2584,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr auto",gap:12,alignItems:"end"}}>
                 {[{label:"Company name",val:"name",ph:"e.g. BSS Industrial"},{label:"Quote email",val:"email",ph:"quotes@supplier.co.uk"},{label:"Categories",val:"categories",ph:"Plumbing, HVAC"}].map(f=>(
                   <div key={f.val}>
-                    <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
+                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>{f.label}</label>
                     <input value={newSup[f.val]} onChange={e=>setNewSup(p=>({...p,[f.val]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                 ))}
@@ -2621,7 +2688,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       <div style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Supplier scorecards</div>
                       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:28}}>
                         {scorecards.map(s=>(
-                          <div key={s.name} style={{background:"white",borderRadius:16,border:"1px solid var(--border)",padding:"18px 20px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                          <div key={s.name} style={{background:"var(--bg-card-solid)",borderRadius:16,border:"1px solid var(--border)",padding:"18px 20px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
                               <div style={{width:40,height:40,background:"linear-gradient(135deg,#DCFCE7,#BBF7D0)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"#16A34A"}}>{s.name.charAt(0)}</div>
                               <span style={{fontSize:11,fontWeight:600,background:"var(--green-mint)",color:"#166534",padding:"3px 8px",borderRadius:20}}>{s.quoteCount} quote{s.quoteCount!==1?"s":""}</span>
@@ -2659,7 +2726,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{new Date(q.savedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</td>
                         <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{q.supplierName}</td>
                         <td style={{padding:"12px 14px",fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:"var(--indigo)"}}>{q.jobRef}</td>
-                        <td style={{padding:"12px 14px"}}><span style={{background:"var(--bg-subtle2)",color:"#475569",fontSize:11,fontWeight:500,padding:"3px 8px",borderRadius:20}}>{q.trade}</span></td>
+                        <td style={{padding:"12px 14px"}}><span style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",fontSize:11,fontWeight:500,padding:"3px 8px",borderRadius:20}}>{q.trade}</span></td>
                         <td style={{padding:"12px 14px"}}>
                           <div style={{display:"flex",alignItems:"center",gap:8}}>
                             <div style={{width:48,height:5,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
@@ -2699,11 +2766,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               <div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
                   <div>
-                    <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Company name (appears on POs)</label>
+                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Company name (appears on POs)</label>
                     <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Initial Mechanical Ltd" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                   <div>
-                    <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Your name (appears on emails)</label>
+                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Your name (appears on emails)</label>
                     <input value={sForm.contactName||""} onChange={e=>setSForm(p=>({...p,contactName:e.target.value}))} placeholder="e.g. Andy Smith" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                 </div>
@@ -2713,7 +2780,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <Card style={{marginBottom:20}}>
               <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>AI key — OpenRouter (free, no credit card)</div>
               <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>OpenRouter gives you free AI access. No credit card. Takes 2 minutes.</p>
-              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"#374151",lineHeight:2}}>
+              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"var(--text-secondary)",lineHeight:2}}>
                 <strong>Setup (2 minutes, completely free):</strong><br/>
                 1. Go to <a href="https://openrouter.ai/signup" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>openrouter.ai/signup</a> — sign up free, no card needed<br/>
                 2. Click your avatar → <strong>Keys</strong> → <strong>Create key</strong> — copy it<br/>
@@ -2722,7 +2789,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <span style={{color:"#9CA3AF",fontSize:12}}>Key stored only in your browser. Never sent anywhere except OpenRouter.</span>
               </div>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>OpenRouter API key</label>
+                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>OpenRouter API key</label>
                 <input type="password" value={sForm.openRouterKey||""} onChange={e=>setSForm(p=>({...p,openRouterKey:e.target.value}))} placeholder="sk-or-v1-xxxxxxxxxxxxxxxx" style={{width:"60%",padding:"9px 12px",border:`1px solid ${sForm.openRouterKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
                 {sForm.openRouterKey
                   ? <div style={{fontSize:11,color:"#059669",marginTop:4}}>✓ Key entered — AI features active</div>
@@ -2734,7 +2801,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <Card style={{marginBottom:20}}>
               <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>Email sending — Resend</div>
               <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>Free tier: 3,000 emails/month. No credit card. Works on Vercel.</p>
-              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"#374151",lineHeight:2}}>
+              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"var(--text-secondary)",lineHeight:2}}>
                 <strong>Setup (2 minutes, completely free):</strong><br/>
                 1. Go to <a href="https://resend.com" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>resend.com</a> → log in<br/>
                 2. Click <strong>API Keys</strong> → <strong>Create API Key</strong> → Full Access → copy it<br/>
@@ -2743,12 +2810,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
                 <div>
-                  <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Resend API key</label>
+                  <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Resend API key</label>
                   <input type="password" value={sForm.resendKey||""} onChange={e=>setSForm(p=>({...p,resendKey:e.target.value}))} placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx" style={{width:"100%",padding:"9px 12px",border:`1px solid ${sForm.resendKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
                   {sForm.resendKey&&<div style={{fontSize:11,color:"#059669",marginTop:4}}>✓ Key entered</div>}
                 </div>
                 <div>
-                  <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>From email address</label>
+                  <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>From email address</label>
                   <input value={sForm.fromEmail||""} onChange={e=>setSForm(p=>({...p,fromEmail:e.target.value}))} placeholder="onboarding@resend.dev" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>Use onboarding@resend.dev for now. Add your own domain in Resend later.</div>
                 </div>
@@ -2769,8 +2836,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
       {/* ══ TEMPLATE MODAL ══ */}
       {templateModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"white",borderRadius:24,padding:"28px 32px",maxWidth:520,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.2)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:24,padding:"28px 32px",maxWidth:520,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.2)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
                 <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Request templates</div>
@@ -2821,8 +2888,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
       {/* ══ DELETE CONFIRM MODAL ══ */}
       {deleteConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:"white",borderRadius:24,padding:"32px 36px",maxWidth:420,width:"90%",boxShadow:"0 24px 80px rgba(0,0,0,0.2)",border:"1px solid rgba(226,232,240,0.8)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
             <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>🗑️</div>
             <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center"}}>Delete this request?</div>
             <div style={{fontSize:13,color:"#6B7280",marginBottom:24,textAlign:"center"}}>This cannot be undone. The request and all its activity will be permanently removed.</div>
@@ -2836,21 +2903,21 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
       {/* ══ EDIT MODAL ══ */}
       {editModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:"white",borderRadius:24,padding:"32px 36px",maxWidth:540,width:"90%",boxShadow:"0 24px 80px rgba(0,0,0,0.2)",border:"1px solid rgba(226,232,240,0.8)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:540,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
             <div style={{fontSize:16,fontWeight:600,marginBottom:20}}>Edit request — {editModal.id}</div>
             <div style={{display:"grid",gap:14}}>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Job reference</label>
+                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Job reference</label>
                 <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
               </div>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Site / location</label>
+                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Site / location</label>
                 <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
               </div>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Status</label>
-                <select value={editForm.status||"draft"} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"white",outline:"none"}}>
+                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Status</label>
+                <select value={editForm.status||"draft"} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"var(--bg-card-solid)",outline:"none"}}>
                   <option value="draft">Draft</option>
                   <option value="pending">Pending quotes</option>
                   <option value="received">Quotes received</option>
@@ -2858,7 +2925,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 </select>
               </div>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Notes</label>
+                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Notes</label>
                 <textarea value={editForm.notes||""} onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))} placeholder="Add any notes about this request..." style={{width:"100%",height:80,padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
               </div>
             </div>
@@ -2872,8 +2939,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
       {/* ══ ACTIVITY LOG MODAL ══ */}
       {activityModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:"white",borderRadius:24,padding:"32px 36px",maxWidth:560,width:"90%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.2)",border:"1px solid rgba(226,232,240,0.8)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:560,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
                 <div style={{fontSize:16,fontWeight:600}}>{activityModal.id} — Activity log</div>
