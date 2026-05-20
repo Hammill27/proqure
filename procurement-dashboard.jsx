@@ -2108,7 +2108,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 </div>
 
                 <div style={{marginTop:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-                  <Btn outline onClick={()=>setStep(1)}><- Back</Btn>
+                  <Btn outline onClick={()=>setStep(1)}>← Back</Btn>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                     <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid #C7D2FE",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>💾 Save as template</button>
                     <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email >"}</Btn>
@@ -2165,7 +2165,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 )}
 
                 <div style={{display:"flex",gap:10,justifyContent:"space-between"}}>
-                  <Btn outline onClick={()=>setStep(2)}><- Back</Btn>
+                  <Btn outline onClick={()=>setStep(2)}>← Back</Btn>
                   <div style={{display:"flex",gap:10}}>
                     {settings.resendKey&&!emailRes&&(
                       <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#16A34A">
