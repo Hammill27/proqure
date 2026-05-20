@@ -387,8 +387,8 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
 const Btn = ({ onClick, disabled, color="#6366F1", outline=false, children }) => (
   <button onClick={onClick} disabled={disabled} style={{
     background: outline?"transparent": disabled?"#C7D2FE":color,
-    color: outline?"#475569":"white",
-    border: outline?"1px solid #E2E8F0":"none",
+    color: outline?"var(--text-secondary)":"white",
+    border: outline?"1px solid var(--border-solid)":"none",
     borderRadius:10, padding:"10px 22px", fontSize:13, fontWeight:600,
     cursor: disabled?"not-allowed":"pointer", opacity: disabled?0.85:1,
     display:"inline-flex", alignItems:"center", gap:7,
@@ -400,7 +400,7 @@ const Badge = ({ children, bg, text }) => (
   <span style={{ background:bg, color:text, fontSize:11, fontWeight:600, padding:"3px 11px", borderRadius:20, whiteSpace:"nowrap", letterSpacing:"0.01em" }}>{children}</span>
 );
 const Card = ({ children, style={} }) => (
-  <div style={{ background:"rgba(255,255,255,0.85)", backdropFilter:"blur(8px)", border:"1px solid rgba(226,232,240,0.8)", borderRadius:20, padding:"24px 28px", boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.04)", ...style }}>{children}</div>
+  <div style={{ background:"var(--bg-card)", backdropFilter:"blur(8px)", border:"1px solid var(--border)", borderRadius:20, padding:"24px 28px", boxShadow:"var(--shadow-sm)", ...style }}>{children}</div>
 );
 const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
@@ -897,21 +897,82 @@ ${settings.company||""}`;
 
   const isMobile = useIsMobile();
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
+  const toggleDark = () => setDarkMode(p=>{ const n=!p; localStorage.setItem("piq_dark",n?"1":"0"); return n; });
 
   // ── Render ──
   return (
-    <div style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"linear-gradient(160deg,#F8FAFC 0%,#EFF6FF 50%,#F5F3FF 100%)",minHeight:"100vh",color:"#0F172A",backgroundAttachment:"fixed"}}>
+    <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",backgroundAttachment:"fixed",transition:"background 0.4s,color 0.3s"}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-      <style>{`*{box-sizing:border-box;-webkit-font-smoothing:antialiased}
+      <style>{`
+      :root {
+        --bg-page:       linear-gradient(160deg,#F8FAFC 0%,#EFF6FF 50%,#F5F3FF 100%);
+        --bg-card:       rgba(255,255,255,0.85);
+        --bg-card-solid: #FFFFFF;
+        --bg-input:      #FFFFFF;
+        --bg-subtle:     #F8FAFC;
+        --bg-subtle2:    #F1F5F9;
+        --border:        rgba(226,232,240,0.8);
+        --border-solid:  #E2E8F0;
+        --text-primary:  #0A0F1E;
+        --text-secondary:#64748B;
+        --text-tertiary: #94A3B8;
+        --text-muted:    #CBD5E1;
+        --green:         #22C55E;
+        --green-dark:    #16A34A;
+        --green-deep:    #166534;
+        --green-light:   #DCFCE7;
+        --green-mint:    #F0FDF4;
+        --indigo:        #6366F1;
+        --indigo-light:  #EEF2FF;
+        --shadow-sm:     0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03);
+        --shadow-md:     0 4px 20px rgba(0,0,0,0.08);
+        --sidebar-bg:    linear-gradient(180deg,#0A0F1E 0%,#0D1117 60%,#0A0F1E 100%);
+        --sidebar-text:  #64748B;
+        --sidebar-active:#22C55E;
+        --sidebar-activebg: rgba(34,197,94,0.12);
+        --topbar-bg:     linear-gradient(135deg,#0A0F1E,#111827);
+        --bottombar-bg:  rgba(10,15,30,0.97);
+      }
+      [data-theme="dark"] {
+        --bg-page:       #0A0F1E;
+        --bg-card:       rgba(15,21,36,0.95);
+        --bg-card-solid: #0F1524;
+        --bg-input:      #1A2238;
+        --bg-subtle:     #131C2E;
+        --bg-subtle2:    #1A2238;
+        --border:        rgba(34,197,94,0.1);
+        --border-solid:  rgba(34,197,94,0.15);
+        --text-primary:  #F0FDF4;
+        --text-secondary:#86EFAC;
+        --text-tertiary: #4ADE80;
+        --text-muted:    #166534;
+        --green:         #4ADE80;
+        --green-dark:    #22C55E;
+        --green-deep:    #86EFAC;
+        --green-light:   rgba(34,197,94,0.12);
+        --green-mint:    rgba(34,197,94,0.06);
+        --indigo:        #818CF8;
+        --indigo-light:  rgba(99,102,241,0.12);
+        --shadow-sm:     0 1px 3px rgba(0,0,0,0.4),0 4px 16px rgba(0,0,0,0.3);
+        --shadow-md:     0 4px 20px rgba(0,0,0,0.5);
+        --sidebar-bg:    linear-gradient(180deg,#050810 0%,#060B14 60%,#050810 100%);
+        --sidebar-text:  #4ADE80;
+        --sidebar-active:#4ADE80;
+        --sidebar-activebg: rgba(74,222,128,0.1);
+        --topbar-bg:     linear-gradient(135deg,#050810,#080D16);
+        --bottombar-bg:  rgba(5,8,16,0.98);
+      }
+      *{box-sizing:border-box;-webkit-font-smoothing:antialiased}
       @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
       @keyframes spin{to{transform:rotate(360deg)}}
       @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
       @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
       ::-webkit-scrollbar{width:5px;height:5px}
       ::-webkit-scrollbar-track{background:transparent}
-      ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:99px}
-      ::selection{background:#DBEAFE;color:#1E40AF}
-      input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important}
+      ::-webkit-scrollbar-thumb{background:#374151;border-radius:99px}
+      ::selection{background:#DCFCE7;color:#166534}
+      input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important;background:var(--bg-input)!important;color:var(--text-primary)!important;border-color:var(--border-solid)!important}
       button{transition:all 0.15s ease!important}
       @media(max-width:768px){
         .desktop-only{display:none!important}
@@ -974,9 +1035,19 @@ ${settings.company||""}`;
           ))}
         </nav>
         <div style={{padding:"16px 24px",borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+          {/* Dark mode toggle with iOS-style slider */}
+          <button onClick={toggleDark} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:14}}>{darkMode?"☀️":"🌙"}</span>
+              <span style={{fontSize:12,color:darkMode?"#FCD34D":"#6B7280",fontWeight:500}}>{darkMode?"Light mode":"Dark mode"}</span>
+            </div>
+            <div style={{width:38,height:22,background:darkMode?"#22C55E":"rgba(255,255,255,0.12)",borderRadius:11,position:"relative",transition:"background 0.3s",flexShrink:0}}>
+              <div style={{position:"absolute",top:3,left:darkMode?19:3,width:16,height:16,background:"white",borderRadius:"50%",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
+            </div>
+          </button>
           <div style={{fontSize:11,background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid rgba(255,255,255,0.06)"}}>
-            <span style={{color:settings.openRouterKey?"#10B981":"#F59E0B",marginRight:6}}>●</span>
-            <span style={{color:settings.openRouterKey?"#10B981":"#F59E0B"}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · no email"):"Setup needed"}</span>
+            <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B",marginRight:6}}>●</span>
+            <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B"}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · no email"):"Setup needed"}</span>
           </div>
         </div>
       </div>
@@ -997,6 +1068,7 @@ ${settings.company||""}`;
                 📦 {orders.filter(o=>o.status==="pending-send").length}
               </button>
             )}
+            <button onClick={toggleDark} style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:16}}>{darkMode?"☀️":"🌙"}</button>
             <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"#22C55E":"#F59E0B"}}/>
           </div>
         </div>
@@ -1038,7 +1110,7 @@ ${settings.company||""}`;
               {/* Backdrop */}
               <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,bottom:68,background:"rgba(10,15,30,0.6)",backdropFilter:"blur(4px)",zIndex:198}}/>
               {/* Menu sheet */}
-              <div style={{position:"relative",zIndex:199,background:"#111827",borderRadius:"20px 20px 0 0",padding:"8px 0 12px",boxShadow:"0 -8px 40px rgba(0,0,0,0.4)"}}>
+              <div style={{position:"relative",zIndex:199,background:darkMode?"#050810":"#111827",borderRadius:"20px 20px 0 0",padding:"8px 0 12px",boxShadow:"0 -8px 40px rgba(0,0,0,0.4)"}}>
                 {/* Handle bar */}
                 <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
                 <div style={{padding:"0 8px"}}>
@@ -1052,7 +1124,7 @@ ${settings.company||""}`;
                       <div style={{width:44,height:44,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{item.icon}</div>
                       <div style={{flex:1}}>
                         <div style={{fontSize:15,fontWeight:600,color:view===item.id?"#22C55E":"white"}}>{item.label}</div>
-                        <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{item.sub}</div>
+                        <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{item.sub}</div>
                       </div>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={view===item.id?"#22C55E":"#374151"} strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
                     </button>
@@ -1076,31 +1148,60 @@ ${settings.company||""}`;
         marginLeft:isMobile?0:240,
         padding:isMobile?"76px 16px 88px":"40px 48px",
         maxWidth:isMobile?"100%":1160,
-        animation:"fadeIn 0.2s ease"
+        animation:"fadeIn 0.2s ease",
+        minHeight:"100vh"
       }}>
 
         {/* ══ DASHBOARD ══ */}
         {view==="dashboard"&&(
           <div style={{animation:"fadeIn 0.25s ease"}}>
 
-            {/* ── Top header bar ── */}
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
-              <div>
-                <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>
-                  {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+            {/* ── Hero header ── */}
+            <div style={{
+              background:darkMode?"linear-gradient(135deg,#060B14,#0A1428)":"linear-gradient(135deg,#0A0F1E,#1a2744)",
+              borderRadius:24,padding:isMobile?"24px":"36px 40px",marginBottom:24,
+              position:"relative",overflow:"hidden",
+              boxShadow:"0 8px 40px rgba(0,0,0,0.2)"
+            }}>
+              {/* Background glow */}
+              <div style={{position:"absolute",top:-60,right:-60,width:300,height:300,background:"radial-gradient(circle,rgba(34,197,94,0.15) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
+              <div style={{position:"absolute",bottom:-40,left:100,width:200,height:200,background:"radial-gradient(circle,rgba(99,102,241,0.08) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
+              <div style={{position:"relative",zIndex:1,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:16}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:600,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:8}}>
+                    {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+                  </div>
+                  <h1 style={{fontSize:isMobile?26:38,fontWeight:800,letterSpacing:"-1.5px",margin:0,color:"white",lineHeight:1.1,marginBottom:10}}>
+                    Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"} 👋
+                  </h1>
+                  <p style={{fontSize:isMobile?13:15,color:"rgba(148,163,184,0.9)",margin:0,maxWidth:480,lineHeight:1.6}}>
+                    {requests.length===0
+                      ?"Welcome to ProQuote — create your first material request to get started"
+                      :`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.${orders.filter(o=>o.status==="pending-send").length>0?` ${orders.filter(o=>o.status==="pending-send").length} PO${orders.filter(o=>o.status==="pending-send").length!==1?"s":""} ready to send.`:""}`
+                    }
+                  </p>
                 </div>
-                <h1 style={{fontSize:isMobile?24:32,fontWeight:800,letterSpacing:isMobile?"-0.5px":"-1.2px",margin:0,color:"#0A0F1E",lineHeight:1}}>
-                  Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"} 👋
-                </h1>
-                <p style={{fontSize:15,color:"#64748B",marginTop:6,fontWeight:400}}>
-                  {requests.length===0?"Ready to create your first procurement request."
-                    :`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} and ${stats.received} ready to analyse.`}
-                </p>
+                <button onClick={()=>setView("new")} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",letterSpacing:"-0.2px",whiteSpace:"nowrap",flexShrink:0}}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  New request
+                </button>
               </div>
-              <button onClick={()=>setView("new")} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:12,padding:"12px 22px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(34,197,94,0.35)",letterSpacing:"-0.2px",whiteSpace:"nowrap"}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New request
-              </button>
+
+              {/* Mini stats inside hero */}
+              <div style={{position:"relative",zIndex:1,display:"flex",gap:isMobile?12:24,marginTop:24,flexWrap:"wrap"}}>
+                {[
+                  {n:stats.total,   l:"Total requests",  c:"#94A3B8"},
+                  {n:stats.pending, l:"Awaiting quotes",  c:"#FCD34D"},
+                  {n:stats.received,l:"Quotes ready",     c:"#818CF8"},
+                  {n:stats.approved,l:"Approved POs",     c:"#4ADE80"},
+                ].map(s=>(
+                  <div key={s.l} style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:isMobile?20:28,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",color:s.c,letterSpacing:"-1px"}}>{s.n}</span>
+                    <span style={{fontSize:11,color:"rgba(148,163,184,0.7)",fontWeight:500,lineHeight:1.3}}>{s.l}</span>
+                    {!isMobile&&<div style={{width:1,height:24,background:"rgba(255,255,255,0.08)",marginLeft:8}}/>}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* ── Overdue quote reminders ── */}
@@ -1182,62 +1283,59 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             )}
 
             {/* ── Stat cards ── */}
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?12:16,marginBottom:isMobile?20:28}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
               {[
-                {label:"Total requests",  value:stats.total,    color:"#6366F1", dark:"#4338CA", light:"#EEF2FF", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>},
-                {label:"Awaiting quotes",  value:stats.pending,  color:"#F59E0B", dark:"#D97706", light:"#FFFBEB", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>},
-                {label:"Quotes received", value:stats.received,  color:"#8B5CF6", dark:"#7C3AED", light:"#F5F3FF", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth="1.8" strokeLinecap="round"><path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0l-8 5-8-5"/></svg>},
-                {label:"Approved POs",    value:stats.approved,  color:"#22C55E", dark:"#16A34A", light:"#F0FDF4", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="1.8" strokeLinecap="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>},
-              ].map((s,i)=>(
-                <div key={s.label} style={{background:"white",borderRadius:isMobile?16:20,padding:isMobile?"16px":"22px 24px",border:"1px solid #F1F5F9",position:"relative",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)",cursor:"default"}}>
-                  {/* Top row */}
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
-                    <div style={{width:40,height:40,background:s.light,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center"}}>{s.icon}</div>
-                    <div style={{fontSize:11,fontWeight:600,color:s.value>0?s.color:"#CBD5E1",background:s.value>0?s.light:"#F8FAFC",padding:"3px 10px",borderRadius:20}}>{s.value>0?"Active":"—"}</div>
+                {label:"Total requests",  value:stats.total,    color:"#6366F1", grad:"linear-gradient(135deg,#6366F1,#4338CA)", icon:"📋"},
+                {label:"Awaiting quotes", value:stats.pending,  color:"#F59E0B", grad:"linear-gradient(135deg,#F59E0B,#D97706)", icon:"⏳"},
+                {label:"Quotes received", value:stats.received, color:"#8B5CF6", grad:"linear-gradient(135deg,#8B5CF6,#7C3AED)", icon:"📬"},
+                {label:"Approved POs",    value:stats.approved, color:"#22C55E", grad:"linear-gradient(135deg,#22C55E,#16A34A)", icon:"✅"},
+              ].map(s=>(
+                <div key={s.label} style={{background:"var(--bg-card-solid)",borderRadius:16,padding:isMobile?"14px 16px":"18px 22px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                    <div style={{width:38,height:38,background:s.value>0?s.grad:"var(--bg-subtle2)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,boxShadow:s.value>0?`0 4px 12px ${s.color}33`:"none"}}>{s.icon}</div>
+                    <div style={{fontSize:9,fontWeight:700,color:s.value>0?s.color:"var(--text-muted)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{s.value>0?"active":"empty"}</div>
                   </div>
-                  {/* Number */}
-                  <div style={{fontSize:isMobile?34:44,fontWeight:800,color:s.value>0?s.dark:"#CBD5E1",fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:isMobile?"-1px":"-2px",marginBottom:6}}>{s.value}</div>
-                  <div style={{fontSize:13,color:"#94A3B8",fontWeight:500}}>{s.label}</div>
-                  {/* Bottom accent bar */}
-                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:s.value>0?`linear-gradient(90deg,${s.color},${s.dark})`:"#F1F5F9",opacity:s.value>0?1:0.5}}/>
+                  <div style={{fontSize:isMobile?28:38,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:5}}>{s.value}</div>
+                  <div style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:500}}>{s.label}</div>
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:2,background:s.value>0?s.grad:"transparent"}}/>
                 </div>
               ))}
             </div>
 
             {/* ── Quick actions ── */}
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fit,minmax(200px,1fr))",gap:isMobile?8:12,marginBottom:isMobile?20:28}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:isMobile?8:12,marginBottom:isMobile?18:24}}>
               {[
-                {label:"New material request",  sub:"Voice or type your list",        icon:"🎤", action:()=>setView("new"),      color:"#6366F1", light:"#EEF2FF"},
-                {label:"Analyse quotes",         sub:"Compare supplier responses",     icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, color:"#22C55E", light:"#F0FDF4"},
-                {label:"Manage suppliers",       sub:"Add or update supplier accounts",icon:"🏢", action:()=>setView("suppliers"), color:"#F59E0B", light:"#FFFBEB"},
-                {label:"Send orders",             sub:`${orders.filter(o=>o.status==="pending-send").length} POs ready to send`,icon:"📦", action:()=>setView("orders"),    color:"#22C55E", light:"#F0FDF4"},
+                {label:"New request",  sub:"Voice or type",              icon:"🎤", action:()=>setView("new"),      accent:"#6366F1"},
+                {label:"Analyse",      sub:"Compare supplier quotes",    icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#8B5CF6"},
+                {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#22C55E"},
+                {label:"Suppliers",    sub:"Manage accounts",            icon:"🏢", action:()=>setView("suppliers"), accent:"#F59E0B"},
               ].map(q=>(
-                <button key={q.label} onClick={q.action} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 20px",background:"white",border:"1px solid #F1F5F9",borderRadius:16,cursor:"pointer",textAlign:"left",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.15s"}}>
-                  <div style={{width:44,height:44,background:q.light,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{q.icon}</div>
+                <button key={q.label} onClick={q.action} style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"12px 14px":"18px 20px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:16,cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"all 0.15s",position:"relative",overflow:"hidden",minHeight:isMobile?90:100}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:q.accent,borderRadius:"16px 16px 0 0"}}/>
+                  <div style={{fontSize:20,marginTop:2}}>{q.icon}</div>
                   <div>
-                    <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E",marginBottom:2}}>{q.label}</div>
-                    <div style={{fontSize:12,color:"#94A3B8"}}>{q.sub}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:2}}>{q.label}</div>
+                    <div style={{fontSize:11,color:"var(--text-tertiary)",lineHeight:1.4}}>{q.sub}</div>
                   </div>
-                  <svg style={{marginLeft:"auto",flexShrink:0}} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
                 </button>
               ))}
             </div>
 
             {/* ── Requests table ── */}
-            <div style={{background:"white",borderRadius:20,border:"1px solid #F1F5F9",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
-              <div style={{padding:"20px 28px",borderBottom:"1px solid #F8FAFC",display:"flex",justifyContent:"space-between",alignItems:"center",background:"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
+            <div style={{background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
+              <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:darkMode?"rgba(34,197,94,0.04)":"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
                 <div>
-                  <div style={{fontSize:16,fontWeight:700,color:"#0A0F1E",letterSpacing:"-0.3px"}}>Recent requests</div>
-                  <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>{requests.length} total · sorted by most recent</div>
+                  <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",letterSpacing:"-0.3px"}}>Recent requests</div>
+                  <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>{requests.length} total · sorted by most recent</div>
                 </div>
-                <button onClick={()=>setView("requests")} style={{fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>View all →</button>
+                <button onClick={()=>setView("requests")} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>View all →</button>
               </div>
 
               {requests.length===0?(
                 <div style={{padding:"80px 24px",textAlign:"center"}}>
                   <div style={{width:80,height:80,background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📋</div>
-                  <div style={{fontSize:20,fontWeight:700,color:"#0A0F1E",marginBottom:8,letterSpacing:"-0.5px"}}>No requests yet</div>
-                  <div style={{fontSize:14,color:"#94A3B8",marginBottom:28,maxWidth:340,margin:"0 auto 28px",lineHeight:1.6}}>Create your first material request — speak or type what you need, and we'll send RFQs to your suppliers automatically</div>
+                  <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8,letterSpacing:"-0.5px"}}>No requests yet</div>
+                  <div style={{fontSize:14,color:"var(--text-tertiary)",marginBottom:28,maxWidth:340,margin:"0 auto 28px",lineHeight:1.6}}>Create your first material request — speak or type what you need, and we'll send RFQs to your suppliers automatically</div>
                   <button onClick={()=>setView("new")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(34,197,94,0.35)"}}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     Create first request
@@ -1251,34 +1349,34 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     const totalCount=(r.sentTo||[]).length;
                     return(
                     <div key={r.id} onClick={()=>{setActiveReq(r);setView("quotes");}} style={{display:"flex",alignItems:"center",gap:0,padding:"0 28px",borderTop:idx===0?"none":"1px solid #F8FAFC",cursor:"pointer",transition:"background 0.1s"}}
-                      onMouseEnter={e=>e.currentTarget.style.background="#FAFFFE"}
+                      onMouseEnter={e=>e.currentTarget.style.background=darkMode?"rgba(34,197,94,0.04)":"#FAFFFE"}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                       {/* Status bar */}
                       <div style={{width:3,height:40,background:sc.text,borderRadius:99,marginRight:20,flexShrink:0,opacity:0.6}}/>
                       {/* ID */}
                       <div style={{width:100,flexShrink:0,padding:"16px 0"}}>
-                        <div style={{fontSize:12,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"#6366F1"}}>{r.id}</div>
-                        <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>{r.created}</div>
+                        <div style={{fontSize:12,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"var(--indigo)"}}>{r.id}</div>
+                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:2}}>{r.created}</div>
                       </div>
                       {/* Job & site */}
                       <div style={{flex:1,padding:"16px 20px 16px 0"}}>
-                        <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E"}}>{r.jobRef}</div>
-                        <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{r.site}</div>
+                        <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{r.jobRef}</div>
+                        <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{r.site}</div>
                       </div>
                       {/* Trade badge */}
                       <div style={{width:110,padding:"16px 0",flexShrink:0}}>
-                        <span style={{background:"#F1F5F9",color:"#475569",fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:20}}>{r.trade}</span>
+                        <span style={{background:"var(--bg-subtle2)",color:"#475569",fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:20}}>{r.trade}</span>
                       </div>
                       {/* Items count */}
                       <div style={{width:80,padding:"16px 0",flexShrink:0,textAlign:"center"}}>
-                        <div style={{fontSize:15,fontWeight:700,color:"#0A0F1E"}}>{r.items.length}</div>
-                        <div style={{fontSize:11,color:"#94A3B8"}}>items</div>
+                        <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{r.items.length}</div>
+                        <div style={{fontSize:11,color:"var(--text-tertiary)"}}>items</div>
                       </div>
                       {/* Quote progress */}
                       {totalCount>0&&(
                         <div style={{width:100,padding:"16px 0",flexShrink:0,textAlign:"center"}}>
                           <div style={{fontSize:12,fontWeight:600,color:savedCount===totalCount?"#22C55E":"#F59E0B"}}>{savedCount}/{totalCount}</div>
-                          <div style={{fontSize:11,color:"#94A3B8"}}>quotes in</div>
+                          <div style={{fontSize:11,color:"var(--text-tertiary)"}}>quotes in</div>
                         </div>
                       )}
                       {/* Status + deadline */}
@@ -1294,8 +1392,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     </div>
                   )})}
                   {requests.length>8&&(
-                    <div style={{padding:"14px 28px",borderTop:"1px solid #F8FAFC",textAlign:"center"}}>
-                      <button onClick={()=>setView("requests")} style={{fontSize:13,color:"#6366F1",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all {requests.length} requests →</button>
+                    <div style={{padding:"14px 28px",borderTop:"1px solid var(--border)",textAlign:"center"}}>
+                      <button onClick={()=>setView("requests")} style={{fontSize:13,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all {requests.length} requests →</button>
                     </div>
                   )}
                 </div>
@@ -1328,12 +1426,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   {[{label:"Job reference",val:jobRef,set:setJobRef,ph:"e.g. JOB-2024-056"},{label:"Site / location",val:site,set:setSite,ph:"e.g. Unit 7, High Street"}].map(f=>(
                     <div key={f.label}>
                       <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
-                      <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                      <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                     </div>
                   ))}
                   <div>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Trade</label>
-                    <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,background:"white",outline:"none"}}>
+                    <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"white",outline:"none"}}>
                       {TRADES.map(t=><option key={t}>{t}</option>)}
                     </select>
                   </div>
@@ -1363,7 +1461,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   placeholder={"Plumbing: \"I need 20 metres of 22mm copper pipe, 12 compression elbows, 6 isolation valves for the plant room.\"\n\nElectrical: \"100m of 2.5mm twin and earth, 20 double sockets, a 10-way consumer unit and 20mm conduit.\""}
                   style={{width:"100%",height:150,padding:"12px 14px",border:`1.5px solid ${listening?"#FECACA":"#E2E8F0"}`,borderRadius:12,fontSize:13,lineHeight:1.7,resize:"vertical",outline:"none",fontFamily:"inherit",background:listening?"#FFFBFB":"white",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}/>
                 <div style={{marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"#16A34A",background:"#F0FDF4",border:"1px solid #A7F3D0",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>📋 Load template</button>
+                  <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"#16A34A",background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>📋 Load template</button>
                   <Btn onClick={handleParse} disabled={!rawInput.trim()||loading}>
                     {loading?<><Spinner/>{loadMsg}</>:"✦ Parse with AI"}
                   </Btn>
@@ -1382,7 +1480,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   {parsed.urgency&&<Badge bg={parsed.urgency==="urgent"?"#FEF3C7":"#F0FDF4"} text={parsed.urgency==="urgent"?"#92400E":"#166534"}>{parsed.urgency}</Badge>}
                 </div>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead><tr style={{background:"#F8FAFF"}}>
+                  <thead><tr style={{background:"var(--bg-subtle)"}}>
                     {["#","Description","Qty","Unit","Category","Notes (editable)"].map(h=><th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>)}
                   </tr></thead>
                   <tbody>{parsed.items?.map((item,i)=>(
@@ -1400,13 +1498,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             setParsed(p=>({...p,items:updated}));
                           }}
                           placeholder="Add note…"
-                          style={{width:"100%",padding:"5px 8px",border:"1px solid #E2E8F0",borderRadius:6,fontSize:11,outline:"none",color:"#374151",fontFamily:"inherit"}}
+                          style={{width:"100%",padding:"5px 8px",border:"1px solid var(--border-solid)",borderRadius:6,fontSize:11,outline:"none",color:"#374151",fontFamily:"inherit"}}
                         />
                       </td>
                     </tr>
                   ))}</tbody>
                 </table>
-                <div style={{marginTop:20,padding:16,background:"#F8FAFF",borderRadius:8}}>
+                <div style={{marginTop:20,padding:16,background:"var(--bg-subtle)",borderRadius:8}}>
                   <div style={{fontSize:13,fontWeight:500,marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"#6B7280",fontWeight:400}}>({trade})</span></div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                     {filteredSup.map(s=>(
@@ -1435,8 +1533,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           <label key={opt.val} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:8,border:`1.5px solid ${deliveryMethod===opt.val?"#3B82F6":"#E2E8F0"}`,background:deliveryMethod===opt.val?"#EFF6FF":"white",cursor:"pointer"}}>
                             <input type="radio" name="deliveryMethod" value={opt.val} checked={deliveryMethod===opt.val} onChange={()=>setDeliveryMethod(opt.val)} style={{accentColor:"#3B82F6",marginTop:2}}/>
                             <div>
-                              <div style={{fontSize:13,fontWeight:500,color:"#1E293B"}}>{opt.icon} {opt.label}</div>
-                              <div style={{fontSize:11,color:"#64748B",marginTop:1}}>{opt.sub}</div>
+                              <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)"}}>{opt.icon} {opt.label}</div>
+                              <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:1}}>{opt.sub}</div>
                             </div>
                           </label>
                         ))}
@@ -1450,15 +1548,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     </div>
                     <div>
                       <div style={{fontSize:12,fontWeight:500,color:"#374151",marginBottom:8}}>Required delivery date</div>
-                      <div style={{background:"white",borderRadius:10,padding:14,border:"1px solid #E2E8F0"}}>
-                        <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} min={new Date().toISOString().split("T")[0]} style={{width:"100%",padding:"10px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:14,outline:"none",color:deliveryDate?"#1E293B":"#94A3B8"}}/>
-                        <div style={{fontSize:11,color:"#94A3B8",marginTop:8}}>Leave blank if date is flexible</div>
+                      <div style={{background:"white",borderRadius:10,padding:14,border:"1px solid var(--border-solid)"}}>
+                        <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} min={new Date().toISOString().split("T")[0]} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:14,outline:"none",color:deliveryDate?"#1E293B":"#94A3B8"}}/>
+                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:8}}>Leave blank if date is flexible</div>
                         {deliveryDate&&(
-                          <div style={{marginTop:8,padding:"8px 12px",background:"#F0FDF4",borderRadius:6,fontSize:12,color:"#166534",fontWeight:500}}>
+                          <div style={{marginTop:8,padding:"8px 12px",background:"var(--green-mint)",borderRadius:6,fontSize:12,color:"#166534",fontWeight:500}}>
                             ✓ Required by {new Date(deliveryDate).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
                           </div>
                         )}
-                        <div style={{marginTop:12,fontSize:11,color:"#64748B",lineHeight:1.6}}>
+                        <div style={{marginTop:12,fontSize:11,color:"var(--text-secondary)",lineHeight:1.6}}>
                           <div style={{fontWeight:500,marginBottom:4}}>This will tell suppliers to:</div>
                           <div>• Include carriage/delivery charges in their quote</div>
                           <div>• Confirm they can meet your required date</div>
@@ -1475,7 +1573,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div style={{marginTop:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
                   <Btn outline onClick={()=>setStep(1)}>← Back</Btn>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                    <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"1px solid #C7D2FE",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>💾 Save as template</button>
+                    <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid #C7D2FE",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>💾 Save as template</button>
                     <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email →"}</Btn>
                   </div>
                 </div>
@@ -1487,7 +1585,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               <Card>
                 <div style={{fontSize:15,fontWeight:500,marginBottom:4}}>RFQ email ready</div>
                 <div style={{fontSize:13,color:"#6B7280",marginBottom:16}}>Will be sent to: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.name).join(", ")}</div>
-                <div style={{background:"#F8FAFF",border:"1px solid #E5E7EB",borderRadius:8,padding:20,marginBottom:16}}>
+                <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:8,padding:20,marginBottom:16}}>
                   <div style={{fontSize:12,color:"#9CA3AF",marginBottom:4}}>To: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.email).join(", ")}</div>
                   <div style={{fontSize:12,color:"#9CA3AF",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #E5E7EB"}}>Subject: Request for Quotation — {jobRef||parsed?.jobRef||"TBC"}</div>
                   <pre style={{fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0,color:"#374151"}}>{rfqEmail}</pre>
@@ -1538,9 +1636,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </Btn>
                     )}
                     {!settings.resendKey&&(
-                      <div style={{fontSize:13,color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}>
+                      <div style={{fontSize:13,color:"var(--text-tertiary)",display:"flex",alignItems:"center",gap:6}}>
                         <span>Configure Resend in</span>
-                        <button onClick={()=>setView("settings")} style={{color:"#6366F1",background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:13,padding:0}}>Settings</button>
+                        <button onClick={()=>setView("settings")} style={{color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:13,padding:0}}>Settings</button>
                         <span>to send emails</span>
                       </div>
                     )}
@@ -1569,13 +1667,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   <button key={r.id} onClick={()=>{setActiveReq(r);setQuoteAnalysis(null);setAllAnalyses([]);}}
                     style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${activeReq?.id===r.id?"#3B82F6":"#E5E7EB"}`,background:activeReq?.id===r.id?"#EFF6FF":"white",cursor:"pointer",marginBottom:8,transition:"all 0.15s"}}>
                     <div style={{fontSize:12,fontWeight:600,fontFamily:"'JetBrains Mono',monospace",color:"#3B82F6"}}>{r.id}</div>
-                    <div style={{fontSize:13,fontWeight:500,color:"#1E293B",marginTop:3}}>{r.jobRef}</div>
-                    <div style={{fontSize:12,color:"#64748B",marginTop:1}}>{r.trade} · {r.items.length} items</div>
+                    <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)",marginTop:3}}>{r.jobRef}</div>
+                    <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:1}}>{r.trade} · {r.items.length} items</div>
                     <div style={{marginTop:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <Badge bg={STATUS[r.status].bg} text={STATUS[r.status].text}>{STATUS[r.status].label}</Badge>
-                      {totalCount>0&&<span style={{fontSize:11,color:"#64748B"}}>{savedCount}/{totalCount} quotes in</span>}
+                      {totalCount>0&&<span style={{fontSize:11,color:"var(--text-secondary)"}}>{savedCount}/{totalCount} quotes in</span>}
                     </div>
-                    {r.notes&&<div style={{fontSize:11,color:"#94A3B8",marginTop:4,fontStyle:"italic"}}>{r.notes}</div>}
+                    {r.notes&&<div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:4,fontStyle:"italic"}}>{r.notes}</div>}
                   </button>
                   );
                 })}
@@ -1588,17 +1686,17 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
                         <div>
                           <div style={{fontSize:16,fontWeight:600,color:"#0F172A"}}>{activeReq.id} — {activeReq.jobRef}</div>
-                          <div style={{fontSize:13,color:"#64748B",marginTop:2}}>{activeReq.site} · {activeReq.trade} · {activeReq.items.length} items</div>
+                          <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:2}}>{activeReq.site} · {activeReq.trade} · {activeReq.items.length} items</div>
                         </div>
                         <div style={{display:"flex",gap:8}}>
-                          <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Edit</button>
-                          <button onClick={()=>setActivityModal(activeReq)} style={{fontSize:12,color:"#6B7280",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>📋 Log {activeReq.activity?.length?`(${activeReq.activity.length})`:""}</button>
+                          <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Edit</button>
+                          <button onClick={()=>setActivityModal(activeReq)} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>📋 Log {activeReq.activity?.length?`(${activeReq.activity.length})`:""}</button>
                           <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
                         </div>
                       </div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
                         {activeReq.items.map((item,i)=>(
-                          <span key={i} style={{background:"#F1F5F9",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#334155"}}>
+                          <span key={i} style={{background:"var(--bg-subtle2)",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#334155"}}>
                             <span style={{fontWeight:600}}>{item.quantity} {item.unit}</span> {item.description}
                           </span>
                         ))}
@@ -1611,7 +1709,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             </span>
                           )}
                           {activeReq.deliveryDate&&(
-                            <span style={{background:"#F0FDF4",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
+                            <span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
                               📅 Required by {new Date(activeReq.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}
                             </span>
                           )}
@@ -1636,7 +1734,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                           <div>
                             <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>Supplier quotes</div>
-                            <div style={{fontSize:13,color:"#64748B",marginTop:2}}>
+                            <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:2}}>
                               RFQ was sent to {activeReq.sentTo.length} supplier{activeReq.sentTo.length!==1?"s":""}. Paste each quote below, save it, then run the AI analysis.
                             </div>
                           </div>
@@ -1652,7 +1750,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div style={{width:36,height:36,background:sup.saved?"#D1FAE5":"#EFF6FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:sup.saved?"#059669":"#3B82F6"}}>{sup.name.charAt(0)}</div>
                                 <div>
                                   <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>{sup.name}</div>
-                                  <div style={{fontSize:12,color:"#64748B"}}>{sup.email}</div>
+                                  <div style={{fontSize:12,color:"var(--text-secondary)"}}>{sup.email}</div>
                                 </div>
                               </div>
                               {sup.saved
@@ -1712,7 +1810,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                         <Spinner/>
                                         <div>
                                           <div style={{fontSize:12,fontWeight:500,color:"#3B82F6"}}>AI reading document…</div>
-                                          <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>Extracting pricing and availability data</div>
+                                          <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>Extracting pricing and availability data</div>
                                         </div>
                                       </div>
                                     ):dragOver[si]?(
@@ -1723,7 +1821,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                     ):(
                                       <div>
                                         <div style={{fontSize:12,fontWeight:500,color:"#334155"}}>📎 Drag & drop supplier document here</div>
-                                        <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>PDF · Word · Excel · CSV — AI reads it and fills the box below</div>
+                                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>PDF · Word · Excel · CSV — AI reads it and fills the box below</div>
                                       </div>
                                     )}
                                   </div>
@@ -1755,7 +1853,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               style={{width:"100%",height:140,padding:"10px 12px",border:`1px solid ${sup.quote?.trim()?"#93C5FD":"#E5E7EB"}`,borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit",background:sup.saved?"#F0FDF4":sup.quote?.trim()?"#FAFBFF":"white"}}
                             />
                             <div style={{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                              <div style={{fontSize:11,color:"#94A3B8"}}>
+                              <div style={{fontSize:11,color:"var(--text-tertiary)"}}>
                                 {sup.quote?.trim()?`${sup.quote.trim().split(/\s+/).length} words entered`:"No quote entered yet"}
                               </div>
                               <div style={{display:"flex",gap:8}}>
@@ -1763,13 +1861,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                   <button onClick={()=>{
                                     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:"",saved:false}:s)}:r));
                                     setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:"",saved:false}:s)}));
-                                  }} style={{fontSize:12,color:"#94A3B8",background:"none",border:"none",cursor:"pointer"}}>Clear</button>
+                                  }} style={{fontSize:12,color:"var(--text-tertiary)",background:"none",border:"none",cursor:"pointer"}}>Clear</button>
                                 )}
                                 {sup.saved&&(
                                   <button onClick={()=>{
                                     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}:r));
                                     setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}));
-                                  }} style={{fontSize:12,color:"#64748B",background:"none",border:"1px solid #E2E8F0",borderRadius:6,padding:"6px 12px",cursor:"pointer"}}>Edit</button>
+                                  }} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"1px solid var(--border-solid)",borderRadius:6,padding:"6px 12px",cursor:"pointer"}}>Edit</button>
                                 )}
                                 <Btn
                                   disabled={!sup.quote?.trim()}
@@ -1794,7 +1892,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 : `${activeReq.sentTo.filter(s=>s.saved).length} of ${activeReq.sentTo.length} quotes saved — you can analyse now or wait for more`
                               }
                             </div>
-                            <div style={{fontSize:13,color:"#94A3B8",marginBottom:16}}>
+                            <div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:16}}>
                               AI will compare all saved quotes against your original request — pricing, availability, carriage, discounts, alternatives
                             </div>
                             <Btn onClick={handleAnalyseAll} disabled={loading} color="#3B82F6">
@@ -1807,16 +1905,16 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       /* Manual entry fallback for requests without sentTo data */
                       <Card style={{marginBottom:16}}>
                         <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Paste supplier quote</div>
-                        <div style={{fontSize:12,color:"#94A3B8",marginBottom:12}}>This request has no supplier tracking. Enter supplier name and paste their quote.</div>
+                        <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:12}}>This request has no supplier tracking. Enter supplier name and paste their quote.</div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                           <div>
                             <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Supplier name</label>
-                            <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                            <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                           </div>
                         </div>
                         <textarea value={quoteInput} onChange={e=>setQuoteInput(e.target.value)}
                           placeholder="Paste the supplier quote here..."
-                          style={{width:"100%",height:120,padding:"12px 14px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
+                          style={{width:"100%",height:120,padding:"12px 14px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
                         <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
                           <Btn onClick={handleAnalyse} disabled={!quoteInput.trim()||loading} color="#7C3AED">
                             {loading?<><Spinner/>{loadMsg}</>:"Analyse with AI →"}
@@ -1840,9 +1938,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                     {isBest&&<div style={{fontSize:10,fontWeight:700,color:"#60A5FA",marginBottom:6,letterSpacing:"0.1em"}}>⭐ RECOMMENDED</div>}
                                     <div style={{fontSize:13,fontWeight:600,color:"white",marginBottom:8}}>{a.supplierName}</div>
                                     <div style={{fontSize:22,fontWeight:700,color:verdictColor,fontFamily:"monospace"}}>{a.completeness}%</div>
-                                    <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>completeness</div>
+                                    <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:2}}>completeness</div>
                                     <div style={{fontSize:13,fontWeight:600,color:"#4ADE80",marginTop:8}}>{a.estimatedTotal||a.subtotal||"—"}</div>
-                                    <div style={{fontSize:11,color:"#94A3B8"}}>est. total inc. carriage</div>
+                                    <div style={{fontSize:11,color:"var(--text-tertiary)"}}>est. total inc. carriage</div>
                                     {a.carriageCharge&&a.carriageCharge!=="Not stated"&&<div style={{fontSize:11,color:"#FBBF24",marginTop:4}}>🚚 {a.carriageCharge}</div>}
                                     {a.missing?.length>0&&<div style={{fontSize:11,color:"#F87171",marginTop:4}}>✗ {a.missing.length} item{a.missing.length!==1?"s":""} missing</div>}
                                   </div>
@@ -1863,16 +1961,16 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           return(
                           <Card key={qa._id} style={{marginBottom:20,border:`1px solid ${verdictConfig.border}`}}>
                             {/* Quote header */}
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,paddingBottom:16,borderBottom:"1px solid #F1F5F9"}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,paddingBottom:16,borderBottom:"1px solid var(--border)"}}>
                               <div>
                                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
                                   <div style={{fontSize:17,fontWeight:700,color:"#0F172A"}}>{qa.supplierName}</div>
                                   <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
                                 </div>
-                                <div style={{fontSize:13,color:"#64748B"}}>{qa.recommendation}</div>
+                                <div style={{fontSize:13,color:"var(--text-secondary)"}}>{qa.recommendation}</div>
                               </div>
                               <div style={{textAlign:"right",flexShrink:0,marginLeft:20}}>
-                                <div style={{fontSize:11,color:"#94A3B8",marginBottom:2}}>Completeness</div>
+                                <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:2}}>Completeness</div>
                                 <div style={{fontSize:32,fontWeight:700,fontFamily:"monospace",color:qa.completeness>=80?"#059669":qa.completeness>=60?"#D97706":"#DC2626",lineHeight:1}}>{qa.completeness}%</div>
                               </div>
                             </div>
@@ -1880,13 +1978,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {/* Financial summary strip */}
                             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
                               {[
-                                {label:"Subtotal (ex VAT)",value:qa.subtotal||"—",color:"#1E293B"},
+                                {label:"Subtotal (ex VAT)",value:qa.subtotal||"—",color:"var(--text-primary)"},
                                 {label:"Carriage / delivery",value:qa.carriageCharge||"Not stated",color:qa.carriageCharge==="Free"?"#059669":qa.carriageCharge==="Not stated"?"#94A3B8":"#DC2626"},
                                 {label:"Estimated total",value:qa.estimatedTotal||qa.subtotal||"—",color:"#0F172A",bold:true},
-                                {label:"Lead time",value:qa.leadTime||"Not stated",color:"#64748B"},
+                                {label:"Lead time",value:qa.leadTime||"Not stated",color:"var(--text-secondary)"},
                               ].map(f=>(
-                                <div key={f.label} style={{background:"#F8FAFC",borderRadius:10,padding:"12px 14px"}}>
-                                  <div style={{fontSize:11,color:"#94A3B8",marginBottom:4,fontWeight:500}}>{f.label}</div>
+                                <div key={f.label} style={{background:"var(--bg-subtle)",borderRadius:10,padding:"12px 14px"}}>
+                                  <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:4,fontWeight:500}}>{f.label}</div>
                                   <div style={{fontSize:14,fontWeight:f.bold?700:500,color:f.color}}>{f.value}</div>
                                 </div>
                               ))}
@@ -1894,7 +1992,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
                             {/* Positives */}
                             {qa.positives?.length>0&&(
-                              <div style={{background:"#F0FDF4",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:8}}>
+                              <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:8}}>
                                 {qa.positives.map((p,i)=>(
                                   <span key={i} style={{fontSize:12,color:"#166534",display:"flex",alignItems:"center",gap:4}}>✓ {p}</span>
                                 ))}
@@ -1919,7 +2017,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div style={{fontSize:12,fontWeight:600,color:"#059669",marginBottom:8}}>✓ Quoted items ({qa.matched.length})</div>
                                 <div style={{overflowX:"auto"}}>
                                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                                    <thead><tr style={{background:"#F0FDF4"}}>
+                                    <thead><tr style={{background:"var(--green-mint)"}}>
                                       {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty ✓","Notes"].map(h=>(
                                         <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:600,color:"#374151",whiteSpace:"nowrap"}}>{h}</th>
                                       ))}
@@ -1927,7 +2025,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                     <tbody>{qa.matched.map((m,i)=>(
                                       <tr key={i} style={{borderTop:"1px solid #F3F4F6",background:i%2===0?"white":"#FAFAFA"}}>
                                         <td style={{padding:"9px 10px",fontWeight:500,color:"#0F172A"}}>{m.item}</td>
-                                        <td style={{padding:"9px 10px",color:"#64748B",fontFamily:"monospace",fontSize:12}}>{m.requestedQty} {m.requestedUnit}</td>
+                                        <td style={{padding:"9px 10px",color:"var(--text-secondary)",fontFamily:"monospace",fontSize:12}}>{m.requestedQty} {m.requestedUnit}</td>
                                         <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,color:m.qtyMatch?"#0F172A":"#DC2626",fontWeight:m.qtyMatch?400:600}}>{m.quotedQty||m.requestedQty} {m.quotedUnit||m.requestedUnit}</td>
                                         <td style={{padding:"9px 10px",fontWeight:600,color:"#059669",fontFamily:"monospace",fontSize:12}}>{m.unitPrice||m.quotedPrice||"—"}</td>
                                         <td style={{padding:"9px 10px",fontWeight:600,color:"#0F172A",fontFamily:"monospace",fontSize:12}}>{m.lineTotal||"—"}</td>
@@ -1940,7 +2038,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                             : <span style={{fontSize:11,color:"#059669"}}>✓ Match</span>
                                           }
                                         </td>
-                                        <td style={{padding:"9px 10px",fontSize:12,color:"#64748B"}}>{m.notes||"—"}</td>
+                                        <td style={{padding:"9px 10px",fontSize:12,color:"var(--text-secondary)"}}>{m.notes||"—"}</td>
                                       </tr>
                                     ))}</tbody>
                                   </table>
@@ -1968,9 +2066,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <div style={{fontSize:12,fontWeight:600,color:"#0369A1",marginBottom:8}}>💡 Alternative options offered</div>
                                 {qa.alternatives.map((a,i)=>(
                                   <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"white",borderRadius:8,border:"1px solid #E0F2FE"}}>
-                                    <div style={{fontSize:12,color:"#64748B"}}>Instead of: <span style={{fontWeight:500,color:"#0F172A"}}>{a.requestedItem}</span></div>
+                                    <div style={{fontSize:12,color:"var(--text-secondary)"}}>Instead of: <span style={{fontWeight:500,color:"#0F172A"}}>{a.requestedItem}</span></div>
                                     <div style={{fontSize:13,fontWeight:500,color:"#0369A1",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>— {a.altPrice}</span>}</div>
-                                    {a.reason&&<div style={{fontSize:12,color:"#64748B",marginTop:2}}>{a.reason}</div>}
+                                    {a.reason&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{a.reason}</div>}
                                     {a.recommended&&<span style={{fontSize:10,background:"#0369A1",color:"white",padding:"1px 7px",borderRadius:10,marginTop:4,display:"inline-block"}}>AI recommends</span>}
                                   </div>
                                 ))}
@@ -1986,10 +2084,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             )}
 
                             {/* VAT note */}
-                            {qa.vatNote&&<div style={{fontSize:12,color:"#94A3B8",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
+                            {qa.vatNote&&<div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
 
                             {/* Action buttons — smart conditional */}
-                            <div style={{paddingTop:16,borderTop:"1px solid #F1F5F9"}}>
+                            <div style={{paddingTop:16,borderTop:"1px solid var(--border)"}}>
                               {approvedQuoteId===qa._id ? (
                                 /* ── This quote IS the approved one ── */
                                 <div>
@@ -2003,14 +2101,14 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                       ↩ Undo approval
                                     </button>
                                   </div>
-                                  <button onClick={()=>setView("orders")} style={{fontSize:13,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600}}>
+                                  <button onClick={()=>setView("orders")} style={{fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600}}>
                                     View in Orders →
                                   </button>
                                 </div>
                               ) : approvedQuoteId && approvedQuoteId!==qa._id ? (
                                 /* ── Another quote has been approved — show reduced options ── */
                                 <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                                  <div style={{fontSize:12,color:"#94A3B8",flex:1}}>Another quote has been approved for this job.</div>
+                                  <div style={{fontSize:12,color:"var(--text-tertiary)",flex:1}}>Another quote has been approved for this job.</div>
                                   <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft</Btn>
                                   <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
                                 </div>
@@ -2022,7 +2120,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                     <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft PDF</Btn>
                                     <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
                                   </div>
-                                  <div style={{fontSize:11,color:"#94A3B8"}}>
+                                  <div style={{fontSize:11,color:"var(--text-tertiary)"}}>
                                     Approving generates the PO, sends it to Orders for dispatch, and locks this quote. Other quotes will show reduced options.
                                   </div>
                                 </div>
@@ -2038,7 +2136,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
                         <div>
                           <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>📎 Documents</div>
-                          <div style={{fontSize:12,color:"#64748B",marginTop:2}}>Generated POs, draft quotes, and uploaded third-party documents</div>
+                          <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Generated POs, draft quotes, and uploaded third-party documents</div>
                         </div>
                         <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"#EFF6FF",color:"#2563EB",fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,cursor:"pointer",border:"1px solid #BFDBFE"}}>
                           ↑ Upload document
@@ -2047,7 +2145,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
 
                       {(!activeReq.documents||activeReq.documents.length===0)?(
-                        <div style={{textAlign:"center",padding:"30px 0",color:"#94A3B8",fontSize:13}}>
+                        <div style={{textAlign:"center",padding:"30px 0",color:"var(--text-tertiary)",fontSize:13}}>
                           <div style={{fontSize:28,marginBottom:8}}>📄</div>
                           No documents yet — approve a quote to generate a PO, save a draft, or upload a third-party document
                         </div>
@@ -2060,11 +2158,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               uploaded: { bg:"#DBEAFE", text:"#1E40AF", icon:"↑", label:"Uploaded" },
                             }[doc.type]||{ bg:"#F1F5F9", text:"#475569", icon:"📄", label:"Document" };
                             return(
-                              <div key={doc.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:"1px solid #F1F5F9"}}>
+                              <div key={doc.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:"1px solid var(--border)"}}>
                                 <div style={{width:38,height:38,background:typeConfig.bg,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:typeConfig.text,flexShrink:0}}>{typeConfig.icon}</div>
                                 <div style={{flex:1,minWidth:0}}>
                                   <div style={{fontSize:13,fontWeight:500,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.label}</div>
-                                  <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{doc.supplier&&`${doc.supplier} · `}{doc.date}{doc.fileSize&&` · ${doc.fileSize}`}</div>
+                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{doc.supplier&&`${doc.supplier} · `}{doc.date}{doc.fileSize&&` · ${doc.fileSize}`}</div>
                                 </div>
                                 <span style={{background:typeConfig.bg,color:typeConfig.text,fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:12,flexShrink:0}}>{typeConfig.label}</span>
                                 {doc.dataUrl&&(
@@ -2095,8 +2193,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
               <div>
                 <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>ORDER MANAGEMENT</div>
-                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"#0A0F1E"}}>Orders</h1>
-                <p style={{fontSize:15,color:"#64748B",marginTop:6}}>Send approved purchase orders to suppliers and track their status</p>
+                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"var(--text-primary)"}}>Orders</h1>
+                <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Send approved purchase orders to suppliers and track their status</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -2115,10 +2213,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             </div>
 
             {orders.length===0?(
-              <div style={{background:"white",borderRadius:24,border:"1px solid #F1F5F9",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+              <div style={{background:"var(--bg-card-solid)",borderRadius:24,border:"1px solid var(--border)",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
                 <div style={{width:80,height:80,background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📦</div>
-                <div style={{fontSize:20,fontWeight:700,color:"#0A0F1E",marginBottom:8,letterSpacing:"-0.5px"}}>No orders yet</div>
-                <div style={{fontSize:14,color:"#94A3B8",maxWidth:380,margin:"0 auto 28px",lineHeight:1.7}}>
+                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8,letterSpacing:"-0.5px"}}>No orders yet</div>
+                <div style={{fontSize:14,color:"var(--text-tertiary)",maxWidth:380,margin:"0 auto 28px",lineHeight:1.7}}>
                   Orders appear here when you approve a PO in Quote Analysis, or when you promote an uploaded document to an order. Once here, send them directly to your supplier with one click.
                 </div>
                 <button onClick={()=>setView("quotes")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(99,102,241,0.3)"}}>
@@ -2130,9 +2228,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 {orders.map(order=>{
                   const STATUS_STEPS = [
                     {key:"pending-send", label:"Ready to send", icon:"📦", color:"#22C55E", bg:"#F0FDF4"},
-                    {key:"sent",         label:"Sent",          icon:"✈️", color:"#6366F1", bg:"#EEF2FF"},
+                    {key:"sent",         label:"Sent",          icon:"✈️", color:"var(--indigo)", bg:"#EEF2FF"},
                     {key:"confirmed",    label:"Confirmed",     icon:"✅", color:"#059669", bg:"#DCFCE7"},
-                    {key:"delivered",    label:"Delivered",     icon:"🏁", color:"#0A0F1E", bg:"#F1F5F9"},
+                    {key:"delivered",    label:"Delivered",     icon:"🏁", color:"var(--text-primary)", bg:"#F1F5F9"},
                   ];
                   const stepIdx = STATUS_STEPS.findIndex(s=>s.key===order.status);
                   const currentStep = STATUS_STEPS[stepIdx]||STATUS_STEPS[0];
@@ -2145,30 +2243,30 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   <div key={order.id} style={{background:"white",borderRadius:20,border:`1px solid ${isConfirmed?"#A7F3D0":isPending?"#BBF7D0":isSent?"#E0E7FF":"#F1F5F9"}`,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
 
                     {/* ── Order header ── */}
-                    <div style={{padding:"20px 28px",borderBottom:"1px solid #F8FAFC",display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,${currentStep.bg},#FAFFFE)`}}>
+                    <div style={{padding:"20px 28px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:`linear-gradient(135deg,${currentStep.bg},#FAFFFE)`}}>
                       <div style={{display:"flex",alignItems:"center",gap:16}}>
                         <div style={{width:48,height:48,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":isConfirmed?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#374151,#1F2937)",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,boxShadow:`0 4px 12px ${currentStep.color}30`}}>
                           {currentStep.icon}
                         </div>
                         <div>
                           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-                            <span style={{fontSize:16,fontWeight:700,color:"#0A0F1E",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
+                            <span style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
                             <span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,background:currentStep.bg,color:currentStep.color,border:`1px solid ${currentStep.color}30`}}>
                               {currentStep.label}
                             </span>
                           </div>
-                          <div style={{fontSize:13,color:"#64748B"}}>{order.jobRef} · {order.site} · {order.trade}</div>
+                          <div style={{fontSize:13,color:"var(--text-secondary)"}}>{order.jobRef} · {order.site} · {order.trade}</div>
                         </div>
                       </div>
                       <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:13,fontWeight:600,color:"#0A0F1E"}}>{order.supplier}</div>
-                        <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>{order.supplierEmail||"No email set"}</div>
-                        <div style={{fontSize:11,color:"#CBD5E1",marginTop:2}}>{order.poDate}</div>
+                        <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{order.supplier}</div>
+                        <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>{order.supplierEmail||"No email set"}</div>
+                        <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>{order.poDate}</div>
                       </div>
                     </div>
 
                     {/* ── Status timeline ── */}
-                    <div style={{padding:"16px 28px",borderBottom:"1px solid #F8FAFC",background:"#FAFFFE"}}>
+                    <div style={{padding:"16px 28px",borderBottom:"1px solid var(--border)",background:"#FAFFFE"}}>
                       <div style={{display:"flex",alignItems:"center",gap:0}}>
                         {STATUS_STEPS.map((step,si)=>{
                           const done = si<=stepIdx;
@@ -2177,9 +2275,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             <div key={step.key} style={{display:"flex",alignItems:"center",flex:si<STATUS_STEPS.length-1?1:"none"}}>
                               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                                 <div style={{width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,background:done?step.color:"#F1F5F9",boxShadow:active?`0 0 0 4px ${step.color}20`:"none",transition:"all 0.3s",flexShrink:0}}>
-                                  {done?<span style={{fontSize:12}}>{si<stepIdx?"✓":step.icon}</span>:<span style={{fontSize:12,color:"#CBD5E1"}}>○</span>}
+                                  {done?<span style={{fontSize:12}}>{si<stepIdx?"✓":step.icon}</span>:<span style={{fontSize:12,color:"var(--text-muted)"}}>○</span>}
                                 </div>
-                                <span style={{fontSize:9,fontWeight:active?700:400,color:active?step.color:"#94A3B8",whiteSpace:"nowrap"}}>{step.label}</span>
+                                <span style={{fontSize:9,fontWeight:active?700:400,color:active?step.color:"var(--text-tertiary)",whiteSpace:"nowrap"}}>{step.label}</span>
                               </div>
                               {si<STATUS_STEPS.length-1&&(
                                 <div style={{flex:1,height:2,background:si<stepIdx?"#22C55E":"#F1F5F9",margin:"0 4px",marginBottom:14,transition:"background 0.3s"}}/>
@@ -2197,12 +2295,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         {/* Left — details + activity */}
                         <div>
                           <div style={{marginBottom:16}}>
-                            <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Items ordered ({order.items?.length||0})</div>
-                            <div style={{background:"#F8FAFC",borderRadius:10,padding:"12px 14px",maxHeight:120,overflowY:"auto"}}>
+                            <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Items ordered ({order.items?.length||0})</div>
+                            <div style={{background:"var(--bg-subtle)",borderRadius:10,padding:"12px 14px",maxHeight:120,overflowY:"auto"}}>
                               {(order.items||[]).map((item,i)=>(
                                 <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:i<order.items.length-1?"1px solid #F1F5F9":"none"}}>
                                   <span style={{fontSize:13,color:"#334155"}}>{item.description}</span>
-                                  <span style={{fontSize:13,fontWeight:600,color:"#0A0F1E",fontFamily:"'JetBrains Mono',monospace"}}>{item.quantity} {item.unit}</span>
+                                  <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{item.quantity} {item.unit}</span>
                                 </div>
                               ))}
                             </div>
@@ -2210,10 +2308,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
                           {(order.deliveryMethod||order.deliveryDate)&&(
                             <div style={{marginBottom:16}}>
-                              <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Delivery</div>
+                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Delivery</div>
                               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                                 {order.deliveryMethod&&<span style={{background:"#F0F9FF",border:"1px solid #BAE6FD",color:"#0369A1",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🚚 {{"direct":"To site","alternative":"Alt. address","collect":"Collect","tbc":"TBC"}[order.deliveryMethod]||order.deliveryMethod}</span>}
-                                {order.deliveryDate&&<span style={{background:"#F0FDF4",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>📅 {new Date(order.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
+                                {order.deliveryDate&&<span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>📅 {new Date(order.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
                                 {order.expectedDelivery&&<span style={{background:"#FFFBEB",border:"1px solid #FDE68A",color:"#92400E",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🗓 Expected {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
                               </div>
                             </div>
@@ -2221,13 +2319,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
                           {/* Confirmation document */}
                           {order.confirmationDoc&&(
-                            <div style={{marginBottom:16,background:"#F0FDF4",border:"1px solid #A7F3D0",borderRadius:10,padding:"12px 14px"}}>
+                            <div style={{marginBottom:16,background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:10,padding:"12px 14px"}}>
                               <div style={{fontSize:12,fontWeight:600,color:"#166534",marginBottom:6}}>✅ Supplier confirmation attached</div>
                               <div style={{display:"flex",alignItems:"center",gap:10}}>
                                 <div style={{width:32,height:32,background:"#D1FAE5",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📎</div>
                                 <div style={{flex:1}}>
-                                  <div style={{fontSize:12,fontWeight:500,color:"#0A0F1E"}}>{order.confirmationDoc.label}</div>
-                                  <div style={{fontSize:11,color:"#64748B"}}>{order.confirmationDoc.date} · {order.confirmationDoc.fileSize}</div>
+                                  <div style={{fontSize:12,fontWeight:500,color:"var(--text-primary)"}}>{order.confirmationDoc.label}</div>
+                                  <div style={{fontSize:11,color:"var(--text-secondary)"}}>{order.confirmationDoc.date} · {order.confirmationDoc.fileSize}</div>
                                 </div>
                                 <a href={order.confirmationDoc.dataUrl} download={order.confirmationDoc.label} style={{fontSize:11,color:"#059669",fontWeight:600,textDecoration:"none",background:"#D1FAE5",padding:"4px 10px",borderRadius:6}}>Download</a>
                               </div>
@@ -2236,13 +2334,13 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
                           {order.activity?.length>0&&(
                             <div>
-                              <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Activity</div>
+                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Activity</div>
                               {order.activity.slice(-4).reverse().map((a,i)=>(
-                                <div key={i} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid #F8FAFC"}}>
+                                <div key={i} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid var(--border)"}}>
                                   <div style={{width:6,height:6,borderRadius:"50%",background:"#22C55E",marginTop:5,flexShrink:0}}/>
                                   <div style={{flex:1}}>
                                     <div style={{fontSize:12,fontWeight:500,color:"#334155"}}>{a.action}</div>
-                                    <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>{new Date(a.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})} · {a.user}</div>
+                                    <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>{new Date(a.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})} · {a.user}</div>
                                   </div>
                                 </div>
                               ))}
@@ -2251,20 +2349,20 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         </div>
 
                         {/* Right — action panel */}
-                        <div style={{background:"#F8FAFC",borderRadius:14,padding:"20px"}}>
+                        <div style={{background:"var(--bg-subtle)",borderRadius:14,padding:"20px"}}>
 
                           {/* PENDING — send panel */}
                           {isPending&&(
                             <>
-                              <div style={{fontSize:13,fontWeight:600,color:"#0A0F1E",marginBottom:4}}>Send this order to supplier</div>
-                              <div style={{fontSize:12,color:"#64748B",marginBottom:12,lineHeight:1.6}}>An email will be sent with the full PO details. The supplier will be asked to confirm receipt.</div>
+                              <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Send this order to supplier</div>
+                              <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12,lineHeight:1.6}}>An email will be sent with the full PO details. The supplier will be asked to confirm receipt.</div>
                               <div style={{marginBottom:10}}>
-                                <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Supplier email</label>
-                                <input value={order.supplierEmail||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))} placeholder="supplier@company.co.uk" style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",background:"white"}}/>
+                                <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Supplier email</label>
+                                <input value={order.supplierEmail||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))} placeholder="supplier@company.co.uk" style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",background:"white"}}/>
                               </div>
                               <div style={{marginBottom:14}}>
-                                <label style={{fontSize:11,fontWeight:600,color:"#64748B",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Notes (optional)</label>
-                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions…" style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"white"}}/>
+                                <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Notes (optional)</label>
+                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions…" style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"white"}}/>
                               </div>
                               <button onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id||!order.supplierEmail} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:sendingOrder===order.id||!order.supplierEmail?"#D1FAE5":"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:sendingOrder===order.id||!order.supplierEmail?"not-allowed":"pointer",boxShadow:"0 4px 16px rgba(34,197,94,0.3)",marginBottom:8}}>
                                 {sendingOrder===order.id?<><Spinner/>Sending…</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
@@ -2275,36 +2373,36 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           {/* SENT — awaiting confirmation */}
                           {isSent&&(
                             <>
-                              <div style={{background:"#EEF2FF",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+                              <div style={{background:"var(--indigo-light)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
                                 <div style={{fontSize:13,fontWeight:600,color:"#4338CA",marginBottom:2}}>✈️ Order sent</div>
-                                <div style={{fontSize:11,color:"#6366F1"}}>Sent to {order.supplierEmail} · {order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</div>
+                                <div style={{fontSize:11,color:"var(--indigo)"}}>Sent to {order.supplierEmail} · {order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</div>
                               </div>
 
                               <div style={{marginBottom:14}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Attach supplier confirmation</div>
-                                <div style={{fontSize:12,color:"#64748B",marginBottom:10,lineHeight:1.6}}>When the supplier emails back with an order confirmation PDF, upload it here. The order will automatically move to Confirmed.</div>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Attach supplier confirmation</div>
+                                <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,lineHeight:1.6}}>When the supplier emails back with an order confirmation PDF, upload it here. The order will automatically move to Confirmed.</div>
                                 <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"white",border:"2px dashed #BBF7D0",borderRadius:10,padding:"16px",cursor:"pointer",fontSize:13,fontWeight:600,color:"#16A34A"}}>
                                   📎 Upload confirmation document
                                   <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
                                 </label>
-                                <div style={{fontSize:11,color:"#94A3B8",marginTop:6,textAlign:"center"}}>PDF, Word, or image — drag and drop or click to browse</div>
+                                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:6,textAlign:"center"}}>PDF, Word, or image — drag and drop or click to browse</div>
                               </div>
 
                               <div style={{marginBottom:10}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Expected delivery date</div>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Expected delivery date</div>
                                 <input type="date" value={expectedDelivery[order.id]||""} onChange={e=>{
                                   setExpectedDelivery(p=>({...p,[order.id]:e.target.value}));
                                   setOrders(p=>p.map(o=>o.id===order.id?{...o,expectedDelivery:e.target.value}:o));
-                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none"}}/>
+                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none"}}/>
                               </div>
 
                               <div style={{display:"flex",gap:8}}>
-                                <button onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"pending-send"}:o))} style={{flex:1,fontSize:12,color:"#6366F1",background:"#EEF2FF",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Resend</button>
+                                <button onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"pending-send"}:o))} style={{flex:1,fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Resend</button>
                                 <button onClick={()=>{
                                   const entry={ts:new Date().toISOString(),action:"Manually marked as confirmed",detail:"No document uploaded",user:settings.contactName||"You"};
                                   setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",activity:[...(o.activity||[]),entry]}:o));
                                   showToast("Order marked as confirmed");
-                                }} style={{flex:1,fontSize:12,color:"#059669",background:"#DCFCE7",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Mark confirmed</button>
+                                }} style={{flex:1,fontSize:12,color:"#059669",background:"var(--green-light)",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Mark confirmed</button>
                               </div>
                             </>
                           )}
@@ -2312,14 +2410,14 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           {/* CONFIRMED — awaiting delivery */}
                           {isConfirmed&&(
                             <>
-                              <div style={{background:"#F0FDF4",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+                              <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
                                 <div style={{fontSize:13,fontWeight:600,color:"#166534",marginBottom:2}}>✅ Order confirmed by supplier</div>
                                 {order.expectedDelivery&&<div style={{fontSize:11,color:"#16A34A"}}>Expected delivery: {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>}
                               </div>
 
                               {!order.confirmationDoc&&(
                                 <div style={{marginBottom:14}}>
-                                  <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Attach confirmation document</div>
+                                  <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Attach confirmation document</div>
                                   <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"white",border:"2px dashed #BBF7D0",borderRadius:10,padding:"14px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#16A34A"}}>
                                     📎 Upload supplier confirmation
                                     <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
@@ -2328,11 +2426,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                               )}
 
                               <div style={{marginBottom:10}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#0A0F1E",marginBottom:6}}>Expected delivery date</div>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Expected delivery date</div>
                                 <input type="date" value={expectedDelivery[order.id]||order.expectedDelivery||""} onChange={e=>{
                                   setExpectedDelivery(p=>({...p,[order.id]:e.target.value}));
                                   setOrders(p=>p.map(o=>o.id===order.id?{...o,expectedDelivery:e.target.value}:o));
-                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid #E2E8F0",borderRadius:8,fontSize:13,outline:"none"}}/>
+                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none"}}/>
                               </div>
 
                               <button onClick={()=>{
@@ -2369,15 +2467,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
             {/* Promote uploaded docs to orders */}
             {requests.some(r=>(r.documents||[]).some(d=>d.type==="uploaded"&&!orders.find(o=>o.id===d.id)))&&(
-              <div style={{marginTop:24,background:"white",borderRadius:20,border:"1px solid #F1F5F9",padding:"20px 28px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-                <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E",marginBottom:4}}>Uploaded documents ready to send</div>
-                <div style={{fontSize:13,color:"#64748B",marginBottom:16}}>These documents were uploaded to jobs but haven't been sent as orders yet</div>
+              <div style={{marginTop:24,background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",padding:"20px 28px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Uploaded documents ready to send</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:16}}>These documents were uploaded to jobs but haven't been sent as orders yet</div>
                 {requests.flatMap(r=>(r.documents||[]).filter(d=>d.type==="uploaded"&&!orders.find(o=>o.id===d.id)).map(d=>({...d,_req:r}))).map((d,i)=>(
                   <div key={d.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderTop:i>0?"1px solid #F8FAFC":"none"}}>
-                    <div style={{width:40,height:40,background:"#EEF2FF",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>📎</div>
+                    <div style={{width:40,height:40,background:"var(--indigo-light)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>📎</div>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:500,color:"#0A0F1E"}}>{d.label}</div>
-                      <div style={{fontSize:12,color:"#64748B"}}>{d._req.jobRef} · {d._req.site} · {d.date}</div>
+                      <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)"}}>{d.label}</div>
+                      <div style={{fontSize:12,color:"var(--text-secondary)"}}>{d._req.jobRef} · {d._req.site} · {d.date}</div>
                     </div>
                     <button onClick={()=>handleCreateOrderFromDoc(d,d._req)} style={{background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
                       Add to Orders →
@@ -2420,7 +2518,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 {[{label:"Company name",val:"name",ph:"e.g. BSS Industrial"},{label:"Quote email",val:"email",ph:"quotes@supplier.co.uk"},{label:"Categories",val:"categories",ph:"Plumbing, HVAC"}].map(f=>(
                   <div key={f.val}>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{f.label}</label>
-                    <input value={newSup[f.val]} onChange={e=>setNewSup(p=>({...p,[f.val]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                    <input value={newSup[f.val]} onChange={e=>setNewSup(p=>({...p,[f.val]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                 ))}
                 <Btn onClick={()=>{
@@ -2443,7 +2541,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             </div>
             <Card style={{padding:0,overflow:"hidden"}}>
               <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:isMobile?600:"auto"}}>
-                <thead><tr style={{background:"#F8FAFF"}}>
+                <thead><tr style={{background:"var(--bg-subtle)"}}>
                   {["Request","Job ref","Site","Trade","Items","Status","Created","Action"].map(h=>(
                     <th key={h} style={{padding:"12px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
                   ))}
@@ -2480,11 +2578,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
               <div>
                 <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>PRICE HISTORY</div>
-                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"#0A0F1E"}}>Quote Library</h1>
-                <p style={{fontSize:15,color:"#64748B",marginTop:6}}>Every supplier quote ever received — track price changes over time</p>
+                <h1 style={{fontSize:32,fontWeight:800,letterSpacing:"-1.2px",margin:0,color:"var(--text-primary)"}}>Quote Library</h1>
+                <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Every supplier quote ever received — track price changes over time</p>
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"#166534",fontWeight:500}}>
+                <div style={{background:"var(--green-mint)",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"#166534",fontWeight:500}}>
                   {quoteLibrary.length} quotes saved
                 </div>
                 {quoteLibrary.length>0&&(
@@ -2496,10 +2594,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             </div>
 
             {quoteLibrary.length===0?(
-              <div style={{background:"white",borderRadius:24,border:"1px solid #F1F5F9",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+              <div style={{background:"var(--bg-card-solid)",borderRadius:24,border:"1px solid var(--border)",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
                 <div style={{width:80,height:80,background:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📚</div>
-                <div style={{fontSize:20,fontWeight:700,color:"#0A0F1E",marginBottom:8}}>No quotes saved yet</div>
-                <div style={{fontSize:14,color:"#94A3B8",maxWidth:380,margin:"0 auto",lineHeight:1.7}}>
+                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>No quotes saved yet</div>
+                <div style={{fontSize:14,color:"var(--text-tertiary)",maxWidth:380,margin:"0 auto",lineHeight:1.7}}>
                   Every time you run AI analysis on a supplier quote, it gets saved here automatically. You can then track pricing trends and compare against previous quotes.
                 </div>
               </div>
@@ -2520,23 +2618,23 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   const scorecards = Object.values(bySupplier).sort((a,b)=>b.quoteCount-a.quoteCount);
                   return(
                     <div>
-                      <div style={{fontSize:13,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Supplier scorecards</div>
+                      <div style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Supplier scorecards</div>
                       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:28}}>
                         {scorecards.map(s=>(
-                          <div key={s.name} style={{background:"white",borderRadius:16,border:"1px solid #F1F5F9",padding:"18px 20px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                          <div key={s.name} style={{background:"white",borderRadius:16,border:"1px solid var(--border)",padding:"18px 20px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
                               <div style={{width:40,height:40,background:"linear-gradient(135deg,#DCFCE7,#BBF7D0)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"#16A34A"}}>{s.name.charAt(0)}</div>
-                              <span style={{fontSize:11,fontWeight:600,background:"#F0FDF4",color:"#166534",padding:"3px 8px",borderRadius:20}}>{s.quoteCount} quote{s.quoteCount!==1?"s":""}</span>
+                              <span style={{fontSize:11,fontWeight:600,background:"var(--green-mint)",color:"#166534",padding:"3px 8px",borderRadius:20}}>{s.quoteCount} quote{s.quoteCount!==1?"s":""}</span>
                             </div>
-                            <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E",marginBottom:8}}>{s.name}</div>
+                            <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>{s.name}</div>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                              <div style={{fontSize:12,color:"#64748B"}}>Avg. completeness</div>
+                              <div style={{fontSize:12,color:"var(--text-secondary)"}}>Avg. completeness</div>
                               <div style={{fontSize:18,fontWeight:700,color:s.avgCompleteness>=80?"#22C55E":s.avgCompleteness>=60?"#F59E0B":"#DC2626",fontFamily:"'JetBrains Mono',monospace"}}>{s.avgCompleteness}%</div>
                             </div>
-                            <div style={{marginTop:6,height:4,background:"#F1F5F9",borderRadius:99,overflow:"hidden"}}>
+                            <div style={{marginTop:6,height:4,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
                               <div style={{height:"100%",width:`${s.avgCompleteness}%`,background:s.avgCompleteness>=80?"linear-gradient(90deg,#22C55E,#16A34A)":s.avgCompleteness>=60?"linear-gradient(90deg,#F59E0B,#D97706)":"linear-gradient(90deg,#EF4444,#DC2626)",borderRadius:99}}/>
                             </div>
-                            {s.lastQuoted&&<div style={{fontSize:11,color:"#CBD5E1",marginTop:8}}>Last quoted {new Date(s.lastQuoted).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div>}
+                            {s.lastQuoted&&<div style={{fontSize:11,color:"var(--text-muted)",marginTop:8}}>Last quoted {new Date(s.lastQuoted).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div>}
                           </div>
                         ))}
                       </div>
@@ -2545,37 +2643,37 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 })()}
 
                 {/* Full quote history table */}
-                <div style={{background:"white",borderRadius:20,border:"1px solid #F1F5F9",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-                  <div style={{padding:"18px 24px",borderBottom:"1px solid #F8FAFC",background:"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
-                    <div style={{fontSize:15,fontWeight:700,color:"#0A0F1E"}}>Full quote history</div>
-                    <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>All quotes saved from AI analysis — newest first</div>
+                <div style={{background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                  <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",background:"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
+                    <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>Full quote history</div>
+                    <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>All quotes saved from AI analysis — newest first</div>
                   </div>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
-                    <thead><tr style={{background:"#F8FAFF"}}>
+                    <thead><tr style={{background:"var(--bg-subtle)"}}>
                       {["Date","Supplier","Job ref","Trade","Completeness","Est. total","Carriage","Lead time","Items","Missing",""].map(h=>(
-                        <th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.06em",whiteSpace:"nowrap"}}>{h}</th>
+                        <th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.06em",whiteSpace:"nowrap"}}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>{quoteLibrary.map((q,i)=>(
-                      <tr key={q.id} style={{borderTop:"1px solid #F8FAFC"}}>
-                        <td style={{padding:"12px 14px",fontSize:12,color:"#64748B",whiteSpace:"nowrap"}}>{new Date(q.savedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</td>
-                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"#0A0F1E"}}>{q.supplierName}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:"#6366F1"}}>{q.jobRef}</td>
-                        <td style={{padding:"12px 14px"}}><span style={{background:"#F1F5F9",color:"#475569",fontSize:11,fontWeight:500,padding:"3px 8px",borderRadius:20}}>{q.trade}</span></td>
+                      <tr key={q.id} style={{borderTop:"1px solid var(--border)"}}>
+                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{new Date(q.savedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</td>
+                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{q.supplierName}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:"var(--indigo)"}}>{q.jobRef}</td>
+                        <td style={{padding:"12px 14px"}}><span style={{background:"var(--bg-subtle2)",color:"#475569",fontSize:11,fontWeight:500,padding:"3px 8px",borderRadius:20}}>{q.trade}</span></td>
                         <td style={{padding:"12px 14px"}}>
                           <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <div style={{width:48,height:5,background:"#F1F5F9",borderRadius:99,overflow:"hidden"}}>
+                            <div style={{width:48,height:5,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
                               <div style={{height:"100%",width:`${q.completeness}%`,background:q.completeness>=80?"#22C55E":q.completeness>=60?"#F59E0B":"#EF4444",borderRadius:99}}/>
                             </div>
                             <span style={{fontSize:12,fontWeight:600,color:q.completeness>=80?"#22C55E":q.completeness>=60?"#F59E0B":"#EF4444"}}>{q.completeness}%</span>
                           </div>
                         </td>
-                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"#0A0F1E",fontFamily:"'JetBrains Mono',monospace"}}>{q.totalEstimate||"—"}</td>
+                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{q.totalEstimate||"—"}</td>
                         <td style={{padding:"12px 14px",fontSize:12,color:q.carriageCharge==="Free"?"#22C55E":q.carriageCharge==="Not stated"?"#94A3B8":"#DC2626",fontWeight:500}}>{q.carriageCharge||"—"}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,color:"#64748B"}}>{q.leadTime||"—"}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,color:"#64748B"}}>{q.items?.length||0}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.leadTime||"—"}</td>
+                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.items?.length||0}</td>
                         <td style={{padding:"12px 14px"}}>
-                          {q.missing?.length>0?<span style={{background:"#FEF2F2",color:"#DC2626",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>{q.missing.length} missing</span>:<span style={{background:"#F0FDF4",color:"#16A34A",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>Complete</span>}
+                          {q.missing?.length>0?<span style={{background:"#FEF2F2",color:"#DC2626",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>{q.missing.length} missing</span>:<span style={{background:"var(--green-mint)",color:"#16A34A",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>Complete</span>}
                         </td>
                         <td style={{padding:"12px 14px"}}>
                           <button onClick={()=>setQuoteLibrary(p=>{ const n=p.filter(x=>x.id!==q.id); localStorage.setItem("piq_quote_library",JSON.stringify(n)); return n; })} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
@@ -2602,11 +2700,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
                   <div>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Company name (appears on POs)</label>
-                    <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Initial Mechanical Ltd" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                    <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Initial Mechanical Ltd" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                   <div>
                     <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Your name (appears on emails)</label>
-                    <input value={sForm.contactName||""} onChange={e=>setSForm(p=>({...p,contactName:e.target.value}))} placeholder="e.g. Andy Smith" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                    <input value={sForm.contactName||""} onChange={e=>setSForm(p=>({...p,contactName:e.target.value}))} placeholder="e.g. Andy Smith" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   </div>
                 </div>
               </div>
@@ -2615,7 +2713,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <Card style={{marginBottom:20}}>
               <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>AI key — OpenRouter (free, no credit card)</div>
               <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>OpenRouter gives you free AI access. No credit card. Takes 2 minutes.</p>
-              <div style={{background:"#F8F7F4",border:"1px solid #E5E7EB",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"#374151",lineHeight:2}}>
+              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"#374151",lineHeight:2}}>
                 <strong>Setup (2 minutes, completely free):</strong><br/>
                 1. Go to <a href="https://openrouter.ai/signup" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>openrouter.ai/signup</a> — sign up free, no card needed<br/>
                 2. Click your avatar → <strong>Keys</strong> → <strong>Create key</strong> — copy it<br/>
@@ -2636,7 +2734,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <Card style={{marginBottom:20}}>
               <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>Email sending — Resend</div>
               <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>Free tier: 3,000 emails/month. No credit card. Works on Vercel.</p>
-              <div style={{background:"#F8F7F4",border:"1px solid #E5E7EB",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"#374151",lineHeight:2}}>
+              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"#374151",lineHeight:2}}>
                 <strong>Setup (2 minutes, completely free):</strong><br/>
                 1. Go to <a href="https://resend.com" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>resend.com</a> → log in<br/>
                 2. Click <strong>API Keys</strong> → <strong>Create API Key</strong> → Full Access → copy it<br/>
@@ -2651,7 +2749,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 </div>
                 <div>
                   <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>From email address</label>
-                  <input value={sForm.fromEmail||""} onChange={e=>setSForm(p=>({...p,fromEmail:e.target.value}))} placeholder="onboarding@resend.dev" style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                  <input value={sForm.fromEmail||""} onChange={e=>setSForm(p=>({...p,fromEmail:e.target.value}))} placeholder="onboarding@resend.dev" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
                   <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>Use onboarding@resend.dev for now. Add your own domain in Resend later.</div>
                 </div>
               </div>
@@ -2675,15 +2773,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
           <div style={{background:"white",borderRadius:24,padding:"28px 32px",maxWidth:520,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.2)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
-                <div style={{fontSize:17,fontWeight:700,color:"#0A0F1E"}}>Request templates</div>
-                <div style={{fontSize:12,color:"#64748B",marginTop:2}}>Save your common material lists — load them instantly next time</div>
+                <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Request templates</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Save your common material lists — load them instantly next time</div>
               </div>
               <button onClick={()=>setTemplateModal(false)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9CA3AF"}}>✕</button>
             </div>
 
             {/* Save current as template */}
             {parsed&&(
-              <div style={{background:"#F0FDF4",border:"1px solid #A7F3D0",borderRadius:12,padding:"14px 16px",marginBottom:20}}>
+              <div style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:12,padding:"14px 16px",marginBottom:20}}>
                 <div style={{fontSize:12,fontWeight:600,color:"#166534",marginBottom:8}}>💾 Save current list as template</div>
                 <div style={{display:"flex",gap:10}}>
                   <input value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)} placeholder="Template name e.g. Boiler fit-out kit" style={{flex:1,padding:"8px 12px",border:"1px solid #A7F3D0",borderRadius:8,fontSize:13,outline:"none"}}/>
@@ -2694,20 +2792,20 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
             {/* Existing templates */}
             {templates.length===0?(
-              <div style={{textAlign:"center",padding:"30px 0",color:"#94A3B8"}}>
+              <div style={{textAlign:"center",padding:"30px 0",color:"var(--text-tertiary)"}}>
                 <div style={{fontSize:28,marginBottom:8}}>📋</div>
                 <div style={{fontSize:14}}>No templates yet</div>
                 <div style={{fontSize:12,marginTop:4}}>Create a request first, then save it as a template from Step 2</div>
               </div>
             ):(
               <div>
-                <div style={{fontSize:12,fontWeight:600,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Your templates ({templates.length})</div>
+                <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Your templates ({templates.length})</div>
                 {templates.map(t=>(
-                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:"#F8FAFC",borderRadius:12,marginBottom:8,border:"1px solid #F1F5F9"}}>
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:"var(--bg-subtle)",borderRadius:12,marginBottom:8,border:"1px solid var(--border)"}}>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:14,fontWeight:600,color:"#0A0F1E"}}>{t.name}</div>
-                      <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{t.trade} · {t.items.length} items · saved {t.created}</div>
-                      <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>{t.items.slice(0,3).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join(", ")}{t.items.length>3?"…":""}</div>
+                      <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{t.name}</div>
+                      <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{t.trade} · {t.items.length} items · saved {t.created}</div>
+                      <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:2}}>{t.items.slice(0,3).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join(", ")}{t.items.length>3?"…":""}</div>
                     </div>
                     <div style={{display:"flex",gap:8}}>
                       <button onClick={()=>handleLoadTemplate(t)} style={{fontSize:12,color:"white",background:"#16A34A",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600}}>Load</button>
@@ -2744,15 +2842,15 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             <div style={{display:"grid",gap:14}}>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Job reference</label>
-                <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
               </div>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Site / location</label>
-                <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E2E8F0",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
               </div>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Status</label>
-                <select value={editForm.status||"draft"} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,background:"white",outline:"none"}}>
+                <select value={editForm.status||"draft"} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"white",outline:"none"}}>
                   <option value="draft">Draft</option>
                   <option value="pending">Pending quotes</option>
                   <option value="received">Quotes received</option>
@@ -2761,7 +2859,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               </div>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Notes</label>
-                <textarea value={editForm.notes||""} onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))} placeholder="Add any notes about this request..." style={{width:"100%",height:80,padding:"9px 12px",border:"1px solid #E5E7EB",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+                <textarea value={editForm.notes||""} onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))} placeholder="Add any notes about this request..." style={{width:"100%",height:80,padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
               </div>
             </div>
             <div style={{display:"flex",gap:10,marginTop:20,justifyContent:"flex-end"}}>
@@ -2792,11 +2890,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     <div style={{width:8,height:8,borderRadius:"50%",background:"#3B82F6",marginTop:5,flexShrink:0}}/>
                     <div style={{flex:1}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                        <span style={{fontSize:13,fontWeight:500,color:"#1E293B"}}>{entry.action}</span>
+                        <span style={{fontSize:13,fontWeight:500,color:"var(--text-primary)"}}>{entry.action}</span>
                         <span style={{fontSize:11,color:"#9CA3AF",whiteSpace:"nowrap",marginLeft:12}}>{new Date(entry.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
                       </div>
-                      {entry.detail&&<div style={{fontSize:12,color:"#64748B",marginTop:3}}>{entry.detail}</div>}
-                      <div style={{fontSize:11,color:"#CBD5E1",marginTop:2}}>by {entry.user}</div>
+                      {entry.detail&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:3}}>{entry.detail}</div>}
+                      <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>by {entry.user}</div>
                     </div>
                   </div>
                 ))}
