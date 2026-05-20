@@ -1082,7 +1082,7 @@ ${settings.company||""}`;
       <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0A0F1E 0%,#111827 60%,#0F172A 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 40px rgba(0,0,0,0.25)"}}>
         <div style={{padding:"28px 24px 24px",borderBottom:"1px solid var(--sidebar-border)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 20px rgba(34,197,94,0.4)"}}>
+            <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(34,197,94,0.3)"}}>
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
             </div>
             <div>
@@ -1326,12 +1326,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               </div>
             )}
             {settings.openRouterKey&&!settings.resendKey&&(
-              <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
                   <div style={{width:32,height:32,background:"#FEF3C7",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>📧</div>
                   <div>
-                    <div style={{fontSize:13,fontWeight:600,color:"#92400E"}}>Email not configured</div>
-                    <div style={{fontSize:12,color:"#A16207",marginTop:1}}>Add your Resend API key to send RFQs directly to suppliers</div>
+                    <div style={{fontSize:13,fontWeight:600,color:"var(--amber)"}}>Email not configured</div>
+                    <div style={{fontSize:12,color:"var(--amber)",marginTop:1}}>Add your Resend API key to send RFQs directly to suppliers</div>
                   </div>
                 </div>
                 <button onClick={()=>setView("settings")} style={{background:"#D97706",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure →</button>
@@ -1464,7 +1464,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         {view==="new"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>New material request</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>New material request</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Speak or type your list — AI structures it and sends RFQs to suppliers</p>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:28,alignItems:"center"}}>
@@ -1510,9 +1510,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   )}
                 </div>
                 {listening&&(
-                  <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:8,fontSize:13,color:"#991B1B"}}>
+                  <div style={{background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:8,fontSize:13,color:"var(--red)"}}>
                     <span style={{fontWeight:500}}>Listening… </span>
-                    {interim?<span style={{color:"#DC2626"}}>{interim}</span>:<span style={{color:"#FCA5A5"}}>speak your list now</span>}
+                    {interim?<span style={{color:"var(--red)"}}>{interim}</span>:<span style={{color:"#FCA5A5"}}>speak your list now</span>}
                   </div>
                 )}
                 <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)}
@@ -1567,7 +1567,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                     {filteredSup.map(s=>(
                       <label key={s.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,cursor:"pointer",background:selSup.includes(s.id)?"#EFF6FF":"white",border:`1px solid ${selSup.includes(s.id)?"#BFDBFE":"#E5E7EB"}`,borderRadius:8,padding:"6px 12px"}}>
-                        <input type="checkbox" checked={selSup.includes(s.id)} onChange={e=>setSelSup(p=>e.target.checked?[...p,s.id]:p.filter(id=>id!==s.id))} style={{accentColor:"#2563EB"}}/>
+                        <input type="checkbox" checked={selSup.includes(s.id)} onChange={e=>setSelSup(p=>e.target.checked?[...p,s.id]:p.filter(id=>id!==s.id))} style={{accentColor:"var(--green-dark)"}}/>
                         <span style={{fontWeight:500}}>{s.name}</span>
                         <span style={{fontSize:11,color:"#9CA3AF"}}>{s.email}</span>
                       </label>
@@ -1576,8 +1576,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                   </div>
                 </div>
                 {/* ── Delivery method ── */}
-                <div style={{marginTop:16,padding:18,background:"linear-gradient(135deg,#F0F9FF,#E0F2FE)",borderRadius:12,border:"1px solid #BAE6FD"}}>
-                  <div style={{fontSize:13,fontWeight:600,color:"#0369A1",marginBottom:14}}>🚚 Delivery requirements</div>
+                <div style={{marginTop:16,padding:18,background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)"}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)",marginBottom:14}}>🚚 Delivery requirements</div>
                   <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:14}}>
                     <div>
                       <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",marginBottom:8}}>Delivery method</div>
@@ -1588,8 +1588,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           {val:"collect",   icon:"🏪", label:"Collect from branch",             sub:"we will collect"},
                           {val:"tbc",       icon:"❓", label:"To be confirmed",                 sub:"supplier to await confirmation"},
                         ].map(opt=>(
-                          <label key={opt.val} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:8,border:`1.5px solid ${deliveryMethod===opt.val?"#3B82F6":"#E2E8F0"}`,background:deliveryMethod===opt.val?"#EFF6FF":"white",cursor:"pointer"}}>
-                            <input type="radio" name="deliveryMethod" value={opt.val} checked={deliveryMethod===opt.val} onChange={()=>setDeliveryMethod(opt.val)} style={{accentColor:"#3B82F6",marginTop:2}}/>
+                          <label key={opt.val} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:8,border:`1.5px solid ${deliveryMethod===opt.val?"var(--green-dark)":"var(--border)"}`,background:deliveryMethod===opt.val?"var(--green-mint)":"var(--bg-card-solid)",cursor:"pointer",transition:"all 0.15s"}}>
+                            <input type="radio" name="deliveryMethod" value={opt.val} checked={deliveryMethod===opt.val} onChange={()=>setDeliveryMethod(opt.val)} style={{accentColor:"var(--green-dark)",marginTop:2}}/>
                             <div>
                               <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)"}}>{opt.icon} {opt.label}</div>
                               <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:1}}>{opt.sub}</div>
@@ -1606,11 +1606,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     </div>
                     <div>
                       <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",marginBottom:8}}>Required delivery date</div>
-                      <div style={{background:"var(--bg-card-solid)",borderRadius:10,padding:14,border:"1px solid var(--border-solid)"}}>
-                        <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} min={new Date().toISOString().split("T")[0]} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:14,outline:"none",color:deliveryDate?"#1E293B":"#94A3B8"}}/>
+                      <div style={{background:"var(--bg-subtle)",borderRadius:10,padding:14,border:"1px solid var(--border)"}}>
+                        <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} min={new Date().toISOString().split("T")[0]} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:14,outline:"none",color:deliveryDate?"var(--text-primary)":"var(--text-tertiary)"}}/>
                         <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:8}}>Leave blank if date is flexible</div>
                         {deliveryDate&&(
-                          <div style={{marginTop:8,padding:"8px 12px",background:"var(--green-mint)",borderRadius:6,fontSize:12,color:"#166534",fontWeight:500}}>
+                          <div style={{marginTop:8,padding:"8px 12px",background:"var(--green-mint)",borderRadius:6,fontSize:12,color:"var(--green-deep)",fontWeight:500}}>
                             ✓ Required by {new Date(deliveryDate).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
                           </div>
                         )}
@@ -1623,7 +1623,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       </div>
                     </div>
                   </div>
-                  <div style={{background:"var(--bg-card-solid)",borderRadius:8,padding:"10px 14px",border:"1px solid #BAE6FD",fontSize:12,color:"#0369A1"}}>
+                  <div style={{background:"var(--bg-card-solid)",borderRadius:8,padding:"10px 14px",border:"1px solid var(--border)",fontSize:12,color:"var(--indigo)"}}>
                     ℹ️ These delivery details will be included in the RFQ email and the AI will extract carriage charges from supplier responses during quote analysis.
                   </div>
                 </div>
@@ -1650,7 +1650,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 </div>
 
                 {!settings.resendKey&&(
-                  <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:"#92400E"}}>
+                  <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:"var(--amber)"}}>
                     ⚠ Resend not configured. <button onClick={()=>setView("settings")} style={{background:"none",border:"none",color:"#B45309",textDecoration:"underline",cursor:"pointer",fontSize:13,padding:0}}>Add it in Settings</button> to send for real. You can still save the request.
                   </div>
                 )}
@@ -1666,17 +1666,17 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         </div>
                         {r.success&&r.id&&<div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>Message ID: {r.id}</div>}
                         {!r.success&&r.error?.includes("CORS")&&(
-                          <div style={{fontSize:12,color:"#991B1B",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
+                          <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
                             CORS error — Resend blocks direct browser calls in some environments. Try deploying to Vercel where this works correctly.
                           </div>
                         )}
                         {!r.success&&r.statusCode===403&&(
-                          <div style={{fontSize:12,color:"#991B1B",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
+                          <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
                             403 Forbidden — your Resend key may not have send permissions. Go to resend.com → API Keys → check the key has "Full access" not "Read only".
                           </div>
                         )}
                         {!r.success&&r.statusCode===422&&(
-                          <div style={{fontSize:12,color:"#991B1B",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
+                          <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
                             422 — Resend rejected the request. On free accounts you can only send to your own verified email address. Go to resend.com → click your email in the top right → verify it, then use that address as a test recipient in Suppliers.
                           </div>
                         )}
@@ -1720,7 +1720,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         {view==="quotes"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Quote analysis</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Quote analysis</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Select a request, enter each supplier quote, then run AI analysis</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"240px 1fr",gap:isMobile?12:20}}>
@@ -1758,7 +1758,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <div style={{display:"flex",gap:8}}>
                           <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Edit</button>
                           <button onClick={()=>setActivityModal(activeReq)} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>📋 Log {activeReq.activity?.length?`(${activeReq.activity.length})`:""}</button>
-                          <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
+                          <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
                         </div>
                       </div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
@@ -1771,12 +1771,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                       {(activeReq.deliveryMethod||activeReq.deliveryDate)&&(
                         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                           {activeReq.deliveryMethod&&(
-                            <span style={{background:"#F0F9FF",border:"1px solid #BAE6FD",color:"#0369A1",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
+                            <span style={{background:"var(--indigo-light)",border:"1px solid var(--border)",color:"var(--indigo)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
                               🚚 {{direct:"Deliver to site",alternative:"Alt. address delivery",collect:"Collect from branch",tbc:"Delivery TBC"}[activeReq.deliveryMethod]||activeReq.deliveryMethod}
                             </span>
                           )}
                           {activeReq.deliveryDate&&(
-                            <span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
+                            <span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"var(--green-deep)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
                               📅 Required by {new Date(activeReq.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}
                             </span>
                           )}
@@ -1787,7 +1787,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             </span>;
                           })()}
                           {activeReq.altAddress&&(
-                            <span style={{background:"#FFFBEB",border:"1px solid #FDE68A",color:"#92400E",fontSize:12,padding:"4px 12px",borderRadius:20}}>
+                            <span style={{background:"var(--amber-light)",border:"1px solid #FDE68A",color:"var(--amber)",fontSize:12,padding:"4px 12px",borderRadius:20}}>
                               📍 {activeReq.altAddress}
                             </span>
                           )}
@@ -1821,8 +1821,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 </div>
                               </div>
                               {sup.saved
-                                ? <span style={{background:"#D1FAE5",color:"#065F46",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>✓ Quote saved</span>
-                                : <span style={{background:"#FEF3C7",color:"#92400E",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>Awaiting quote</span>
+                                ? <span style={{background:"#D1FAE5",color:"var(--green-deep)",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>✓ Quote saved</span>
+                                : <span style={{background:"#FEF3C7",color:"var(--amber)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>Awaiting quote</span>
                               }
                             </div>
                             {/* Drag and drop + file upload zone */}
@@ -1861,7 +1861,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                   style={{
                                     marginBottom:10,
                                     padding:"14px 16px",
-                                    background: dragOver[si]?"#EFF6FF":fileExtracting[si]?"#F0F9FF":"#F8FAFC",
+                                    background: dragOver[si]?"var(--indigo-light)":fileExtracting[si]?"var(--bg-subtle)":"var(--bg-subtle)",
                                     borderRadius:10,
                                     border: dragOver[si]?"2px dashed #3B82F6":fileExtracting[si]?"2px dashed #93C5FD":"2px dashed #CBD5E1",
                                     display:"flex",
@@ -2001,7 +2001,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 const isBest = i===0;
                                 const verdictColor = a.overallVerdict==="excellent"?"#4ADE80":a.overallVerdict==="good"?"#60A5FA":a.overallVerdict==="partial"?"#FBBF24":"#F87171";
                                 return(
-                                  <div key={a._id} style={{background:isBest?"rgba(59,130,246,0.2)":"rgba(255,255,255,0.05)",borderRadius:10,padding:"14px 16px",border:isBest?"1px solid rgba(59,130,246,0.5)":"1px solid rgba(255,255,255,0.1)"}}>
+                                  <div key={a._id} style={{background:isBest?"rgba(59,130,246,0.2)":"var(--bg-subtle2)",borderRadius:10,padding:"14px 16px",border:isBest?"1px solid rgba(59,130,246,0.5)":"1px solid var(--border)"}}>
                                     {isBest&&<div style={{fontSize:10,fontWeight:700,color:"#60A5FA",marginBottom:6,letterSpacing:"0.1em"}}>⭐ RECOMMENDED</div>}
                                     <div style={{fontSize:13,fontWeight:600,color:"white",marginBottom:8}}>{a.supplierName}</div>
                                     <div style={{fontSize:22,fontWeight:700,color:verdictColor,fontFamily:"monospace"}}>{a.completeness}%</div>
@@ -2061,18 +2061,18 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             {qa.positives?.length>0&&(
                               <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:8}}>
                                 {qa.positives.map((p,i)=>(
-                                  <span key={i} style={{fontSize:12,color:"#166534",display:"flex",alignItems:"center",gap:4}}>✓ {p}</span>
+                                  <span key={i} style={{fontSize:12,color:"var(--green-deep)",display:"flex",alignItems:"center",gap:4}}>✓ {p}</span>
                                 ))}
                               </div>
                             )}
 
                             {/* Discounts */}
                             {qa.discounts?.length>0&&(
-                              <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#92400E",marginBottom:8}}>🏷️ Discounts available</div>
+                              <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:8}}>🏷️ Discounts available</div>
                                 {qa.discounts.map((d,i)=>(
                                   <div key={i} style={{fontSize:13,color:"#78350F",marginBottom:4}}>
-                                    <span style={{fontWeight:500}}>{d.item}</span> — {d.discount} {d.detail&&<span style={{color:"#92400E"}}>({d.detail})</span>}
+                                    <span style={{fontWeight:500}}>{d.item}</span> — {d.discount} {d.detail&&<span style={{color:"var(--amber)"}}>({d.detail})</span>}
                                   </div>
                                 ))}
                               </div>
@@ -2101,7 +2101,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                         </td>
                                         <td style={{padding:"9px 10px"}}>
                                           {m.qtyMatch===false
-                                            ? <span style={{fontSize:11,color:"#DC2626",fontWeight:600}}>⚠ Mismatch</span>
+                                            ? <span style={{fontSize:11,color:"var(--red)",fontWeight:600}}>⚠ Mismatch</span>
                                             : <span style={{fontSize:11,color:"#059669"}}>✓ Match</span>
                                           }
                                         </td>
@@ -2115,11 +2115,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
                             {/* Missing items */}
                             {qa.missing?.length>0&&(
-                              <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#991B1B",marginBottom:8}}>✗ Not quoted ({qa.missing.length} item{qa.missing.length!==1?"s":""})</div>
+                              <div style={{background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--red)",marginBottom:8}}>✗ Not quoted ({qa.missing.length} item{qa.missing.length!==1?"s":""})</div>
                                 <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                                   {qa.missing.map((m,i)=>(
-                                    <div key={i} style={{background:"#FEE2E2",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#991B1B"}}>
+                                    <div key={i} style={{background:"#FEE2E2",borderRadius:6,padding:"4px 10px",fontSize:12,color:"var(--red)"}}>
                                       {m.item||m} {m.reason&&<span style={{color:"#B91C1C"}}>— {m.reason}</span>}
                                     </div>
                                   ))}
@@ -2129,12 +2129,12 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
                             {/* Alternatives */}
                             {qa.alternatives?.length>0&&(
-                              <div style={{background:"#F0F9FF",border:"1px solid #BAE6FD",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#0369A1",marginBottom:8}}>💡 Alternative options offered</div>
+                              <div style={{background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--indigo)",marginBottom:8}}>💡 Alternative options offered</div>
                                 {qa.alternatives.map((a,i)=>(
                                   <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,border:"1px solid #E0F2FE"}}>
                                     <div style={{fontSize:12,color:"var(--text-secondary)"}}>Instead of: <span style={{fontWeight:500,color:"#0F172A"}}>{a.requestedItem}</span></div>
-                                    <div style={{fontSize:13,fontWeight:500,color:"#0369A1",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>— {a.altPrice}</span>}</div>
+                                    <div style={{fontSize:13,fontWeight:500,color:"var(--indigo)",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>— {a.altPrice}</span>}</div>
                                     {a.reason&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{a.reason}</div>}
                                     {a.recommended&&<span style={{fontSize:10,background:"#0369A1",color:"white",padding:"1px 7px",borderRadius:10,marginTop:4,display:"inline-block"}}>AI recommends</span>}
                                   </div>
@@ -2144,8 +2144,8 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
 
                             {/* Warnings */}
                             {qa.warnings?.length>0&&(
-                              <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#92400E",marginBottom:6}}>⚠ Warnings</div>
+                              <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:6}}>⚠ Warnings</div>
                                 {qa.warnings.map((w,i)=><div key={i} style={{fontSize:13,color:"#78350F",marginTop:3}}>• {w}</div>)}
                               </div>
                             )}
@@ -2161,10 +2161,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                   <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 18px",background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,border:"1px solid #A7F3D0",marginBottom:12}}>
                                     <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,boxShadow:"0 4px 12px rgba(34,197,94,0.3)",flexShrink:0}}>✓</div>
                                     <div style={{flex:1}}>
-                                      <div style={{fontSize:14,fontWeight:700,color:"#166534"}}>Quote approved — PO generated</div>
+                                      <div style={{fontSize:14,fontWeight:700,color:"var(--green-deep)"}}>Quote approved — PO generated</div>
                                       <div style={{fontSize:12,color:"#16A34A",marginTop:2}}>This quote has been approved and sent to Orders. The PO has been downloaded.</div>
                                     </div>
-                                    <button onClick={handleUndoApproval} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+                                    <button onClick={handleUndoApproval} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
                                       ↩ Undo approval
                                     </button>
                                   </div>
@@ -2205,7 +2205,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>📎 Documents</div>
                           <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Generated POs, draft quotes, and uploaded third-party documents</div>
                         </div>
-                        <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"#EFF6FF",color:"#2563EB",fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,cursor:"pointer",border:"1px solid #BFDBFE"}}>
+                        <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"var(--indigo-light)",color:"#2563EB",fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,cursor:"pointer",border:"1px solid #BFDBFE"}}>
                           ↑ Upload document
                           <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) handleUploadDocument(e.target.files[0]); e.target.value=""; }}/>
                         </label>
@@ -2238,7 +2238,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                                 <button onClick={()=>{
                                   setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,documents:r.documents.filter((_,di)=>di!==i)}:r));
                                   setActiveReq(prev=>({...prev,documents:prev.documents.filter((_,di)=>di!==i)}));
-                                }} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer",flexShrink:0}}>Remove</button>
+                                }} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer",flexShrink:0}}>Remove</button>
                               </div>
                             );
                           })}
@@ -2266,7 +2266,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {[
-                    {label:"Ready",     color:"#166534", bg:"#DCFCE7", count:orders.filter(o=>o.status==="pending-send").length},
+                    {label:"Ready",     color:"var(--green-deep)", bg:"#DCFCE7", count:orders.filter(o=>o.status==="pending-send").length},
                     {label:"Sent",      color:"#4338CA", bg:"#EEF2FF", count:orders.filter(o=>o.status==="sent").length},
                     {label:"Confirmed", color:"#059669", bg:"#D1FAE5", count:orders.filter(o=>o.status==="confirmed").length},
                     {label:"Delivered", color:"var(--text-secondary)", bg:"#F1F5F9", count:orders.filter(o=>o.status==="delivered").length},
@@ -2377,9 +2377,9 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                             <div style={{marginBottom:16}}>
                               <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Delivery</div>
                               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                                {order.deliveryMethod&&<span style={{background:"#F0F9FF",border:"1px solid #BAE6FD",color:"#0369A1",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🚚 {{"direct":"To site","alternative":"Alt. address","collect":"Collect","tbc":"TBC"}[order.deliveryMethod]||order.deliveryMethod}</span>}
-                                {order.deliveryDate&&<span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"#166534",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>📅 {new Date(order.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
-                                {order.expectedDelivery&&<span style={{background:"#FFFBEB",border:"1px solid #FDE68A",color:"#92400E",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🗓 Expected {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
+                                {order.deliveryMethod&&<span style={{background:"var(--indigo-light)",border:"1px solid var(--border)",color:"var(--indigo)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🚚 {{"direct":"To site","alternative":"Alt. address","collect":"Collect","tbc":"TBC"}[order.deliveryMethod]||order.deliveryMethod}</span>}
+                                {order.deliveryDate&&<span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"var(--green-deep)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>📅 {new Date(order.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
+                                {order.expectedDelivery&&<span style={{background:"var(--amber-light)",border:"1px solid #FDE68A",color:"var(--amber)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🗓 Expected {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
                               </div>
                             </div>
                           )}
@@ -2387,7 +2387,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           {/* Confirmation document */}
                           {order.confirmationDoc&&(
                             <div style={{marginBottom:16,background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:10,padding:"12px 14px"}}>
-                              <div style={{fontSize:12,fontWeight:600,color:"#166534",marginBottom:6}}>✅ Supplier confirmation attached</div>
+                              <div style={{fontSize:12,fontWeight:600,color:"var(--green-deep)",marginBottom:6}}>✅ Supplier confirmation attached</div>
                               <div style={{display:"flex",alignItems:"center",gap:10}}>
                                 <div style={{width:32,height:32,background:"#D1FAE5",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📎</div>
                                 <div style={{flex:1}}>
@@ -2478,7 +2478,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           {isConfirmed&&(
                             <>
                               <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
-                                <div style={{fontSize:13,fontWeight:600,color:"#166534",marginBottom:2}}>✅ Order confirmed by supplier</div>
+                                <div style={{fontSize:13,fontWeight:600,color:"var(--green-deep)",marginBottom:2}}>✅ Order confirmed by supplier</div>
                                 {order.expectedDelivery&&<div style={{fontSize:11,color:"#16A34A"}}>Expected delivery: {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>}
                               </div>
 
@@ -2514,14 +2514,14 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           {isDelivered&&(
                             <div style={{background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,padding:"16px",textAlign:"center"}}>
                               <div style={{fontSize:24,marginBottom:8}}>🏁</div>
-                              <div style={{fontSize:14,fontWeight:700,color:"#166534",marginBottom:4}}>Order complete</div>
+                              <div style={{fontSize:14,fontWeight:700,color:"var(--green-deep)",marginBottom:4}}>Order complete</div>
                               <div style={{fontSize:12,color:"#16A34A"}}>Delivered {order.deliveredAt?new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"—"}</div>
                             </div>
                           )}
 
                           {/* Remove always available */}
                           <div style={{marginTop:10,textAlign:"right"}}>
-                            <button onClick={()=>setOrders(p=>p.filter(o=>o.id!==order.id))} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Remove order</button>
+                            <button onClick={()=>setOrders(p=>p.filter(o=>o.id!==order.id))} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Remove order</button>
                           </div>
                         </div>
                       </div>
@@ -2558,7 +2558,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         {view==="suppliers"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Suppliers</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Suppliers</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Your supplier accounts — add your real ones here</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:isMobile?10:16,marginBottom:isMobile?16:24}}>
@@ -2568,7 +2568,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     <div style={{width:44,height:44,background:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:"#4F46E5",boxShadow:"0 2px 8px rgba(99,102,241,0.15)"}}>{s.name.charAt(0)}</div>
                     <div style={{display:"flex",gap:8,alignItems:"center"}}>
                       <Badge bg="#F0FDF4" text="#166534">Active</Badge>
-                      <button onClick={()=>saveSuppliers(suppliers.filter(x=>x.id!==s.id))} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
+                      <button onClick={()=>saveSuppliers(suppliers.filter(x=>x.id!==s.id))} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
                     </div>
                   </div>
                   <div style={{fontSize:15,fontWeight:500,marginBottom:4}}>{s.name}</div>
@@ -2604,7 +2604,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         {view==="requests"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>All requests</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>All requests</h1>
             </div>
             <Card style={{padding:0,overflow:"hidden"}}>
               <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:isMobile?600:"auto"}}>
@@ -2628,7 +2628,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <button onClick={()=>handleDuplicate(r)} style={{fontSize:12,color:"#16A34A",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
                         <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
                         <button onClick={()=>setActivityModal(r)} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
-                        <button onClick={()=>setDeleteConfirm(r.id)} style={{fontSize:12,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Delete</button>
+                        <button onClick={()=>setDeleteConfirm(r.id)} style={{fontSize:12,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -2649,11 +2649,11 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                 <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Every supplier quote ever received — track price changes over time</p>
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                <div style={{background:"var(--green-mint)",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"#166534",fontWeight:500}}>
+                <div style={{background:"var(--green-mint)",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"var(--green-deep)",fontWeight:500}}>
                   {quoteLibrary.length} quotes saved
                 </div>
                 {quoteLibrary.length>0&&(
-                  <button onClick={()=>{ if(window.confirm("Clear entire quote library? This cannot be undone.")) { setQuoteLibrary([]); localStorage.removeItem("piq_quote_library"); showToast("Library cleared"); }}} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>
+                  <button onClick={()=>{ if(window.confirm("Clear entire quote library? This cannot be undone.")) { setQuoteLibrary([]); localStorage.removeItem("piq_quote_library"); showToast("Library cleared"); }}} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>
                     Clear all
                   </button>
                 )}
@@ -2691,7 +2691,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                           <div key={s.name} style={{background:"var(--bg-card-solid)",borderRadius:16,border:"1px solid var(--border)",padding:"18px 20px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
                               <div style={{width:40,height:40,background:"linear-gradient(135deg,#DCFCE7,#BBF7D0)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"#16A34A"}}>{s.name.charAt(0)}</div>
-                              <span style={{fontSize:11,fontWeight:600,background:"var(--green-mint)",color:"#166534",padding:"3px 8px",borderRadius:20}}>{s.quoteCount} quote{s.quoteCount!==1?"s":""}</span>
+                              <span style={{fontSize:11,fontWeight:600,background:"var(--green-mint)",color:"var(--green-deep)",padding:"3px 8px",borderRadius:20}}>{s.quoteCount} quote{s.quoteCount!==1?"s":""}</span>
                             </div>
                             <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>{s.name}</div>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2740,10 +2740,10 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                         <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.leadTime||"—"}</td>
                         <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.items?.length||0}</td>
                         <td style={{padding:"12px 14px"}}>
-                          {q.missing?.length>0?<span style={{background:"#FEF2F2",color:"#DC2626",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>{q.missing.length} missing</span>:<span style={{background:"var(--green-mint)",color:"#16A34A",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>Complete</span>}
+                          {q.missing?.length>0?<span style={{background:"var(--red-light)",color:"var(--red)",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>{q.missing.length} missing</span>:<span style={{background:"var(--green-mint)",color:"#16A34A",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>Complete</span>}
                         </td>
                         <td style={{padding:"12px 14px"}}>
-                          <button onClick={()=>setQuoteLibrary(p=>{ const n=p.filter(x=>x.id!==q.id); localStorage.setItem("piq_quote_library",JSON.stringify(n)); return n; })} style={{fontSize:11,color:"#DC2626",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
+                          <button onClick={()=>setQuoteLibrary(p=>{ const n=p.filter(x=>x.id!==q.id); localStorage.setItem("piq_quote_library",JSON.stringify(n)); return n; })} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
                         </td>
                       </tr>
                     ))}</tbody>
@@ -2758,7 +2758,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         {view==="settings"&&(
           <div>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,background:"linear-gradient(135deg,#0F172A,#6366F1)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Settings</h1>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Settings</h1>
               <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Configure your company and email sending</p>
             </div>
             <Card style={{marginBottom:20}}>
@@ -2849,7 +2849,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
             {/* Save current as template */}
             {parsed&&(
               <div style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:12,padding:"14px 16px",marginBottom:20}}>
-                <div style={{fontSize:12,fontWeight:600,color:"#166534",marginBottom:8}}>💾 Save current list as template</div>
+                <div style={{fontSize:12,fontWeight:600,color:"var(--green-deep)",marginBottom:8}}>💾 Save current list as template</div>
                 <div style={{display:"flex",gap:10}}>
                   <input value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)} placeholder="Template name e.g. Boiler fit-out kit" style={{flex:1,padding:"8px 12px",border:"1px solid #A7F3D0",borderRadius:8,fontSize:13,outline:"none"}}/>
                   <Btn onClick={handleSaveTemplate} disabled={!newTemplateName.trim()} color="#16A34A">Save</Btn>
@@ -2876,7 +2876,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
                     </div>
                     <div style={{display:"flex",gap:8}}>
                       <button onClick={()=>handleLoadTemplate(t)} style={{fontSize:12,color:"white",background:"#16A34A",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600}}>Load</button>
-                      <button onClick={()=>saveTemplates(templates.filter(x=>x.id!==t.id))} style={{fontSize:12,color:"#DC2626",background:"#FEF2F2",border:"none",borderRadius:8,padding:"7px 10px",cursor:"pointer"}}>✕</button>
+                      <button onClick={()=>saveTemplates(templates.filter(x=>x.id!==t.id))} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:8,padding:"7px 10px",cursor:"pointer"}}>✕</button>
                     </div>
                   </div>
                 ))}
