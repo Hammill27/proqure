@@ -713,18 +713,21 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
 }
 
 // --- Tiny shared components ---------------------------------------------------
-const Btn = ({ onClick, disabled, color="#6366F1", outline=false, children }) => (
+const Btn = ({ onClick, disabled, color="#15824F", outline=false, children }) => (
   <button onClick={onClick} disabled={disabled} style={{
-    background: outline?"transparent": disabled?"#C7D2FE":color,
-    color: outline?"var(--text-secondary)":"white",
+    background: outline?"transparent": disabled?"var(--bg-subtle2)":color,
+    color: outline?"var(--text-secondary)": disabled?"var(--text-muted)":"white",
     border: outline?"1px solid var(--border-solid)":"none",
-    borderRadius:10, padding:"10px 22px", fontSize:13, fontWeight:600,
-    cursor: disabled?"not-allowed":"pointer", opacity: disabled?0.85:1,
-    display:"inline-flex", alignItems:"center", gap:7,
-    boxShadow: outline?"none": disabled?"none":"0 2px 8px rgba(99,102,241,0.25)",
-    letterSpacing:"-0.1px"
-  }}>{children}</button>
-);
+    borderRadius:"var(--radius-sm)", padding:"10px 18px", fontSize:13, fontWeight:600,
+    cursor: disabled?"not-allowed":"pointer", letterSpacing:"-0.01em",
+    display:"inline-flex", alignItems:"center", justifyContent:"center", gap:7,
+    boxShadow: (outline||disabled)?"none":"0 1px 2px rgba(26,26,23,0.08)",
+    opacity: disabled?0.7:1
+  }}
+  onMouseEnter={e=>{if(!disabled){e.currentTarget.style.filter="brightness(1.06)";e.currentTarget.style.transform="translateY(-1px)";}}}
+  onMouseLeave={e=>{e.currentTarget.style.filter="none";e.currentTarget.style.transform="translateY(0)";}}
+  >{children}</button>
+)
 const Badge = ({ children, bg, text }) => (
   <span style={{ background:bg, color:text, fontSize:11, fontWeight:600, padding:"3px 11px", borderRadius:20, whiteSpace:"nowrap", letterSpacing:"0.01em" }}>{children}</span>
 );
@@ -1634,102 +1637,110 @@ Rules:
 
   // -- Render --
   return (
-    <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}}>
-      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+    <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}}>
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
       <style>{`
       /* -- LIGHT THEME (default) -- */
       :root {
-        --bg-page:        #F3F4F6;
+        --bg-page:        #FAFAF8;
         --bg-card:        #FFFFFF;
         --bg-card-solid:  #FFFFFF;
         --bg-input:       #FFFFFF;
-        --bg-subtle:      #F9FAFB;
-        --bg-subtle2:     #F3F4F6;
+        --bg-subtle:      #F6F6F3;
+        --bg-subtle2:     #EFEFEA;
         --bg-header:      #FFFFFF;
-        --border:         #E5E7EB;
-        --border-solid:   #E5E7EB;
-        --text-primary:   #111827;
-        --text-secondary: #6B7280;
-        --text-tertiary:  #9CA3AF;
-        --text-muted:     #D1D5DB;
-        --green:          #22C55E;
-        --green-dark:     #16A34A;
-        --green-deep:     #166534;
-        --green-light:    #DCFCE7;
-        --green-mint:     #F0FDF4;
-        --indigo:         #6366F1;
-        --indigo-light:   #EEF2FF;
-        --amber:          #F59E0B;
-        --amber-light:    #FFFBEB;
-        --red:            #EF4444;
-        --red-light:      #FEF2F2;
-        --shadow-sm:      0 1px 2px rgba(0,0,0,0.05);
-        --shadow-md:      0 4px 12px rgba(0,0,0,0.08);
-        --shadow-lg:      0 8px 24px rgba(0,0,0,0.10);
-        --sidebar-bg:     #111827;
-        --sidebar-border: #1F2937;
-        --sidebar-text:   #9CA3AF;
-        --sidebar-active: #22C55E;
-        --sidebar-activebg: rgba(34,197,94,0.1);
-        --topbar-bg:      #111827;
-        --bottombar-bg:   #111827;
-        --radius-sm:      8px;
-        --radius-md:      12px;
-        --radius-lg:      16px;
+        --border:         #EAE9E3;
+        --border-solid:   #E2E1DA;
+        --text-primary:   #1A1A17;
+        --text-secondary: #5C5B54;
+        --text-tertiary:  #908F86;
+        --text-muted:     #C4C3BA;
+        --green:          #1E9E63;
+        --green-dark:     #15824F;
+        --green-deep:     #0E5C38;
+        --green-light:    #DFF3E8;
+        --green-mint:     #F2FAF5;
+        --indigo:         #5B5BD6;
+        --indigo-light:   #EEEEFB;
+        --amber:          #C77D2E;
+        --amber-light:    #FBF3E8;
+        --red:            #D14343;
+        --red-light:      #FBEDED;
+        --shadow-sm:      0 1px 2px rgba(26,26,23,0.04), 0 1px 1px rgba(26,26,23,0.03);
+        --shadow-md:      0 2px 4px rgba(26,26,23,0.04), 0 6px 16px rgba(26,26,23,0.06);
+        --shadow-lg:      0 4px 8px rgba(26,26,23,0.04), 0 16px 40px rgba(26,26,23,0.10);
+        --sidebar-bg:     #18181B;
+        --sidebar-border: #27272A;
+        --sidebar-text:   #A1A1AA;
+        --sidebar-active: #34D399;
+        --sidebar-activebg: rgba(52,211,153,0.12);
+        --topbar-bg:      #18181B;
+        --bottombar-bg:   #18181B;
+        --radius-sm:      10px;
+        --radius-md:      14px;
+        --radius-lg:      20px;
       }
       /* -- DARK THEME -- */
       [data-theme="dark"] {
-        --bg-page:        #1F2937;
-        --bg-card:        #111827;
-        --bg-card-solid:  #111827;
-        --bg-input:       #1F2937;
-        --bg-subtle:      #1F2937;
-        --bg-subtle2:     #374151;
-        --bg-header:      #111827;
-        --border:         #374151;
-        --border-solid:   #374151;
-        --text-primary:   #F9FAFB;
-        --text-secondary: #D1D5DB;
-        --text-tertiary:  #9CA3AF;
-        --text-muted:     #6B7280;
-        --green:          #34D399;
-        --green-dark:     #10B981;
-        --green-deep:     #6EE7B7;
-        --green-light:    rgba(52,211,153,0.12);
-        --green-mint:     rgba(52,211,153,0.07);
-        --indigo:         #818CF8;
-        --indigo-light:   rgba(129,140,248,0.12);
-        --amber:          #FBBF24;
-        --amber-light:    rgba(251,191,36,0.1);
-        --red:            #F87171;
-        --red-light:      rgba(248,113,113,0.1);
-        --shadow-sm:      0 1px 2px rgba(0,0,0,0.3);
-        --shadow-md:      0 4px 12px rgba(0,0,0,0.4);
-        --shadow-lg:      0 8px 24px rgba(0,0,0,0.5);
-        --sidebar-bg:     #0D1117;
-        --sidebar-border: #21262D;
-        --sidebar-text:   #8B949E;
-        --sidebar-active: #34D399;
-        --sidebar-activebg: rgba(52,211,153,0.08);
-        --topbar-bg:      #0D1117;
-        --bottombar-bg:   #0D1117;
+        --bg-page:        #16161A;
+        --bg-card:        #1C1C21;
+        --bg-card-solid:  #1C1C21;
+        --bg-input:       #232328;
+        --bg-subtle:      #232328;
+        --bg-subtle2:     #2E2E35;
+        --bg-header:      #1C1C21;
+        --border:         #2E2E35;
+        --border-solid:   #3A3A42;
+        --text-primary:   #F4F4F2;
+        --text-secondary: #B4B4AE;
+        --text-tertiary:  #87877F;
+        --text-muted:     #5C5C56;
+        --green:          #3DD68C;
+        --green-dark:     #2BB873;
+        --green-deep:     #7FE8B5;
+        --green-light:    rgba(61,214,140,0.14);
+        --green-mint:     rgba(61,214,140,0.07);
+        --indigo:         #8B8BF0;
+        --indigo-light:   rgba(139,139,240,0.14);
+        --amber:          #E0A04D;
+        --amber-light:    rgba(224,160,77,0.12);
+        --red:            #E66B6B;
+        --red-light:      rgba(230,107,107,0.12);
+        --shadow-sm:      0 1px 2px rgba(0,0,0,0.4);
+        --shadow-md:      0 2px 4px rgba(0,0,0,0.3), 0 8px 20px rgba(0,0,0,0.4);
+        --shadow-lg:      0 4px 8px rgba(0,0,0,0.3), 0 20px 48px rgba(0,0,0,0.55);
+        --sidebar-bg:     #111114;
+        --sidebar-border: #26262C;
+        --sidebar-text:   #87877F;
+        --sidebar-active: #3DD68C;
+        --sidebar-activebg: rgba(61,214,140,0.10);
+        --topbar-bg:      #111114;
+        --bottombar-bg:   #111114;
       }
       [data-theme="dark"] input,[data-theme="dark"] textarea,[data-theme="dark"] select {
         background:var(--bg-input)!important;color:var(--text-primary)!important;border-color:var(--border-solid)!important;
       }
       [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder { color:var(--text-muted)!important; }
-      *{box-sizing:border-box;-webkit-font-smoothing:antialiased}
+      *{box-sizing:border-box;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+      body{letter-spacing:-0.011em}
+      h1,h2,h3{letter-spacing:-0.022em}
       @keyframes spin{to{transform:rotate(360deg)}}
-      @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-      @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes slideUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
       @keyframes cardExpand{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
-      ::-webkit-scrollbar{width:5px;height:5px}
+      @keyframes scaleIn{from{opacity:0;transform:scale(0.97)}to{opacity:1;transform:scale(1)}}
+      @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+      .stagger-in{animation:slideUp 0.5s cubic-bezier(0.16,1,0.3,1) backwards}
+      ::-webkit-scrollbar{width:8px;height:8px}
       ::-webkit-scrollbar-track{background:transparent}
-      ::-webkit-scrollbar-thumb{background:rgba(34,197,94,0.3);border-radius:99px}
-      ::selection{background:#DCFCE7;color:#166534}
-      input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important}
-      button{transition:all 0.15s ease!important}
+      ::-webkit-scrollbar-thumb{background:var(--bg-subtle2);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+      ::-webkit-scrollbar-thumb:hover{background:var(--text-muted);background-clip:padding-box}
+      ::selection{background:var(--green-light);color:var(--green-deep)}
+      input,textarea,select{font-family:'Plus Jakarta Sans','Helvetica Neue',sans-serif!important}
+      button{transition:all 0.18s cubic-bezier(0.16,1,0.3,1)!important}
       details summary::-webkit-details-marker{display:none}
+      .card-hover{transition:transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s}
+      .card-hover:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:var(--border-solid)}
       @media(max-width:768px){.desktop-only{display:none!important}.mobile-only{display:flex!important}}
       @media(min-width:769px){.mobile-only{display:none!important}.desktop-only{display:flex!important}}
       @media print{
@@ -1816,12 +1827,13 @@ Rules:
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:1000}}>
 
             {/* Hero */}
-            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:isMobile?"24px":"36px 40px",marginBottom:24,position:"relative",overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.2)"}}>
-              <div style={{position:"absolute",top:-60,right:-60,width:300,height:300,background:"radial-gradient(circle,rgba(34,197,94,0.15) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
+            <div className="stagger-in" style={{background:"linear-gradient(140deg,#101013 0%,#1a1a20 55%,#15211b 100%)",borderRadius:"var(--radius-lg)",padding:isMobile?"26px 24px":"40px 44px",marginBottom:24,position:"relative",overflow:"hidden",boxShadow:"0 1px 2px rgba(0,0,0,0.1), 0 20px 50px rgba(16,16,19,0.25)",border:"1px solid rgba(255,255,255,0.04)"}}>
+              <div style={{position:"absolute",top:-80,right:-80,width:340,height:340,background:"radial-gradient(circle,rgba(61,214,140,0.18) 0%,transparent 65%)",borderRadius:"50%",pointerEvents:"none"}}/>
+              <div style={{position:"absolute",bottom:-120,left:-60,width:280,height:280,background:"radial-gradient(circle,rgba(91,91,214,0.10) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
               <div style={{position:"relative",zIndex:1,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:16}}>
                 <div>
-                  <div style={{fontSize:11,fontWeight:600,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:8}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
-                  <h1 style={{fontSize:isMobile?26:36,fontWeight:800,letterSpacing:"-1.5px",margin:0,color:"white",lineHeight:1.1,marginBottom:10}}>Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"}</h1>
+                  <div style={{fontSize:11,fontWeight:600,color:"#5BE3A0",letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:8}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+                  <h1 style={{fontSize:isMobile?27:38,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"white",lineHeight:1.1,marginBottom:10}}>Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"}</h1>
                   <p style={{fontSize:isMobile?13:15,color:"rgba(148,163,184,0.9)",margin:0,lineHeight:1.6}}>
                     {requests.length===0?"Welcome to ProQuote - create your first material request to get started":`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.`}
                   </p>
@@ -1909,10 +1921,10 @@ Rules:
                 {label:"Awaiting quotes", value:stats.pending,  color:"#F59E0B", grad:"linear-gradient(135deg,#F59E0B,#D97706)", icon:"⏱️", nav:()=>setView("quotes")},
                 {label:"Quotes received", value:stats.received, color:"#8B5CF6", grad:"linear-gradient(135deg,#8B5CF6,#7C3AED)", icon:"📬", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
                 {label:"Approved POs",    value:stats.approved, color:"#22C55E", grad:"linear-gradient(135deg,#22C55E,#16A34A)", icon:"✅", nav:()=>setView("orders")},
-              ].map(s=>(
-                <button key={s.label} onClick={s.nav} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"14px 16px":"18px 22px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"all 0.15s"}}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 4px 16px ${s.color}22`;}}
-                  onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
+              ].map((s,si)=>(
+                <button key={s.label} onClick={s.nav} className="stagger-in" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"16px 18px":"20px 24px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s",animationDelay:`${si*0.05}s`}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 2px 4px rgba(26,26,23,0.04), 0 12px 28px ${s.color}1f`;e.currentTarget.style.transform="translateY(-3px)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";e.currentTarget.style.transform="translateY(0)";}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
                     <div style={{fontSize:18}}>{s.icon}</div>
                     <div style={{fontSize:9,fontWeight:700,color:s.value>0?s.color:"var(--text-muted)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{s.value>0?"active":"empty"}</div>
@@ -1931,8 +1943,10 @@ Rules:
                 {label:"Analyse",      sub:"Compare quotes",        icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#8B5CF6"},
                 {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#22C55E"},
                 {label:"Suppliers",    sub:"Manage accounts",       icon:"🏢", action:()=>setView("suppliers"), accent:"#F59E0B"},
-              ].map(q=>(
-                <button key={q.label} onClick={q.action} style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"12px 14px":"18px 20px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"all 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:100}}>
+              ].map((q,qi)=>(
+                <button key={q.label} onClick={q.action} className="stagger-in" style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"14px 16px":"18px 22px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:104,animationDelay:`${0.2+qi*0.04}s`}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
                   <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:q.accent,borderRadius:"var(--radius-lg) var(--radius-lg) 0 0"}}/>
                   <div style={{fontSize:18,marginTop:2}}>{q.icon}</div>
                   <div>
@@ -1945,7 +1959,7 @@ Rules:
 
             {/* Recent requests */}
             {requests.length>0&&(
-              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",boxShadow:"var(--shadow-sm)"}}>
+              <div className="stagger-in" style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",boxShadow:"var(--shadow-sm)",animationDelay:"0.35s"}}>
                 <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:darkMode?"rgba(34,197,94,0.04)":"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>Recent requests</div>
                   <button onClick={()=>setView("requests")} style={{fontSize:12,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all</button>
@@ -3107,7 +3121,7 @@ Rules:
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.12),transparent 70%)",borderRadius:"50%"}}/>
               <div style={{position:"relative",zIndex:1}}>
-                <div style={{fontSize:11,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Help Centre</div>
+                <div style={{fontSize:11,color:"#5BE3A0",letterSpacing:"0.18em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Help Centre</div>
                 <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px",marginBottom:8}}>How can we help?</h1>
                 <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:0}}>Ask the AI assistant or browse the FAQ below</p>
               </div>
