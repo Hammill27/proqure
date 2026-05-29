@@ -1737,6 +1737,8 @@ Rules:
       ::-webkit-scrollbar-thumb:hover{background:var(--text-muted);background-clip:padding-box}
       ::selection{background:var(--green-light);color:var(--green-deep)}
       input,textarea,select{font-family:'Plus Jakarta Sans','Helvetica Neue',sans-serif!important}
+      input:focus,textarea:focus,select:focus{border-color:var(--green-dark)!important;box-shadow:0 0 0 3px var(--green-light)!important}
+      input,textarea,select{transition:border-color 0.15s,box-shadow 0.15s}
       button{transition:all 0.18s cubic-bezier(0.16,1,0.3,1)!important}
       details summary::-webkit-details-marker{display:none}
       .card-hover{transition:transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s}
@@ -1754,8 +1756,10 @@ Rules:
 
       {/* Toast */}
       {toast&&(
-        <div style={{position:"fixed",top:isMobile?16:24,right:isMobile?16:24,left:isMobile?16:"auto",zIndex:9999,background:toast.type==="warn"?"#FEF3C7":"#111827",color:toast.type==="warn"?"#92400E":"white",padding:"12px 20px",borderRadius:12,fontSize:14,fontWeight:500,boxShadow:"0 8px 32px rgba(0,0,0,0.2)",display:"flex",alignItems:"center",gap:10,animation:"slideUp 0.2s ease",border:"1px solid",borderColor:toast.type==="warn"?"#FDE68A":"rgba(255,255,255,0.1)"}}>
-          <span>{toast.type==="warn"?"!":"ok"}</span>
+        <div style={{position:"fixed",top:isMobile?16:24,right:isMobile?16:24,left:isMobile?16:"auto",zIndex:9999,background:toast.type==="warn"?"var(--amber-light)":"var(--sidebar-bg)",color:toast.type==="warn"?"var(--amber)":"white",padding:"13px 20px",borderRadius:"var(--radius-md)",fontSize:14,fontWeight:600,letterSpacing:"-0.01em",boxShadow:"var(--shadow-lg)",display:"flex",alignItems:"center",gap:10,animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)",border:"1px solid",borderColor:toast.type==="warn"?"var(--amber)":"rgba(255,255,255,0.08)",maxWidth:360}}>
+          <span style={{flexShrink:0,display:"inline-flex"}}>{toast.type==="warn"
+            ?<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/><circle cx="12" cy="12" r="10"/></svg>
+            :<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3DD68C" strokeWidth="2.6" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}</span>
           <span>{toast.msg}</span>
         </div>
       )}
@@ -1772,7 +1776,7 @@ Rules:
           <div style={{flex:1,overflowY:"auto",padding:"12px 12px"}}>
             <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
             {navItems.map(item=>(
-              <button key={item.id} onClick={()=>handleNav(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"0 8px 8px 0",border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-active)":"3px solid transparent",transition:"all 0.15s"}}>
+              <button key={item.id} onClick={()=>handleNav(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"0 8px 8px 0",border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-active)":"3px solid transparent",transition:"all 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
                 {item.label}
                 {item.id==="orders"&&pendingOrders>0&&(
@@ -2004,9 +2008,9 @@ Rules:
         )}
 
         {view==="new"&&(
-          <div style={{maxWidth:860,animation:"fadeIn 0.25s ease"}}>
+          <div className="stagger-in" style={{maxWidth:860}}>
             <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>New material request</h1>
+              <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>New material request</h1>
               <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step {step} of 3 - {step===1?"Describe your materials":step===2?"Review and configure":"Review and send"}</p>
             </div>
 
@@ -2015,7 +2019,7 @@ Rules:
               {[{n:1,l:"Describe"},{n:2,l:"Review"},{n:3,l:"Send"}].map((s,i)=>(
                 <div key={s.n} style={{display:"flex",alignItems:"center",flex:i<2?1:"none"}}>
                   <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                    <div style={{width:30,height:30,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,background:step>s.n?"var(--green-dark)":step===s.n?"var(--green-dark)":"var(--bg-subtle2)",color:step>=s.n?"white":"var(--text-muted)"}}>{step>s.n?"ok":s.n}</div>
+                    <div style={{width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,background:step>=s.n?"var(--green-dark)":"var(--bg-subtle2)",color:step>=s.n?"white":"var(--text-muted)",boxShadow:step===s.n?"0 0 0 4px var(--green-light)":"none",transition:"all 0.3s cubic-bezier(0.16,1,0.3,1)"}}>{step>s.n?<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>:s.n}</div>
                     <span style={{fontSize:11,color:step===s.n?"var(--green-dark)":"var(--text-muted)",fontWeight:step===s.n?600:400}}>{s.l}</span>
                   </div>
                   {i<2&&<div style={{flex:1,height:2,background:step>s.n?"var(--green-dark)":"var(--bg-subtle2)",margin:"0 4px",marginBottom:14}}/>}
@@ -2458,7 +2462,7 @@ Rules:
                         const sc = qa.completeness>=80?"var(--green-dark)":qa.completeness>=60?"var(--amber)":"var(--red)";
                         const isApproved = approvedQuoteId===qa._id;
                         return(
-                          <div key={qa._id||qi} style={{marginBottom:8,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",borderTop:`3px solid ${vc.border}`,overflow:"hidden",boxShadow:isOpen?"var(--shadow-md)":"var(--shadow-sm)",transition:"all 0.2s"}}>
+                          <div key={qa._id||qi} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",borderTop:`3px solid ${vc.border}`,overflow:"hidden",boxShadow:isOpen?"var(--shadow-md)":"var(--shadow-sm)",transition:"box-shadow 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
                             <div onClick={()=>setExpandedQuote(isOpen?null:qa._id)} style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isOpen?vc.bg:"var(--bg-card-solid)",transition:"background 0.2s"}}>
                               <div style={{width:46,height:46,borderRadius:"50%",background:`conic-gradient(${sc} ${qa.completeness*3.6}deg, var(--bg-subtle2) 0deg)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                                 <div style={{width:34,height:34,borderRadius:"50%",background:"var(--bg-card-solid)",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -2684,10 +2688,10 @@ Rules:
         )}
 
         {view==="orders"&&(
-          <div style={{maxWidth:900,animation:"fadeIn 0.25s ease"}}>
+          <div className="stagger-in" style={{maxWidth:900}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
               <div>
-                <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Orders</h1>
+                <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Orders</h1>
                 <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{orders.length} total orders</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -2742,7 +2746,7 @@ Rules:
                   const isExpanded = expandedOrder===order.id;
 
                   return(
-                    <div key={order.id} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isExpanded?"var(--green-dark)":"var(--border)"}`,overflow:"hidden",boxShadow:isExpanded?"var(--shadow-md)":"var(--shadow-sm)",transition:"all 0.2s"}}>
+                    <div key={order.id} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isExpanded?"var(--green-dark)":"var(--border)"}`,overflow:"hidden",boxShadow:isExpanded?"var(--shadow-md)":"var(--shadow-sm)",transition:"box-shadow 0.2s cubic-bezier(0.16,1,0.3,1),border-color 0.2s"}}>
 
                       {/* Clickable header row */}
                       <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)}
@@ -2873,8 +2877,8 @@ Rules:
         )}
 
         {view==="suppliers"&&(
-          <div style={{maxWidth:900,animation:"fadeIn 0.25s ease"}}>
-            <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",marginBottom:4,color:"var(--text-primary)"}}>Suppliers</h1>
+          <div className="stagger-in" style={{maxWidth:900}}>
+            <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Suppliers</h1>
             <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Manage your supplier accounts and contact details</p>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:12,marginBottom:24}}>
               {suppliers.map(s=>(
@@ -2940,10 +2944,10 @@ Rules:
         )}
 
         {view==="requests"&&(
-          <div style={{maxWidth:1000,animation:"fadeIn 0.25s ease"}}>
+          <div className="stagger-in" style={{maxWidth:1000}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
               <div>
-                <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>All requests</h1>
+                <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>All requests</h1>
                 <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{requests.length} total requests</p>
               </div>
               <div style={{display:"flex",gap:8}}>
@@ -3028,10 +3032,10 @@ Rules:
         )}
 
         {view==="library"&&(
-          <div style={{maxWidth:1000,animation:"fadeIn 0.25s ease"}}>
+          <div className="stagger-in" style={{maxWidth:1000}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:24,flexWrap:"wrap",gap:12}}>
               <div>
-                <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Quote library</h1>
+                <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Quote library</h1>
                 <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{quoteLibrary.length} quotes saved · Supplier price history</p>
               </div>
               {quoteLibrary.length>0&&(
@@ -3117,12 +3121,12 @@ Rules:
         )}
 
         {view==="help"&&(
-          <div style={{maxWidth:900,animation:"fadeIn 0.25s ease"}}>
+          <div className="stagger-in" style={{maxWidth:900}}>
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.12),transparent 70%)",borderRadius:"50%"}}/>
               <div style={{position:"relative",zIndex:1}}>
                 <div style={{fontSize:11,color:"#5BE3A0",letterSpacing:"0.18em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Help Centre</div>
-                <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px",marginBottom:8}}>How can we help?</h1>
+                <h1 style={{fontSize:30,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.03em",marginBottom:8}}>How can we help?</h1>
                 <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:0}}>Ask the AI assistant or browse the FAQ below</p>
               </div>
             </div>
@@ -3206,12 +3210,12 @@ Rules:
         )}
 
         {view==="contact"&&(
-          <div style={{maxWidth:760,animation:"fadeIn 0.25s ease"}}>
+          <div className="stagger-in" style={{maxWidth:760}}>
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(99,102,241,0.12),transparent 70%)",borderRadius:"50%"}}/>
               <div style={{position:"relative",zIndex:1}}>
                 <div style={{fontSize:11,color:"#818CF8",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Support</div>
-                <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px",marginBottom:8}}>Contact us</h1>
+                <h1 style={{fontSize:30,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.03em",marginBottom:8}}>Contact us</h1>
                 <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:0}}>Raise a support request, report a bug, or suggest a feature</p>
               </div>
             </div>
@@ -3273,8 +3277,8 @@ Rules:
         )}
 
         {view==="settings"&&(
-          <div style={{maxWidth:720,animation:"fadeIn 0.25s ease"}}>
-            <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",marginBottom:4,color:"var(--text-primary)"}}>Settings</h1>
+          <div className="stagger-in" style={{maxWidth:720}}>
+            <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Settings</h1>
             <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Configure your company details and API keys</p>
             <div style={{display:"grid",gap:16}}>
               <Card>
@@ -3426,8 +3430,8 @@ Rules:
 
       {/* Modals */}
       {approveConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{textAlign:"center",marginBottom:20}}>
               <div style={{fontSize:36,marginBottom:12}}>📋</div>
               <div style={{fontSize:18,fontWeight:700,color:"var(--text-primary)",marginBottom:6}}>Approve this quote?</div>
@@ -3450,7 +3454,7 @@ Rules:
       )}
 
       {approveSuccess&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"36px 40px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--green-dark)",textAlign:"center",animation:"fadeIn 0.3s ease"}}>
             <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>✅</div>
             <div style={{fontSize:22,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.5px",marginBottom:6}}>PO Approved</div>
@@ -3470,8 +3474,8 @@ Rules:
       )}
 
       {deleteConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:400,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:400,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>🗑️</div>
             <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Delete this request?</div>
             <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>This cannot be undone. The request, quotes, and all associated data will be permanently removed.</div>
@@ -3484,8 +3488,8 @@ Rules:
       )}
 
       {editModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:540,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:540,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{fontSize:16,fontWeight:600,marginBottom:20,color:"var(--text-primary)"}}>Edit request - {editModal.id}</div>
             <div style={{display:"grid",gap:14}}>
               <div>
@@ -3519,8 +3523,8 @@ Rules:
       )}
 
       {activityModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:560,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:560,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
                 <div style={{fontSize:16,fontWeight:600,color:"var(--text-primary)"}}>{activityModal.id} - Activity log</div>
@@ -3552,8 +3556,8 @@ Rules:
       )}
 
       {showShortcuts&&(
-        <div onClick={()=>setShowShortcuts(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:480,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div onClick={()=>setShowShortcuts(false)} style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:480,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)"}}>Keyboard shortcuts</div>
               <kbd style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:5,padding:"2px 8px",fontSize:11,color:"var(--text-secondary)",cursor:"pointer"}} onClick={()=>setShowShortcuts(false)}>Esc</kbd>
@@ -3578,8 +3582,8 @@ Rules:
       )}
 
       {templateModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"24px 28px",maxWidth:560,width:"100%",maxHeight:"85vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"24px 28px",maxWidth:560,width:"100%",maxHeight:"85vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
                 <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Request templates</div>
