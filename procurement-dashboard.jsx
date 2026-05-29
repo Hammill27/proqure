@@ -50,10 +50,10 @@ const DEFAULT_SUPPLIERS = [
   { id:5, name:"Graham",                  categories:["HVAC","Plumbing","Ventilation"], email:"rfq@grahamplumbingheating.co.uk" },
 ];
 const STATUS = {
-  draft:    { bg:"#FEF9C3", text:"#854D0E",  label:"Draft" },
-  pending:  { bg:"#EEF2FF", text:"#3730A3",  label:"Pending quotes" },
-  received: { bg:"#FAF5FF", text:"#6B21A8",  label:"Quotes received" },
-  approved: { bg:"#DCFCE7", text:"#166534",  label:"Approved" },
+  draft:    { bg:"var(--amber-light)",   text:"#854D0E",         label:"Draft" },
+  pending:  { bg:"var(--indigo-light)",  text:"var(--indigo)",   label:"Pending quotes" },
+  received: { bg:"#FAF5FF",             text:"#6B21A8",         label:"Quotes received" },
+  approved: { bg:"var(--green-light)",   text:"var(--green-deep)",label:"Approved" },
 };
 
 // --- AI helpers ---------------------------------------------------------------
@@ -746,9 +746,13 @@ export default function App() {
   });
   const saveSettings = (patch) => {
     const next = {...settings,...patch}; setSettings(next);
-    localStorage.setItem("piq_settings", JSON.stringify(next));
+    try {
+      localStorage.setItem("piq_settings", JSON.stringify(next));
+    } catch(err) {
+      showToast("Settings saved but storage is full - try a smaller logo","warn");
+    }
   };
-  const saveSuppliers = (s) => { setSuppliers(s); localStorage.setItem("piq_suppliers",JSON.stringify(s)); };
+  const saveSuppliers = (s) => { setSuppliers(s); try{localStorage.setItem("piq_suppliers",JSON.stringify(s))}catch{} };
 
   // Nav & toast
   const [view, setView] = useState("dashboard");
@@ -775,6 +779,7 @@ export default function App() {
   const [deliveryMethod, setDeliveryMethod] = useState("direct");
   const [deliveryDate,   setDeliveryDate]   = useState("");
   const [altAddress,     setAltAddress]     = useState("");
+  const [requestNotes,   setRequestNotes]   = useState("");
 
   // Help AI chat
   const [helpMessages, setHelpMessages] = useState([]);
@@ -789,13 +794,14 @@ export default function App() {
   useEffect(()=>{
     const handler = e=>{
       if (e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT") return;
+      if (e.key==="?"||e.key==="/") { setShowShortcuts(p=>!p); return; }
       if (e.key==="n"||e.key==="N") { setView("new"); resetNewRequest(); }
       else if (e.key==="q"||e.key==="Q") setView("quotes");
       else if (e.key==="o"||e.key==="O") setView("orders");
       else if (e.key==="d"||e.key==="D") setView("dashboard");
       else if (e.key==="s"||e.key==="S") setView("settings");
       else if (e.key==="h"||e.key==="H") setView("help");
-      else if (e.key==="Escape") {
+      else if (e.key==="Escape") { setShowShortcuts(false);
         setDeleteConfirm(null); setEditModal(null); setActivityModal(null);
         setApproveConfirm(null); setApproveSuccess(null); setTemplateModal(false);
       }
@@ -865,8 +871,9 @@ export default function App() {
   });
   const saveToLibrary = (qa, reqId, jobRef, site, trade) => {
     const entry = {
-      id: `QL-${Date.now()}`,
+      id: `QL-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       savedAt: new Date().toISOString(),
+      expiryDate: new Date(Date.now()+(settings.quoteValidityDays||30)*24*3600000).toISOString(),
       reqId, jobRef, site, trade,
       supplierName: qa.supplierName||"Unknown",
       completeness: qa.completeness,
@@ -898,16 +905,29 @@ export default function App() {
   const [dragOver, setDragOver] = useState({}); // {supplierIndex: bool}
 
   // Settings form
-  const [sForm, setSForm] = useState({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings});
+  const [sForm, setSForm] = useState({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",logoBase64:"",poNotes:"",quoteValidityDays:30,...settings});
 
   // Supplier form
   const [newSup, setNewSup] = useState({name:"",email:"",categories:""});
 
   // Voice
+  const [autoParseAfterVoice, setAutoParseAfterVoice] = useState(false);
   const { listening, supported:voiceOk, start:micStart, stop:micStop } = useSpeechRecognition({
     onTranscript: t => setInterim(t),
-    onFinal:      t => { setRawInput(p=>p+t); setInterim(""); }
+    onFinal:      t => {
+      setRawInput(p => {
+        const updated = (p + t).trim();
+        // Auto-parse when engineer stops speaking (if key is set)
+        if (settings.openRouterKey && updated.length > 10) {
+          setAutoParseAfterVoice(true);
+        }
+        return updated + " ";
+      });
+      setInterim("");
+    }
   });
+  const supported = voiceOk;
+  const toggleListen = () => { listening ? micStop() : micStart(); };
 
   const stats = {
     total:    requests.length,
@@ -958,6 +978,11 @@ export default function App() {
       const data = await parseMaterialList(rawInput);
       setParsed(data);
       if (data?.jobRef && !jobRef) setJobRef(data.jobRef);
+      // Duplicate detection
+      if (jobRef) {
+        const dupe = requests.find(r=>r.jobRef&&r.jobRef.toLowerCase()===jobRef.toLowerCase()&&r.trade===trade&&(Date.now()-new Date(r.created||Date.now()).getTime())<30*24*3600000);
+        if (dupe) showToast(`Heads up: similar request ${dupe.id} already exists for ${jobRef}`,"warn");
+      }
       // Auto-select all suppliers matching the current trade
       const matchingIds = suppliers
         .filter(s=>s.categories.some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()))
@@ -970,6 +995,14 @@ export default function App() {
     setLoading(false);
   }
 
+
+  // Auto-parse after voice or scan — fires when listening stops or scan sets flag
+  useEffect(() => {
+    if (!listening && autoParseAfterVoice && rawInput.trim().length > 10 && !loading) {
+      setAutoParseAfterVoice(false);
+      setTimeout(() => handleParse(), 400);
+    }
+  }, [listening, autoParseAfterVoice, rawInput, loading]);
   async function handleGenRFQ() {
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Generating RFQ email...");
@@ -991,10 +1024,10 @@ export default function App() {
     const ok = results.filter(r=>r.success).length;
     if (ok > 0) {
       const sentSuppliers = toSend.map(s=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false }));
-      const newId = `RFQ-${String(requests.length+1).padStart(3,"0")}`;
+      const newId = `RFQ-${Date.now().toString().slice(-6)}`;
       const r = {
         id: newId,
-        jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
+        jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes,
         status:"pending",
         created: new Date().toISOString().split("T")[0],
         items: parsed.items,
@@ -1013,7 +1046,7 @@ export default function App() {
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
         setRfqEmail(""); setEmailRes(null); setSelSup([]);
-        setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
+        setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline(""); setRequestNotes("");
         setView("dashboard");
       }, 1800);
       setEmailRes(results); // show brief success UI
@@ -1065,12 +1098,15 @@ export default function App() {
     setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
     setRfqEmail(""); setEmailRes(null); setSelSup([]);
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
+    setInterim(""); setScanning(false); setAutoParseAfterVoice(false);
+    setLoading(false); setLoadMsg("");
+    setAllAnalyses([]); setExpandedQuote(null);
   }
 
   function handleFinalise() {
     if (parsed) {
       const r = {
-        id:`RFQ-${String(requests.length+1).padStart(3,"0")}`,
+        id:`RFQ-${Date.now().toString().slice(-6)}`,
         jobRef:jobRef||"TBC", site:site||"Site TBC", trade,
         status: "draft",
         created: new Date().toISOString().split("T")[0],
@@ -1142,6 +1178,7 @@ export default function App() {
       const libEntry = {
         id:`QL-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
         savedAt:new Date().toISOString(),
+        expiryDate: new Date(Date.now()+(settings.quoteValidityDays||30)*24*3600000).toISOString(),
         reqId:activeReq.id, jobRef:activeReq.jobRef, site:activeReq.site, trade:activeReq.trade,
         supplierName:a.supplierName, completeness:a.completeness,
         totalEstimate:a.estimatedTotal||a.subtotal||"",
@@ -1286,7 +1323,8 @@ export default function App() {
     const note = orderNote[order.id]||"";
     const subject = `Purchase Order ${order.poNumber} - ${order.jobRef}`;
     const deliveryLabels = { direct:"Delivery direct to site", alternative:"Delivery to alternative address", collect:"Collection from branch", tbc:"Delivery method to be confirmed" };
-    const body = `Dear ${order.supplier},
+    const logoLine = settings.logoBase64 ? `** ${settings.company||"ProQuote"} **\n` : "";
+    const body = `${logoLine}Dear ${order.supplier},
 
 Please find attached Purchase Order ${order.poNumber} for job reference ${order.jobRef}.
 
@@ -1323,6 +1361,9 @@ ${settings.company||""}`;
 
   const isMobile = useIsMobile();
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [quoteViewMode, setQuoteViewMode] = useState("cards");
+  const [marginPct, setMarginPct] = useState(0);
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; localStorage.setItem("piq_dark",n?"1":"0"); return n; });
 
@@ -1330,10 +1371,230 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
 
+  // Expiring quotes (within 5 days or already expired)
+  const expiringQuotes = quoteLibrary.filter(q => {
+    if (!q.expiryDate) return false;
+    const daysLeft = Math.ceil((new Date(q.expiryDate).getTime() - Date.now()) / 86400000);
+    return daysLeft <= 5;
+  }).sort((a,b) => new Date(a.expiryDate) - new Date(b.expiryDate));
+
+  // Template modal computed values (used in JSX)
+  const templateTradeOrder = ["Plumbing","HVAC","Electrical","Mechanical","Ventilation","Gas","General"];
+  const templateGrouped = templateTradeOrder.reduce((acc,tr)=>{
+    const matching = templates.filter(t=>t.trade===tr);
+    if(matching.length>0) acc[tr]=matching;
+    return acc;
+  },{});
+  templates.filter(t=>!templateTradeOrder.includes(t.trade)).forEach(t=>{
+    if(!templateGrouped[t.trade]) templateGrouped[t.trade]=[];
+    templateGrouped[t.trade].push(t);
+  });
+  const templateCurrentTrade = trade||"Plumbing";
+
+  const navItems = [
+          {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
+          {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
+          {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
+          {id:"quotes",   label:"Quotes",         d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
+          {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
+          {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
+          {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
+          {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
+          {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
+          {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
+  ];
+  const handleNav = (id) => { setView(id); setMoreMenuOpen(false); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); if(id==="new")resetNewRequest(); };
+  const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
+
+  // Overdue requests (for dashboard banner)
+  const overdueRequests = (() => {
+    const now = Date.now();
+    return requests.filter(r => {
+      if (r.status !== "pending") return false;
+      const sent = r.activity?.find(a => a.action === "RFQ emails sent")?.ts
+                || r.activity?.find(a => a.action === "Created")?.ts;
+      if (!sent) return false;
+      return (now - new Date(sent).getTime()) / 3600000 >= 24;
+    });
+  })();
+
+  // Quote analysis pending status
+  const activeReqSentTs = activeReq?.activity?.find(a => a.action === "RFQ emails sent")?.ts;
+  const activeReqHoursAgo = activeReqSentTs ? Math.floor((Date.now() - new Date(activeReqSentTs).getTime()) / 3600000) : 0;
+
+  // Quote library scorecards
+  const supplierScoreCards = (() => {
+    const bySupplier = {};
+    quoteLibrary.forEach(q => {
+      if (!bySupplier[q.supplierName]) bySupplier[q.supplierName] = {name:q.supplierName, quotes:[], total:0};
+      bySupplier[q.supplierName].quotes.push(q);
+      bySupplier[q.supplierName].total += q.completeness || 0;
+    });
+    return Object.values(bySupplier).map(s => ({
+      ...s,
+      avgCompleteness: Math.round(s.total / s.quotes.length),
+      lastQuoted: s.quotes.sort((a,b) => new Date(b.savedAt)-new Date(a.savedAt))[0]?.savedAt
+    })).sort((a,b) => b.avgCompleteness - a.avgCompleteness);
+  })();
+
+  // Help page FAQs
+  const helpFaqs = [
+    {cat:"Getting started", qs:[
+      {q:"What is ProQuote?", a:"ProQuote is an AI-powered procurement platform for trades contractors. It automates the full workflow from creating a material request on site through to sending a PO to your supplier."},
+      {q:"What trades are supported?", a:"Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas - with General as a catch-all."},
+      {q:"Does it work on mobile?", a:"Yes. ProQuote is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar and voice input."},
+      {q:"Do I need to install anything?", a:"No. ProQuote runs entirely in a browser - Chrome, Safari, Edge. No app download needed."},
+      {q:"Where is my data stored?", a:"All data is stored in your browser and persists across sessions. Cloud backup is coming soon."},
+    ]},
+    {cat:"Creating requests", qs:[
+      {q:"How does voice input work?", a:"Tap the microphone button on the new request page and speak your list naturally. The app transcribes in real time and the AI structures it into a clean itemised list."},
+      {q:"Can I edit the parsed list?", a:"Yes. Every field is editable - description, quantity, unit, category, and notes. You can also add or remove items before sending."},
+      {q:"What are templates?", a:"Templates save common material lists for instant reuse. They are grouped by trade so you can find them quickly."},
+      {q:"Can I set a response deadline?", a:"Yes. In Step 2 there is a response deadline date picker. The date appears in the RFQ email and as a countdown on the dashboard."},
+    ]},
+    {cat:"Quotes & analysis", qs:[
+      {q:"How do I enter a supplier quote?", a:"In Quote Analysis, each supplier has their own box. Paste their email response or upload their PDF/Excel file. The AI reads documents automatically."},
+      {q:"What does the AI check?", a:"The AI checks every item for price, stock availability, quantity accuracy, carriage charges, lead times, discounts, and alternatives. It produces a completeness score and recommends the best supplier."},
+      {q:"What happens to other quotes when I approve one?", a:"All other quotes are automatically saved to the Quote Library in the background."},
+      {q:"Can I undo an approval?", a:"Yes. The approved quote card shows an Undo button that reverses everything."},
+    ]},
+    {cat:"Orders", qs:[
+      {q:"How do I send a PO to a supplier?", a:"In the Orders page, find the order and tap Send order. An email is sent to the supplier with the full PO details."},
+      {q:"How do I attach a supplier confirmation?", a:"When an order is Sent, the right panel shows an upload area. Upload the confirmation PDF and the order moves to Confirmed automatically."},
+      {q:"Do completed orders disappear?", a:"No. All orders stay permanently. Use the All / Active / Delivered filter to manage what you see."},
+    ]},
+    {cat:"Settings & troubleshooting", qs:[
+      {q:"Why is the AI not working?", a:"You need a free OpenRouter API key. Go to openrouter.ai, sign up, copy your key, and paste it in Settings."},
+      {q:"Why are emails not sending?", a:"Email sending requires a Resend API key and a verified domain. Go to resend.com, create a free account, verify your domain, and add the key in Settings."},
+      {q:"My data disappeared after refreshing.", a:"Data is stored in your browser. Clearing browser data will remove it. Full cloud sync is coming soon."},
+    ]},
+  ];
+
+  // File upload handler for quote entry
+  const processQuoteFile = async(file, si, sup, activeReqId) => {
+    if (!file) return;
+    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    window.__piq_or_key__ = settings.openRouterKey;
+    setFileExtracting(prev=>({...prev,[si]:true}));
+    showToast(`Reading ${file.name}...`);
+    try {
+      const { content, type } = await readFileForExtraction(file);
+      showToast(`AI extracting data from ${file.name}...`);
+      const extracted = await extractQuoteFromFile(content, file.name, type);
+      const newQuote = sup.quote?.trim()
+        ? sup.quote + "\n\n--- From " + file.name + " ---\n" + extracted
+        : "--- Extracted from " + file.name + " ---\n" + extracted;
+      setRequests(p=>p.map(r=>r.id===activeReqId?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:newQuote}:s)}:r));
+      setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:newQuote}:s)}));
+      showToast(`${file.name} extracted - review and save`);
+    } catch(err) {
+      showToast(`Could not read ${file.name}: ${err.message}`,"warn");
+    }
+    setFileExtracting(prev=>({...prev,[si]:false}));
+  };
+
+  // Document scan handler
+  const [scanning, setScanning] = useState(false);
+  const scanDocumentFile = async (file) => {
+    if (!file) return;
+    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    window.__piq_or_key__ = settings.openRouterKey;
+    setRawInput("");  // Clear previous input before scanning
+    setScanning(true);
+    setLoading(true);
+    setLoadMsg("Reading document...");
+    try {
+      // Read file as base64 for vision API
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(",")[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+
+      const isImage = file.type.startsWith("image/");
+      const isPDF   = file.type === "application/pdf";
+
+      if (!isImage && !isPDF) {
+        // Text-based file — read as text and parse normally
+        const text = await file.text();
+        setRawInput(text);
+        setScanning(false);
+        showToast("Document loaded — parsing now...");
+        setTimeout(() => handleParse(), 300);
+        return;
+      }
+
+      setLoadMsg("AI reading document...");
+
+      // Use vision-capable model for images
+      const key = settings.openRouterKey;
+      const systemPrompt = `You are an expert at reading construction and trades documents.
+Extract ALL material items from this document — scope of works, schedule of materials, delivery notes, handwritten lists, anything.
+Return ONLY a plain text list in this format, one item per line:
+[quantity] [unit] [description]
+Example:
+20 metres 22mm copper pipe
+6 no 22mm compression elbows
+1 box PTFE tape
+
+Rules:
+- Include every material item you can see, even if quantities are unclear
+- If quantity is not clear, use 1 as default
+- If unit is not clear, use "no" (number off)
+- Do NOT include labour, costs, prices, or non-material items
+- Do NOT add any explanation or preamble — just the list`;
+
+      let content;
+      if (isImage) {
+        content = [
+          { type: "image_url", image_url: { url: `data:${file.type};base64,${base64}` } },
+          { type: "text", text: "Extract all material items from this document as a plain list." }
+        ];
+      } else {
+        // PDF — send as text extraction prompt
+        content = `I have a PDF document. Here is the base64 content. Please extract all material items: ${base64.slice(0, 8000)}`;
+      }
+
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + key,
+          "HTTP-Referer": "https://proquote.app",
+          "X-Title": "ProQuote"
+        },
+        body: JSON.stringify({
+          model: isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user",   content: isImage ? content : (typeof content === "string" ? content : JSON.stringify(content)) }
+          ]
+        })
+      });
+      const data = await res.json();
+      const extracted = data.choices?.[0]?.message?.content || "";
+      if (!extracted.trim()) throw new Error("No items found in document");
+
+      setRawInput(extracted.trim());
+      setScanning(false);
+      setLoading(false);
+      showToast(`Document scanned - ${extracted.trim().split("\n").filter(Boolean).length} items found`);
+      // Auto-parse after scan
+      setTimeout(() => handleParse(), 400);
+
+    } catch(err) {
+      setScanning(false);
+      setLoading(false);
+      setLoadMsg("");
+      showToast("Could not read document: " + err.message, "warn");
+    }
+  };
+
   // -- Render --
   return (
     <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Inter','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}}>
-      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
       <style>{`
       /* -- LIGHT THEME (default) -- */
       :root {
@@ -1369,16 +1630,13 @@ ${settings.company||""}`;
         --sidebar-text:   #9CA3AF;
         --sidebar-active: #22C55E;
         --sidebar-activebg: rgba(34,197,94,0.1);
-        --sidebar-activeborder: #22C55E;
         --topbar-bg:      #111827;
         --bottombar-bg:   #111827;
         --radius-sm:      8px;
         --radius-md:      12px;
         --radius-lg:      16px;
       }
-
-      /* -- DARK THEME - Microsoft Admin inspired -- */
-      /* Clean slate surfaces, consistent elevation, green brand accents */
+      /* -- DARK THEME -- */
       [data-theme="dark"] {
         --bg-page:        #1F2937;
         --bg-card:        #111827;
@@ -1412,158 +1670,1550 @@ ${settings.company||""}`;
         --sidebar-text:   #8B949E;
         --sidebar-active: #34D399;
         --sidebar-activebg: rgba(52,211,153,0.08);
-        --sidebar-activeborder: #34D399;
         --topbar-bg:      #0D1117;
         --bottombar-bg:   #0D1117;
-        --radius-sm:      8px;
-        --radius-md:      12px;
-        --radius-lg:      16px;
       }
-
-      /* -- Global dark mode overrides -- */
-      [data-theme="dark"] input,
-      [data-theme="dark"] textarea,
-      [data-theme="dark"] select {
-        background: var(--bg-input) !important;
-        color: var(--text-primary) !important;
-        border-color: var(--border-solid) !important;
+      [data-theme="dark"] input,[data-theme="dark"] textarea,[data-theme="dark"] select {
+        background:var(--bg-input)!important;color:var(--text-primary)!important;border-color:var(--border-solid)!important;
       }
-      [data-theme="dark"] input::placeholder,
-      [data-theme="dark"] textarea::placeholder {
-        color: var(--text-muted) !important;
-      }
-      [data-theme="dark"] table thead tr {
-        background: var(--bg-subtle) !important;
-      }
-      [data-theme="dark"] tr {
-        border-color: var(--border) !important;
-      }
+      [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder { color:var(--text-muted)!important; }
       *{box-sizing:border-box;-webkit-font-smoothing:antialiased}
-      @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
       @keyframes spin{to{transform:rotate(360deg)}}
-      @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-      @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-      @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
-      @keyframes float{0%,100%{transform:translateY(0px) rotate(0deg)}50%{transform:translateY(-20px) rotate(3deg)}}
-      @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
-      @keyframes glow{0%,100%{opacity:0.4}50%{opacity:0.8}}
+      @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
       @keyframes cardExpand{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
       ::-webkit-scrollbar{width:5px;height:5px}
       ::-webkit-scrollbar-track{background:transparent}
       ::-webkit-scrollbar-thumb{background:rgba(34,197,94,0.3);border-radius:99px}
-      ::-webkit-scrollbar-thumb:hover{background:rgba(34,197,94,0.5)}
       ::selection{background:#DCFCE7;color:#166534}
-      input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important;background:var(--bg-input)!important;color:var(--text-primary)!important;border-color:var(--border-solid)!important}
+      input,textarea,select{font-family:'Inter','Helvetica Neue',sans-serif!important}
       button{transition:all 0.15s ease!important}
-      .card-hover{transition:transform 0.2s ease,box-shadow 0.2s ease!important}
-      .card-hover:hover{transform:translateY(-2px)!important;box-shadow:0 8px 32px rgba(34,197,94,0.12)!important}
-      .glass{background:rgba(255,255,255,0.7)!important;backdrop-filter:blur(20px)!important;-webkit-backdrop-filter:blur(20px)!important}
-      [data-theme="dark"] .glass{background:rgba(17,24,39,0.7)!important}
-      .shimmer{background:linear-gradient(90deg,transparent 25%,rgba(255,255,255,0.08) 50%,transparent 75%);background-size:200% 100%;animation:shimmer 2s infinite}
-      .orb{position:fixed;border-radius:50%;pointer-events:none;z-index:0;filter:blur(80px);animation:float 8s ease-in-out infinite}
-      @media(max-width:768px){
-        .desktop-only{display:none!important}
-        .mobile-only{display:flex!important}
+      details summary::-webkit-details-marker{display:none}
+      @media(max-width:768px){.desktop-only{display:none!important}.mobile-only{display:flex!important}}
+      @media(min-width:769px){.mobile-only{display:none!important}.desktop-only{display:flex!important}}
+      @media print{
+        .no-print{display:none!important}
+        body{background:white!important}
+        .print-only{display:block!important}
+        @page{margin:15mm;size:A4}
       }
-      @media(min-width:769px){
-        .mobile-only{display:none!important}
-        .desktop-only{display:flex!important}
-      }`}</style>
+      .print-only{display:none}
+      `}</style>
 
-      {/* Toast notification */}
-      {toast && (
-        <div style={{position:"fixed",top:isMobile?16:24,right:isMobile?16:24,left:isMobile?16:"auto",zIndex:9999,background:toast.type==="warn"?"rgba(255,251,235,0.95)":"rgba(240,253,244,0.95)",backdropFilter:"blur(12px)",border:`1px solid ${toast.type==="warn"?"#FDE68A":"#A7F3D0"}`,color:toast.type==="warn"?"#92400E":"#065F46",borderRadius:14,padding:"14px 20px",fontSize:13,fontWeight:500,boxShadow:"0 8px 32px rgba(0,0,0,0.12),0 2px 8px rgba(0,0,0,0.08)",display:"flex",alignItems:"center",gap:10,animation:"fadeIn 0.2s ease",maxWidth:360}}>
-          <span style={{fontSize:16}}>{toast.type==="warn"?"!️":"✅"}</span>
+      {/* Toast */}
+      {toast&&(
+        <div style={{position:"fixed",top:isMobile?16:24,right:isMobile?16:24,left:isMobile?16:"auto",zIndex:9999,background:toast.type==="warn"?"#FEF3C7":"#111827",color:toast.type==="warn"?"#92400E":"white",padding:"12px 20px",borderRadius:12,fontSize:14,fontWeight:500,boxShadow:"0 8px 32px rgba(0,0,0,0.2)",display:"flex",alignItems:"center",gap:10,animation:"slideUp 0.2s ease",border:"1px solid",borderColor:toast.type==="warn"?"#FDE68A":"rgba(255,255,255,0.1)"}}>
+          <span>{toast.type==="warn"?"!":"ok"}</span>
           <span>{toast.msg}</span>
         </div>
       )}
 
-      {/* -- NAV ITEMS DATA -- */}
-      {(()=>{
-        const navItems = [
-          {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
-          {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
-          {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
-          {id:"quotes",   label:"Quotes",         d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
-          {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
-          {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
-          {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
-          {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
-          {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
-          {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
-        ];
-        const handleNav = (id) => { setView(id); setMoreMenuOpen(false); if(id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]); if(id==="new")resetNewRequest(); };
-        const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
-        return (<>
-
-      {/* -- DESKTOP SIDEBAR -- */}
+      {/* Desktop sidebar */}
       {!isMobile&&(
-      <div style={{position:"fixed",left:0,top:0,width:240,height:"100vh",background:"linear-gradient(180deg,#0A0F1E 0%,#111827 60%,#0F172A 100%)",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"4px 0 40px rgba(0,0,0,0.25)"}}>
-        <div style={{padding:"28px 24px 24px",borderBottom:"1px solid var(--sidebar-border)"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(34,197,94,0.3)"}}>
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
-            </div>
-            <div>
-              <div style={{fontSize:17,fontWeight:700,color:"white",letterSpacing:"-0.8px",fontFamily:"'Inter',sans-serif"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></div>
-              <div style={{fontSize:10,color:"var(--text-secondary)",marginTop:3,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:500}}>Smart Procurement</div>
-            </div>
-          </div>
-        </div>
-        <nav style={{padding:"20px 16px",flex:1,overflowY:"auto"}}>
-          <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
-          {navItems.map(item=>(
-            <button key={item.id} onClick={()=>handleNav(item.id)}
-              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-activeborder)":"3px solid transparent",transition:"all 0.15s",borderRadius:"0 8px 8px 0"}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
-              <span style={{flex:1}}>{item.label}</span>
-              {item.id==="orders"&&pendingOrders>0&&(
-                <span style={{background:"#22C55E",color:"white",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:20}}>{pendingOrders}</span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div style={{padding:"16px 24px",borderTop:"1px solid var(--sidebar-border)"}}>
-          {/* Dark mode toggle with iOS-style slider */}
-          <button onClick={toggleDark} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg-subtle2)",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:14}}>{darkMode?"☀️":"🌙"}</span>
-              <span style={{fontSize:12,color:darkMode?"#FCD34D":"#6B7280",fontWeight:500}}>{darkMode?"Light mode":"Dark mode"}</span>
-            </div>
-            <div style={{width:38,height:22,background:darkMode?"#22C55E":"rgba(255,255,255,0.12)",borderRadius:11,position:"relative",transition:"background 0.3s",flexShrink:0}}>
-              <div style={{position:"absolute",top:3,left:darkMode?19:3,width:16,height:16,background:"var(--bg-card-solid)",borderRadius:"50%",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
-            </div>
-          </button>
-          <div style={{fontSize:11,background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid var(--sidebar-border)"}}>
-            <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B",marginRight:6}}>*</span>
-            <span style={{color:settings.openRouterKey?"#22C55E":"#F59E0B"}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · no email"):"Setup needed"}</span>
-          </div>
-        </div>
-      </div>
-      )}
-
-      {/* -- MOBILE TOP HEADER -- */}
-      {isMobile&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"var(--topbar-bg)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,borderBottom:"1px solid var(--sidebar-border)"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:32,height:32,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(34,197,94,0.4)"}}>
+        <div style={{position:"fixed",top:0,left:0,bottom:0,width:240,background:"var(--sidebar-bg)",display:"flex",flexDirection:"column",zIndex:100,borderRight:"1px solid var(--sidebar-border)"}}>
+          <div style={{padding:"20px 20px 16px",borderBottom:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:32,height:32,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
             </div>
-            <span style={{fontSize:18,fontWeight:800,color:"white",letterSpacing:"-0.5px"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></span>
+            <span style={{fontSize:16,fontWeight:800,color:"white",fontFamily:"inherit"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></span>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            {orders.filter(o=>o.status==="pending-send").length>0&&(
-              <button onClick={()=>setView("orders")} style={{background:"#22C55E",color:"white",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-                📦 {orders.filter(o=>o.status==="pending-send").length}
+          <div style={{flex:1,overflowY:"auto",padding:"12px 12px"}}>
+            <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
+            {navItems.map(item=>(
+              <button key={item.id} onClick={()=>handleNav(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"0 8px 8px 0",border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-active)":"3px solid transparent",transition:"all 0.15s"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
+                {item.label}
+                {item.id==="orders"&&pendingOrders>0&&(
+                  <span style={{marginLeft:"auto",background:"var(--green)",color:"white",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:99}}>{pendingOrders}</span>
+                )}
               </button>
-            )}
-            <button onClick={toggleDark} style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:16}}>{darkMode?"☀️":"🌙"}</button>
+            ))}
+          </div>
+          <div style={{padding:"14px 20px",borderTop:"1px solid var(--sidebar-border)"}}>
+            <button onClick={toggleDark} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg-subtle2)",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  {darkMode
+                    ?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>
+                    :<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                  }
+                </svg>
+                <span style={{fontSize:12,color:darkMode?"#FCD34D":"#6B7280",fontWeight:500}}>{darkMode?"Light mode":"Dark mode"}</span>
+              </div>
+              <div style={{width:38,height:22,background:darkMode?"var(--green)":"rgba(255,255,255,0.12)",borderRadius:11,position:"relative",transition:"background 0.3s",flexShrink:0}}>
+                <div style={{position:"absolute",top:3,left:darkMode?19:3,width:16,height:16,background:"white",borderRadius:"50%",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
+              </div>
+            </button>
+            <div style={{fontSize:11,background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid var(--sidebar-border)"}}>
+              <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)"}}>*</span>
+              <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)",fontSize:11}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active"):"Setup needed"}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile top bar */}
+      {isMobile&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"var(--topbar-bg)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,borderBottom:"1px solid var(--sidebar-border)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{width:28,height:28,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
+            </div>
+            <span style={{fontSize:15,fontWeight:800,color:"white"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={toggleDark} style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"white",fontSize:13}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{darkMode?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>:<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}</svg></button>
             <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"#22C55E":"#F59E0B"}}/>
           </div>
         </div>
       )}
 
-      {/* -- MOBILE BOTTOM TAB BAR -- */}
+      {/* Main content */}
+      <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",minHeight:"100vh",animation:"fadeIn 0.2s ease"}}>
+
+        {view==="dashboard"&&(
+          <div style={{animation:"fadeIn 0.25s ease",maxWidth:1000}}>
+
+            {/* Hero */}
+            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:isMobile?"24px":"36px 40px",marginBottom:24,position:"relative",overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.2)"}}>
+              <div style={{position:"absolute",top:-60,right:-60,width:300,height:300,background:"radial-gradient(circle,rgba(34,197,94,0.15) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
+              <div style={{position:"relative",zIndex:1,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:16}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:600,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:8}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+                  <h1 style={{fontSize:isMobile?26:36,fontWeight:800,letterSpacing:"-1.5px",margin:0,color:"white",lineHeight:1.1,marginBottom:10}}>Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"}</h1>
+                  <p style={{fontSize:isMobile?13:15,color:"rgba(148,163,184,0.9)",margin:0,lineHeight:1.6}}>
+                    {requests.length===0?"Welcome to ProQuote - create your first material request to get started":`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.`}
+                  </p>
+                </div>
+                <button onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",flexShrink:0}}>
+                  + New request
+                </button>
+              </div>
+            </div>
+
+            {/* Overdue banner */}
+            {overdueRequests.length>0&&(
+              <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:14,padding:"14px 20px",marginBottom:20}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#9A3412",marginBottom:10}}>Suppliers have not responded yet</div>
+                {overdueRequests.map(r=>{
+                  const sentEntry = r.activity?.find(a=>a.action==="RFQ emails sent")||r.activity?.find(a=>a.action==="Created");
+                  const hoursAgo = sentEntry?Math.floor((Date.now()-new Date(sentEntry.ts).getTime())/3600000):0;
+                  const daysAgo = Math.floor(hoursAgo/24);
+                  const pendingSups = (r.sentTo||[]).filter(s=>!s.saved).map(s=>s.name);
+                  return(
+                    <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #FED7AA"}}>
+                      <div>
+                        <span style={{fontSize:13,fontWeight:600,color:"#7C2D12"}}>{r.jobRef}</span>
+                        <span style={{fontSize:12,color:"#C2410C",marginLeft:8}}>{pendingSups.length>0?`${pendingSups.join(", ")} hasn't responded`:"No quotes received"}</span>
+                        <span style={{fontSize:11,color:"#EA580C",marginLeft:8}}>{daysAgo>0?`${daysAgo}d ago`:`${hoursAgo}h ago`}</span>
+                      </div>
+                      <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:11,color:"#EA580C",background:"#FEF3C7",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>View</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Expiring quotes banner */}
+            {expiringQuotes.length>0&&(
+              <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:14,padding:"14px 20px",marginBottom:20}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#9A3412",marginBottom:8}}>
+                  ⏰ {expiringQuotes.length} quote{expiringQuotes.length!==1?"s":""} expiring soon
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {expiringQuotes.map(q=>{
+                    const daysLeft = Math.ceil((new Date(q.expiryDate).getTime()-Date.now())/86400000);
+                    return(
+                      <span key={q.id} style={{fontSize:11,padding:"3px 10px",borderRadius:99,background:daysLeft<=0?"var(--red-light)":daysLeft<=2?"var(--amber-light)":"#FEF3C7",color:daysLeft<=0?"var(--red)":daysLeft<=2?"var(--amber)":"#92400E",fontWeight:600}}>
+                        {q.supplierName} · {q.jobRef} · {daysLeft<=0?"Expired":`${daysLeft}d left`}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Stat cards */}
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
+              {[
+                {label:"Total requests",  value:stats.total,    color:"#6366F1", grad:"linear-gradient(135deg,#6366F1,#4338CA)", icon:"📋", nav:()=>setView("requests")},
+                {label:"Awaiting quotes", value:stats.pending,  color:"#F59E0B", grad:"linear-gradient(135deg,#F59E0B,#D97706)", icon:"⏱️", nav:()=>setView("quotes")},
+                {label:"Quotes received", value:stats.received, color:"#8B5CF6", grad:"linear-gradient(135deg,#8B5CF6,#7C3AED)", icon:"📬", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
+                {label:"Approved POs",    value:stats.approved, color:"#22C55E", grad:"linear-gradient(135deg,#22C55E,#16A34A)", icon:"✅", nav:()=>setView("orders")},
+              ].map(s=>(
+                <button key={s.label} onClick={s.nav} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"14px 16px":"18px 22px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"all 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 4px 16px ${s.color}22`;}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                    <div style={{fontSize:18}}>{s.icon}</div>
+                    <div style={{fontSize:9,fontWeight:700,color:s.value>0?s.color:"var(--text-muted)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{s.value>0?"active":"empty"}</div>
+                  </div>
+                  <div style={{fontSize:isMobile?26:36,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:4}}>{s.value}</div>
+                  <div style={{fontSize:11,color:"var(--text-secondary)",fontWeight:500}}>{s.label}</div>
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:2,background:s.value>0?s.grad:"transparent",borderRadius:"0 0 var(--radius-md) var(--radius-md)"}}/>
+                </button>
+              ))}
+            </div>
+
+            {/* Quick actions */}
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:isMobile?8:12,marginBottom:isMobile?18:24}}>
+              {[
+                {label:"New request",  sub:"Voice or type",         icon:"🎤", action:()=>{setView("new");resetNewRequest();}, accent:"#6366F1"},
+                {label:"Analyse",      sub:"Compare quotes",        icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#8B5CF6"},
+                {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#22C55E"},
+                {label:"Suppliers",    sub:"Manage accounts",       icon:"🏢", action:()=>setView("suppliers"), accent:"#F59E0B"},
+              ].map(q=>(
+                <button key={q.label} onClick={q.action} style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"12px 14px":"18px 20px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"all 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:100}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:q.accent,borderRadius:"var(--radius-lg) var(--radius-lg) 0 0"}}/>
+                  <div style={{fontSize:18,marginTop:2}}>{q.icon}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:2}}>{q.label}</div>
+                    <div style={{fontSize:11,color:"var(--text-tertiary)",lineHeight:1.4}}>{q.sub}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Recent requests */}
+            {requests.length>0&&(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",boxShadow:"var(--shadow-sm)"}}>
+                <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:darkMode?"rgba(34,197,94,0.04)":"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>Recent requests</div>
+                  <button onClick={()=>setView("requests")} style={{fontSize:12,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all</button>
+                </div>
+                {requests.slice(0,8).map((r,idx)=>{
+                  const sc = STATUS[r.status]||STATUS.draft;
+                  return(
+                    <div key={r.id}
+                      onClick={()=>{setActiveReq(r);setView("quotes");}}
+                      onMouseEnter={e=>e.currentTarget.style.background=darkMode?"rgba(34,197,94,0.04)":"rgba(34,197,94,0.02)"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                      style={{display:"flex",alignItems:"center",gap:16,padding:"12px 24px",borderTop:idx===0?"none":"1px solid var(--border)",cursor:"pointer",transition:"background 0.15s"}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",minWidth:80,fontFamily:"'JetBrains Mono',monospace"}}>{r.id}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.jobRef}</div>
+                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.site} · {r.trade}</div>
+                      </div>
+                      <div>
+                        <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
+                        {r.rfqDeadline&&r.status==="pending"&&(
+                          <div style={{fontSize:10,marginTop:3,color:Math.ceil((new Date(r.rfqDeadline).getTime()-Date.now())/86400000)<=0?"var(--red)":Math.ceil((new Date(r.rfqDeadline).getTime()-Date.now())/86400000)<=1?"var(--amber)":"var(--green-dark)",fontWeight:600}}>
+                            {Math.ceil((new Date(r.rfqDeadline).getTime()-Date.now())/86400000)<=0?"Deadline passed":`${Math.ceil((new Date(r.rfqDeadline).getTime()-Date.now())/86400000)}d left`}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{fontSize:11,color:"var(--text-muted)",flexShrink:0}}>{r.created}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {requests.length===0&&(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
+                <div style={{fontSize:36,marginBottom:16}}>🚀</div>
+                <div style={{fontSize:16,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>Ready to get started</div>
+                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Create your first material request to start procuring with AI</div>
+                <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-md)",padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Create first request</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {view==="new"&&(
+          <div style={{maxWidth:860,animation:"fadeIn 0.25s ease"}}>
+            <div style={{marginBottom:24}}>
+              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>New material request</h1>
+              <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step {step} of 3 - {step===1?"Describe your materials":step===2?"Review and configure":"Review and send"}</p>
+            </div>
+
+            {/* Step indicator */}
+            <div style={{display:"flex",alignItems:"center",marginBottom:24,gap:0}}>
+              {[{n:1,l:"Describe"},{n:2,l:"Review"},{n:3,l:"Send"}].map((s,i)=>(
+                <div key={s.n} style={{display:"flex",alignItems:"center",flex:i<2?1:"none"}}>
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                    <div style={{width:30,height:30,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,background:step>s.n?"var(--green-dark)":step===s.n?"var(--green-dark)":"var(--bg-subtle2)",color:step>=s.n?"white":"var(--text-muted)"}}>{step>s.n?"ok":s.n}</div>
+                    <span style={{fontSize:11,color:step===s.n?"var(--green-dark)":"var(--text-muted)",fontWeight:step===s.n?600:400}}>{s.l}</span>
+                  </div>
+                  {i<2&&<div style={{flex:1,height:2,background:step>s.n?"var(--green-dark)":"var(--bg-subtle2)",margin:"0 4px",marginBottom:14}}/>}
+                </div>
+              ))}
+            </div>
+
+            {step===1&&(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)"}}>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Job reference</label>
+                    <input value={jobRef} onChange={e=>setJobRef(e.target.value)} placeholder="e.g. JOB-2025-012" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Site / Location</label>
+                    <input value={site} onChange={e=>setSite(e.target.value)} placeholder="e.g. Unit 4, High Street" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trade</label>
+                    <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}>
+                      {TRADES.map(t=><option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{background:listening?"linear-gradient(135deg,#FEF2F2,#FFF5F5)":"linear-gradient(135deg,var(--green-mint),var(--green-light))",border:listening?"2px solid var(--red)":"2px dashed var(--green-dark)",borderRadius:"var(--radius-md)",padding:"24px",textAlign:"center",marginBottom:16,cursor:"pointer"}} onClick={()=>supported&&toggleListen()}>
+                  <div style={{fontSize:28,marginBottom:8}}>{listening
+                      ?<svg width="28" height="28" viewBox="0 0 24 24" fill="var(--red)" stroke="var(--red)" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                      :<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
+                  <div style={{fontSize:14,fontWeight:600,color:listening?"var(--red)":"var(--green-deep)"}}>{listening?"Listening - tap to stop":"Tap to speak your material list"}</div>
+                  <div style={{fontSize:12,color:listening?"var(--red)":"var(--green-dark)",marginTop:4}}>{listening?"Speak clearly - AI will parse automatically when you stop":"Or type your list below"}</div>
+                  {listening&&interim&&(
+                    <div style={{fontSize:13,color:"var(--text-primary)",marginTop:10,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,fontStyle:"italic",border:"1px solid var(--border)"}}>"{interim}"</div>
+                  )}
+                </div>
+
+                <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)} placeholder="e.g. 20 metres of 22mm copper pipe, 12 compression elbows, 6 isolation valves and 4 rolls of PTFE tape..." style={{width:"100%",height:100,padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,marginBottom:16}}></textarea>
+
+                {/* Scan document button */}
+                <div style={{marginBottom:14}}>
+                  <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Or scan a document</div>
+                  <label style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",background:scanning?"var(--indigo-light)":"var(--bg-subtle)",border:scanning?"2px solid var(--indigo)":"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:scanning?"not-allowed":"pointer",transition:"all 0.2s"}}>
+                    <input type="file" accept="image/*,.pdf,capture=camera" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
+                    <div style={{width:40,height:40,borderRadius:12,background:scanning?"var(--indigo)":"linear-gradient(135deg,#6366F1,#4338CA)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 4px 12px rgba(99,102,241,0.3)"}}>
+                      {scanning
+                        ?<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke="white"/></svg>
+                        :<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                      }
+                    </div>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:600,color:scanning?"var(--indigo)":"var(--text-primary)",marginBottom:2}}>{scanning?loadMsg:"Take a photo or upload a document"}</div>
+                      <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Scope of works, delivery note, handwritten list · Photo, PDF, or image</div>
+                    </div>
+                    {!scanning&&(
+                      <div style={{marginLeft:"auto",display:"flex",gap:6,flexShrink:0}}>
+                        <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>PHOTO</span>
+                        <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--bg-subtle2)",color:"var(--text-tertiary)"}}>PDF</span>
+                      </div>
+                    )}
+                  </label>
+                </div>
+
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Load template</button>
+                  <Btn onClick={handleParse} disabled={!rawInput.trim()||loading||scanning} color="#16A34A">
+                    {loading||scanning?loadMsg||"Processing...":"Parse with AI"}
+                  </Btn>
+                </div>
+              </div>
+            )}
+
+            {step===2&&parsed&&(
+              <div>
+                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>AI parsed {parsed.items?.length||0} items</div>
+                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:14}}>Review and edit before sending - all fields are editable</div>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
+                      <thead>
+                        <tr style={{background:"var(--bg-subtle)"}}>
+                          {["#","Description","Qty","Unit","Category","Notes (editable)",""].map(h=>(
+                            <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsed.items?.map((item,i)=>{
+                          const updateItem = (field,val) => setParsed(p=>({...p,items:p.items.map((it,ii)=>ii===i?{...it,[field]:val}:it)}));
+                          const cellStyle = {padding:"5px 8px",border:"1px solid transparent",borderRadius:6,fontSize:13,outline:"none",fontFamily:"inherit",background:"transparent",color:"var(--text-primary)",width:"100%",transition:"all 0.15s"};
+                          return(
+                            <tr key={i} style={{borderTop:"1px solid var(--border)"}}>
+                              <td style={{padding:"8px 12px",fontSize:12,color:"var(--text-muted)",fontFamily:"monospace"}}>{i+1}</td>
+                              <td style={{padding:"4px 6px",minWidth:160}}>
+                                <input value={item.description||""} onChange={e=>updateItem("description",e.target.value)}
+                                  style={{...cellStyle,fontWeight:500}}
+                                  onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
+                                  onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}/>
+                              </td>
+                              <td style={{padding:"4px 6px",width:70}}>
+                                <input type="number" value={item.quantity||""} onChange={e=>updateItem("quantity",e.target.value)}
+                                  style={{...cellStyle,fontFamily:"'JetBrains Mono',monospace",width:60}}
+                                  onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
+                                  onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}/>
+                              </td>
+                              <td style={{padding:"4px 6px",width:80}}>
+                                <input value={item.unit||""} onChange={e=>updateItem("unit",e.target.value)}
+                                  style={{...cellStyle,width:70}}
+                                  onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
+                                  onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}/>
+                              </td>
+                              <td style={{padding:"4px 6px",width:120}}>
+                                <select value={item.category||"General"} onChange={e=>updateItem("category",e.target.value)}
+                                  style={{...cellStyle,width:110,cursor:"pointer"}}
+                                  onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
+                                  onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}>
+                                  {["Plumbing","HVAC","Electrical","Mechanical","Ventilation","Gas","General"].map(cat=>(<option key={cat} value={cat}>{cat}</option>))}
+                                </select>
+                              </td>
+                              <td style={{padding:"4px 6px"}}>
+                                <input value={item.notes||""} onChange={e=>updateItem("notes",e.target.value)}
+                                  placeholder="Add note..."
+                                  style={{...cellStyle,color:"var(--text-secondary)",fontSize:12}}
+                                  onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--border)",background:"var(--bg-subtle)"})}
+                                  onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}/>
+                              </td>
+                              <td style={{padding:"4px 6px",width:30}}>
+                                <button onClick={()=>setParsed(p=>({...p,items:p.items.filter((_,ii)=>ii!==i)}))}
+                                  style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",fontSize:14}}
+                                  onMouseEnter={e=>e.target.style.color="var(--red)"}
+                                  onMouseLeave={e=>e.target.style.color="var(--text-muted)"}>x</button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button onClick={()=>setParsed(p=>({...p,items:[...p.items,{id:Date.now(),description:"",quantity:1,unit:"pcs",category:"General",notes:""}]}))}
+                    style={{marginTop:10,fontSize:12,color:"var(--green-dark)",background:"none",border:"1px dashed var(--green-dark)",borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>
+                    + Add item
+                  </button>
+                </div>
+
+                {/* Request notes */}
+                <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:12}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:8}}>Request notes (optional)</div>
+                  <textarea value={requestNotes} onChange={e=>setRequestNotes(e.target.value)} placeholder="Any special instructions, access notes, or additional context for suppliers..." style={{width:"100%",height:60,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"none",fontFamily:"inherit",lineHeight:1.6}}></textarea>
+                </div>
+
+                {/* Deadline + Delivery */}
+                <div style={{background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:700,color:"var(--amber)",marginBottom:2}}>Response deadline (optional)</div>
+                    <div style={{fontSize:11,color:"var(--amber)"}}>Ask suppliers to respond before this date</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <input type="date" value={rfqDeadline} onChange={e=>setRfqDeadline(e.target.value)} min={new Date().toISOString().split("T")[0]}
+                      style={{padding:"8px 12px",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    {rfqDeadline&&<button onClick={()=>setRfqDeadline("")} style={{fontSize:11,color:"var(--amber)",background:"none",border:"none",cursor:"pointer"}}>Clear</button>}
+                  </div>
+                </div>
+
+                <div style={{background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:12}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"var(--indigo)",marginBottom:10}}>Delivery requirements</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+                    {[{val:"direct",label:"To site",icon:"truck"},{val:"alternative",label:"Alt. address",icon:"building"},{val:"collect",label:"Collect",icon:"store"},{val:"tbc",label:"TBC",icon:"question"}].map(opt=>(
+                      <label key={opt.val} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"10px 8px",borderRadius:"var(--radius-sm)",border:`1.5px solid ${deliveryMethod===opt.val?"var(--green-dark)":"var(--border)"}`,background:deliveryMethod===opt.val?"var(--green-mint)":"var(--bg-card-solid)",cursor:"pointer",textAlign:"center"}}>
+                        <input type="radio" name="dm" value={opt.val} checked={deliveryMethod===opt.val} onChange={()=>setDeliveryMethod(opt.val)} style={{accentColor:"var(--green-dark)"}}/>
+                        <span style={{fontSize:11,fontWeight:deliveryMethod===opt.val?600:400,color:"var(--text-primary)"}}>{opt.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {deliveryMethod==="alternative"&&(
+                    <input value={altAddress} onChange={e=>setAltAddress(e.target.value)} placeholder="Enter alternative delivery address" style={{width:"100%",marginTop:10,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  )}
+                  <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap"}}>
+                    <div>
+                      <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:4}}>Required by date</label>
+                      <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Suppliers */}
+                <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px",marginBottom:16}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"var(--text-secondary)",fontWeight:400}}>({trade})</span></div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                    {filteredSup.map(s=>(
+                      <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",background:selSup.includes(s.id)?"var(--green-mint)":"var(--bg-card-solid)",border:`1px solid ${selSup.includes(s.id)?"var(--green-dark)":"var(--border)"}`,borderRadius:"var(--radius-sm)",padding:"8px 14px",transition:"all 0.15s"}}>
+                        <input type="checkbox" checked={selSup.includes(s.id)} onChange={e=>setSelSup(p=>e.target.checked?[...p,s.id]:p.filter(id=>id!==s.id))} style={{accentColor:"var(--green-dark)"}}/>
+                        <span style={{fontWeight:600,color:"var(--text-primary)"}}>{s.name}</span>
+                        <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{s.email}</span>
+                      </label>
+                    ))}
+                    {filteredSup.length===0&&<div style={{fontSize:13,color:"var(--text-tertiary)"}}>No {trade} suppliers - add them in Suppliers</div>}
+                  </div>
+                </div>
+
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+                  <Btn outline onClick={()=>setStep(1)}>Back</Btn>
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                    <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Save as template</button>
+                    <Btn onClick={handleGenRFQ} disabled={loading||selSup.length===0} color="#16A34A">
+                      {loading?loadMsg:"Generate RFQ email"}
+                    </Btn>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {step===3&&(
+              <div>
+                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Review RFQ email</div>
+                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:16}}>This email will be sent to {selSup.length} supplier{selSup.length!==1?"s":""}</div>
+                  <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",padding:"14px 16px",fontFamily:"'JetBrains Mono',monospace",fontSize:12,lineHeight:1.8,color:"var(--text-secondary)",marginBottom:16,whiteSpace:"pre-wrap",maxHeight:300,overflowY:"auto"}}>{rfqEmail}</div>
+                  {selSup.length>0&&(
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Will be sent to:</div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                        {suppliers.filter(s=>selSup.includes(s.id)).map(s=>(
+                          <span key={s.id} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-light)",padding:"3px 10px",borderRadius:99}}>{s.name}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {emailRes&&emailRes.some(r=>r.success)&&(
+                    <div style={{display:"flex",alignItems:"center",gap:10,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-sm)",padding:"12px 16px"}}>
+                      <span style={{fontSize:16}}>ok</span>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)"}}>Quotes sent successfully</div>
+                        <div style={{fontSize:12,color:"var(--green-dark)",opacity:0.8}}>Redirecting to dashboard...</div>
+                      </div>
+                    </div>
+                  )}
+                  {!emailRes&&(
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+                      <Btn outline onClick={()=>setStep(2)}>Back</Btn>
+                      <div style={{display:"flex",gap:10}}>
+                        {settings.resendKey?(
+                          <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#16A34A">
+                            {loading?loadMsg:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""}`}
+                          </Btn>
+                        ):(
+                          <div style={{fontSize:13,color:"var(--text-tertiary)"}}>
+                            Configure Resend in <button onClick={()=>setView("settings")} style={{color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:13,padding:0}}>Settings</button> to send emails
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {view==="quotes"&&(
+          <div style={{display:"flex",gap:20,alignItems:"flex-start",animation:"fadeIn 0.25s ease",minHeight:"60vh"}}>
+
+            {/* Left sidebar - request selector */}
+            {!isMobile&&(
+              <div style={{width:220,flexShrink:0,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:"var(--shadow-sm)",position:"sticky",top:16}}>
+                <div style={{padding:"14px 16px",borderBottom:"1px solid var(--border)",fontSize:12,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Requests</div>
+                {requests.filter(r=>r.status==="pending"||r.status==="received").length===0?(
+                  <div style={{padding:"20px 16px",fontSize:12,color:"var(--text-tertiary)",textAlign:"center"}}>No active requests</div>
+                ):(
+                  <div>
+                    {requests.filter(r=>r.status==="pending"||r.status==="received").map(r=>{
+                      const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
+                      const quotesTotal = (r.sentTo||[]).length;
+                      const isActive = activeReq?.id===r.id;
+                      return(
+                        <button key={r.id} onClick={()=>{setActiveReq(r);setAllAnalyses([]);setExpandedQuote(null);}}
+                          style={{width:"100%",textAlign:"left",background:isActive?"var(--green-mint)":"transparent",border:"none",borderLeft:isActive?"3px solid var(--green-dark)":"3px solid transparent",padding:"12px 16px",cursor:"pointer",borderBottom:"1px solid var(--border)",transition:"all 0.15s"}}>
+                          <div style={{fontSize:12,fontWeight:700,color:isActive?"var(--green-dark)":"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2}}>{r.id}</div>
+                          <div style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.jobRef}</div>
+                          <div style={{fontSize:10,color:"var(--text-tertiary)"}}>{quotesIn}/{quotesTotal} quotes</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Main area */}
+            <div style={{flex:1,minWidth:0}}>
+              {!activeReq?(
+                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
+                  <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16}}>Select a request to start analysing quotes</div>
+                  {requests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
+                    <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
+                  )}
+                  {isMobile&&requests.filter(r=>r.status==="pending"||r.status==="received").length>0&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:400,margin:"0 auto"}}>
+                      {requests.filter(r=>r.status==="pending"||r.status==="received").map(r=>(
+                        <button key={r.id} onClick={()=>{setActiveReq(r);setAllAnalyses([]);}} style={{textAlign:"left",padding:"12px 16px",background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer"}}>
+                          <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"monospace"}}>{r.id}</div>
+                          <div style={{fontSize:12,color:"var(--text-secondary)"}}>{r.jobRef} · {r.site}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ):(
+                <div>
+                  {/* Request header */}
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 22px",marginBottom:16,boxShadow:"var(--shadow-sm)"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
+                      <div>
+                        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
+                          <span style={{fontSize:16,fontWeight:800,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{activeReq.id}</span>
+                          <span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>{activeReq.trade}</span>
+                          {approvedQuoteId&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>PO Approved</span>}
+                        </div>
+                        <div style={{fontSize:13,color:"var(--text-secondary)"}}>{activeReq.jobRef} · {activeReq.site}</div>
+                        <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3}}>{activeReq.items?.length||0} items · {(activeReq.sentTo||[]).length} suppliers</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        {activeReq.rfqDeadline&&(
+                          Math.ceil((new Date(activeReq.rfqDeadline).getTime()-Date.now())/86400000)<=0
+                          ?<span style={{fontSize:11,fontWeight:700,padding:"4px 12px",borderRadius:99,background:"var(--red-light)",color:"var(--red)"}}>Deadline passed</span>
+                          :<span style={{fontSize:11,fontWeight:700,padding:"4px 12px",borderRadius:99,background:"var(--amber-light)",color:"var(--amber)"}}>Respond by {new Date(activeReq.rfqDeadline).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quote entry */}
+                  {allAnalyses.length===0&&(
+                    <div>
+                      <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:12,textTransform:"uppercase",letterSpacing:"0.08em"}}>Enter supplier quotes</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:16}}>
+                        {(activeReq.sentTo||[]).map((sup,si)=>(
+                          <div key={sup.id||si} style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"16px 20px",boxShadow:"var(--shadow-sm)"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                              <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,var(--indigo),#4338CA)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:14,flexShrink:0}}>{(sup.name||"?")[0]}</div>
+                              <div style={{flex:1}}>
+                                <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{sup.name}</div>
+                                <div style={{fontSize:11,color:"var(--text-tertiary)"}}>{sup.email}</div>
+                              </div>
+                              {sup.saved&&<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Entered</span>}
+                            </div>
+                            <textarea
+                              value={sup.quote||""}
+                              onChange={e=>{
+                                setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value}:s)}:r));
+                                setActiveReq(p=>({...p,sentTo:p.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value}:s)}));
+                              }}
+                              placeholder={`Paste ${sup.name||"supplier"}'s quote here...`}
+                              style={{width:"100%",height:90,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,marginBottom:8}}
+                            ></textarea>
+                            <div
+                              onDragOver={e=>{e.preventDefault();setDragOver(p=>({...p,[si]:true}));}}
+                              onDragLeave={e=>{e.preventDefault();setDragOver(p=>({...p,[si]:false}));}}
+                              onDrop={e=>{e.preventDefault();setDragOver(p=>({...p,[si]:false}));const f=e.dataTransfer.files[0];if(f)processQuoteFile(f,si,sup,activeReq.id);}}
+                              style={{padding:"10px 12px",background:dragOver[si]?"var(--indigo-light)":"var(--bg-subtle)",borderRadius:"var(--radius-sm)",border:dragOver[si]?"2px dashed var(--indigo)":"1px dashed var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,transition:"all 0.15s"}}>
+                              <span style={{fontSize:12,color:dragOver[si]?"var(--indigo)":fileExtracting[si]?"var(--indigo)":"var(--text-tertiary)"}}>
+                                {fileExtracting[si]?"Extracting...":dragOver[si]?"Drop to extract":"Drag document or"}
+                              </span>
+                              <label style={{fontSize:11,color:"var(--indigo)",background:"var(--indigo-light)",borderRadius:6,padding:"4px 10px",cursor:fileExtracting[si]?"not-allowed":"pointer",fontWeight:500,flexShrink:0}}>
+                                {fileExtracting[si]?"Reading...":"Browse file"}
+                                <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt" style={{display:"none"}} disabled={!!fileExtracting[si]} onChange={e=>{if(e.target.files[0])processQuoteFile(e.target.files[0],si,sup,activeReq.id);e.target.value="";}}/>
+                              </label>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                        <Btn onClick={handleAnalyseAll} disabled={loading||!(activeReq.sentTo||[]).some(s=>s.quote?.trim())||!settings.openRouterKey} color="#16A34A">
+                          {loading?<span>Analysing... {loadMsg}</span>:"Analyse all quotes"}
+                        </Btn>
+                        {!settings.openRouterKey&&<span style={{fontSize:12,color:"var(--amber)"}}>Add OpenRouter key in Settings to enable AI</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Results */}
+                  {allAnalyses.length>0&&(
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:10}} className="no-print">
+                        <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Results - {allAnalyses.length} supplier{allAnalyses.length!==1?"s":""}</div>
+                        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                          {/* View toggle */}
+                          <div style={{display:"flex",background:"var(--bg-subtle2)",borderRadius:8,padding:2}}>
+                            <button onClick={()=>setQuoteViewMode("cards")} style={{fontSize:12,fontWeight:600,padding:"5px 12px",borderRadius:6,border:"none",cursor:"pointer",background:quoteViewMode==="cards"?"var(--bg-card-solid)":"transparent",color:quoteViewMode==="cards"?"var(--text-primary)":"var(--text-tertiary)",boxShadow:quoteViewMode==="cards"?"var(--shadow-sm)":"none"}}>Cards</button>
+                            <button onClick={()=>setQuoteViewMode("compare")} style={{fontSize:12,fontWeight:600,padding:"5px 12px",borderRadius:6,border:"none",cursor:"pointer",background:quoteViewMode==="compare"?"var(--bg-card-solid)":"transparent",color:quoteViewMode==="compare"?"var(--text-primary)":"var(--text-tertiary)",boxShadow:quoteViewMode==="compare"?"var(--shadow-sm)":"none"}}>Compare</button>
+                          </div>
+                          {/* Margin calculator */}
+                          <div style={{display:"flex",alignItems:"center",gap:6,background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:8,padding:"4px 10px"}}>
+                            <span style={{fontSize:11,fontWeight:600,color:"var(--green-deep)"}}>Markup</span>
+                            <input type="number" min="0" max="200" value={marginPct} onChange={e=>setMarginPct(Math.max(0,Math.min(200,parseInt(e.target.value)||0)))} style={{width:46,padding:"3px 6px",border:"1px solid var(--green-light)",borderRadius:5,fontSize:12,outline:"none",fontFamily:"monospace",textAlign:"center"}}/>
+                            <span style={{fontSize:11,fontWeight:600,color:"var(--green-deep)"}}>%</span>
+                          </div>
+                          <button onClick={()=>{
+                            if (allAnalyses.length>0) setExpandedQuote(allAnalyses[0]._id);
+                            setTimeout(()=>window.print(),300);
+                          }} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontWeight:500}}>🖨️ Print</button>
+                          <button onClick={()=>{setAllAnalyses([]);setExpandedQuote(null);setQuoteViewMode("cards");setMarginPct(0);}} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Re-analyse</button>
+                        </div>
+                      </div>
+
+                      {/* Margin summary bar - shows when markup is set */}
+                      {marginPct>0&&(
+                        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12,padding:"10px 14px",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:10}}>
+                          <span style={{fontSize:12,fontWeight:700,color:"var(--green-deep)"}}>At {marginPct}% markup:</span>
+                          {allAnalyses.map(qa=>{
+                            const cost = parsePrice(qa.estimatedTotal)||parsePrice(qa.subtotal);
+                            if (!cost) return null;
+                            const sell = cost*(1+marginPct/100);
+                            return(
+                              <span key={qa._id} style={{fontSize:12,color:"var(--text-secondary)"}}>
+                                <strong style={{color:"var(--text-primary)"}}>{qa.supplierName}:</strong> £{cost.toFixed(2)} → <strong style={{color:"var(--green-dark)"}}>£{sell.toFixed(2)}</strong> <span style={{color:"var(--text-tertiary)"}}>(+£{(sell-cost).toFixed(2)})</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {quoteViewMode==="cards"&&allAnalyses.map((qa,qi)=>{
+                        const vMap = {
+                          excellent:{bg:"var(--green-light)",  border:"var(--green-dark)", text:"var(--green-deep)", label:"Excellent"},
+                          good:     {bg:"var(--indigo-light)", border:"var(--indigo)",     text:"var(--indigo)",     label:"Good"},
+                          partial:  {bg:"var(--amber-light)",  border:"var(--amber)",      text:"var(--amber)",      label:"Partial"},
+                          poor:     {bg:"var(--red-light)",    border:"var(--red)",        text:"var(--red)",        label:"Poor"},
+                        };
+                        const vc = vMap[qa.overallVerdict||"good"]||vMap.good;
+                        const isOpen = expandedQuote===qa._id;
+                        const sc = qa.completeness>=80?"var(--green-dark)":qa.completeness>=60?"var(--amber)":"var(--red)";
+                        const isApproved = approvedQuoteId===qa._id;
+                        return(
+                          <div key={qa._id||qi} style={{marginBottom:8,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",borderTop:`3px solid ${vc.border}`,overflow:"hidden",boxShadow:isOpen?"var(--shadow-md)":"var(--shadow-sm)",transition:"all 0.2s"}}>
+                            <div onClick={()=>setExpandedQuote(isOpen?null:qa._id)} style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isOpen?vc.bg:"var(--bg-card-solid)",transition:"background 0.2s"}}>
+                              <div style={{width:46,height:46,borderRadius:"50%",background:`conic-gradient(${sc} ${qa.completeness*3.6}deg, var(--bg-subtle2) 0deg)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                                <div style={{width:34,height:34,borderRadius:"50%",background:"var(--bg-card-solid)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                  <span style={{fontSize:11,fontWeight:800,color:sc,fontFamily:"monospace"}}>{qa.completeness}%</span>
+                                </div>
+                              </div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
+                                  <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
+                                  <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99,background:vc.bg,color:vc.text}}>{vc.label}</span>
+                                  {isApproved&&<span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Approved</span>}
+                                </div>
+                                <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{qa.recommendation}</div>
+                              </div>
+                              <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                                {qa.estimatedTotal&&qa.estimatedTotal!=="Not calculated"&&(
+                                  <div style={{textAlign:"right"}}>
+                                    <div style={{fontSize:10,color:"var(--text-muted)"}}>Total</div>
+                                    <div style={{fontSize:13,fontWeight:700,color:"var(--green-dark)",fontFamily:"monospace"}}>{qa.estimatedTotal}</div>
+                                  </div>
+                                )}
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{transform:isOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
+                              </div>
+                            </div>
+                            {isOpen&&(
+                              <div style={{borderTop:"1px solid var(--border)",padding:"18px",animation:"cardExpand 0.2s ease"}}>
+                                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16,padding:"12px 14px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)"}}>
+                                  {[
+                                    {l:"Completeness",v:`${qa.completeness}%`,c:sc},
+                                    {l:"Subtotal",    v:qa.subtotal||"—",    c:"var(--text-primary)"},
+                                    {l:"Carriage",    v:qa.carriageCharge||"—",c:"var(--text-secondary)"},
+                                    {l:"Lead time",   v:qa.leadTime||"—",    c:"var(--text-secondary)"},
+                                  ].map(s=>(
+                                    <div key={s.l}>
+                                      <div style={{fontSize:10,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:3}}>{s.l}</div>
+                                      <div style={{fontSize:14,fontWeight:700,color:s.c}}>{s.v}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                                {qa.matched?.length>0&&(
+                                  <div style={{marginBottom:14}}>
+                                    <div style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",marginBottom:8}}>Matched items ({qa.matched.length})</div>
+                                    <div style={{overflowX:"auto"}}>
+                                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:600}}>
+                                        <thead>
+                                          <tr style={{background:"var(--green-mint)"}}>
+                                            {["Item","Req","Quoted","Unit price","Total","Stock","Qty ok","Notes"].map(h=>(
+                                              <th key={h} style={{padding:"7px 10px",textAlign:"left",fontWeight:600,color:"var(--green-deep)",fontSize:11}}>{h}</th>
+                                            ))}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {qa.matched.map((m,i)=>(
+                                            <tr key={i} style={{borderTop:"1px solid var(--border)",background:i%2===0?"transparent":"var(--bg-subtle)"}}>
+                                              <td style={{padding:"7px 10px",fontWeight:500,color:"var(--text-primary)"}}>{m.item}</td>
+                                              <td style={{padding:"7px 10px",color:"var(--text-secondary)",fontFamily:"monospace",fontSize:11}}>{m.requestedQty} {m.requestedUnit}</td>
+                                              <td style={{padding:"7px 10px",color:"var(--text-secondary)",fontFamily:"monospace",fontSize:11}}>{m.quotedQty||m.requestedQty} {m.quotedUnit||m.requestedUnit}</td>
+                                              <td style={{padding:"7px 10px",color:"var(--green-dark)",fontFamily:"monospace",fontWeight:600}}>{m.unitPrice||"—"}</td>
+                                              <td style={{padding:"7px 10px",fontFamily:"monospace"}}>{m.lineTotal||"—"}</td>
+                                              <td style={{padding:"7px 10px"}}><span style={{fontSize:10,fontWeight:600,padding:"1px 6px",borderRadius:99,background:m.inStock===true?"var(--green-light)":m.inStock===false?"var(--red-light)":"var(--bg-subtle2)",color:m.inStock===true?"var(--green-dark)":m.inStock===false?"var(--red)":"var(--text-muted)"}}>{m.inStock===true?"In stock":m.inStock===false?"No stock":"—"}</span></td>
+                                              <td style={{padding:"7px 10px"}}>{m.qtyMatch===false?<span style={{fontSize:10,color:"var(--amber)",fontWeight:700}}>!</span>:<span style={{fontSize:10,color:"var(--green-dark)"}}>ok</span>}</td>
+                                              <td style={{padding:"7px 10px",fontSize:11,color:"var(--text-secondary)",maxWidth:140}}>{m.notes||"—"}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )}
+                                {qa.missing?.length>0&&(
+                                  <div style={{marginBottom:12}}>
+                                    <div style={{fontSize:12,fontWeight:600,color:"var(--red)",marginBottom:8}}>Missing ({qa.missing.length})</div>
+                                    {qa.missing.map((m,i)=>(
+                                      <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"4px 0",borderBottom:"1px solid var(--border)"}}>
+                                        <span style={{color:"var(--text-primary)"}}>{m.item}</span>
+                                        <span style={{color:"var(--red)",fontSize:11}}>{m.reason}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {(qa.warnings?.length>0||qa.positives?.length>0)&&(
+                                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                                    {qa.positives?.length>0&&(
+                                      <div style={{background:"var(--green-mint)",borderRadius:"var(--radius-sm)",padding:"10px 12px"}}>
+                                        <div style={{fontSize:11,fontWeight:700,color:"var(--green-dark)",marginBottom:6}}>Positives</div>
+                                        {qa.positives.map((p,i)=><div key={i} style={{fontSize:12,color:"var(--green-deep)",marginBottom:2}}>+ {p}</div>)}
+                                      </div>
+                                    )}
+                                    {qa.warnings?.length>0&&(
+                                      <div style={{background:"var(--amber-light)",borderRadius:"var(--radius-sm)",padding:"10px 12px"}}>
+                                        <div style={{fontSize:11,fontWeight:700,color:"var(--amber)",marginBottom:6}}>Warnings</div>
+                                        {qa.warnings.map((w,i)=><div key={i} style={{fontSize:12,color:"var(--amber)",marginBottom:2}}>! {w}</div>)}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                <div style={{paddingTop:12,borderTop:"1px solid var(--border)",display:"flex",gap:10,flexWrap:"wrap"}}>
+                                  {isApproved?(
+                                    <>
+                                      <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-sm)",padding:"8px 14px"}}>
+                                        <span style={{fontSize:13,fontWeight:700,color:"var(--green-dark)"}}>✅ PO Approved</span>
+                                      </div>
+                                      <Btn outline onClick={handleUndoApproval}>Undo</Btn>
+                                      <Btn onClick={()=>setView("orders")} color="#16A34A">View in Orders</Btn>
+                                    </>
+                                  ):(
+                                    <>
+                                      <Btn onClick={()=>setApproveConfirm(qa)} color="#16A34A">Approve & generate PO</Btn>
+                                      <Btn outline onClick={()=>handleSaveDraftQuote(qa)}>Save to library</Btn>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* SIDE-BY-SIDE COMPARISON VIEW */}
+                      {quoteViewMode==="compare"&&(
+                        <div style={{overflowX:"auto",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)"}}>
+                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:Math.max(500, 200+allAnalyses.length*160)}}>
+                            <thead>
+                              <tr>
+                                <th style={{padding:"14px 16px",textAlign:"left",position:"sticky",left:0,background:"var(--bg-subtle)",zIndex:2,minWidth:180,borderBottom:"2px solid var(--border)",fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Requested item</th>
+                                {allAnalyses.map(qa=>{
+                                  const sc = qa.completeness>=80?"var(--green-dark)":qa.completeness>=60?"var(--amber)":"var(--red)";
+                                  return(
+                                    <th key={qa._id} style={{padding:"14px 16px",textAlign:"center",minWidth:160,borderBottom:"2px solid var(--border)",borderLeft:"1px solid var(--border)",background:"var(--bg-subtle)"}}>
+                                      <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:4}}>{qa.supplierName}</div>
+                                      <div style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,color:sc}}>
+                                        <span style={{width:7,height:7,borderRadius:"50%",background:sc,display:"inline-block"}}/>
+                                        {qa.completeness}% complete
+                                      </div>
+                                    </th>
+                                  );
+                                })}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {/* One row per requested item */}
+                              {(activeReq.items||[]).map((reqItem,ri)=>(
+                                <tr key={ri} style={{borderBottom:"1px solid var(--border)"}}>
+                                  <td style={{padding:"10px 16px",position:"sticky",left:0,background:"var(--bg-card-solid)",zIndex:1,fontWeight:500,color:"var(--text-primary)",borderRight:"1px solid var(--border)"}}>
+                                    {reqItem.description}
+                                    <span style={{display:"block",fontSize:10,color:"var(--text-tertiary)",marginTop:1}}>{reqItem.quantity} {reqItem.unit}</span>
+                                  </td>
+                                  {allAnalyses.map(qa=>{
+                                    const match = (qa.matched||[]).find(m=>m.item&&reqItem.description&&m.item.toLowerCase().includes(reqItem.description.toLowerCase().slice(0,12)) || (m.item&&reqItem.description&&reqItem.description.toLowerCase().includes(m.item.toLowerCase().slice(0,12))));
+                                    const missing = (qa.missing||[]).find(m=>m.item&&reqItem.description&&(m.item.toLowerCase().includes(reqItem.description.toLowerCase().slice(0,12))||reqItem.description.toLowerCase().includes(m.item.toLowerCase().slice(0,12))));
+                                    return(
+                                      <td key={qa._id} style={{padding:"10px 16px",textAlign:"center",borderLeft:"1px solid var(--border)",background:!match&&missing?"var(--red-light)":"transparent"}}>
+                                        {match?(
+                                          <div>
+                                            <div style={{fontSize:13,fontWeight:700,color:"var(--green-dark)",fontFamily:"monospace"}}>{match.unitPrice||match.lineTotal||"-"}</div>
+                                            {match.inStock===false&&<div style={{fontSize:9,color:"var(--red)",fontWeight:600,marginTop:1}}>Out of stock</div>}
+                                            {match.qtyMatch===false&&<div style={{fontSize:9,color:"var(--amber)",fontWeight:600,marginTop:1}}>Qty differs</div>}
+                                          </div>
+                                        ):missing?(
+                                          <span style={{fontSize:11,color:"var(--red)",fontWeight:600}}>Not quoted</span>
+                                        ):(
+                                          <span style={{fontSize:11,color:"var(--text-muted)"}}>-</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                              {/* Summary rows */}
+                              <tr style={{borderTop:"2px solid var(--border)",background:"var(--bg-subtle)"}}>
+                                <td style={{padding:"10px 16px",position:"sticky",left:0,background:"var(--bg-subtle)",zIndex:1,fontWeight:700,color:"var(--text-secondary)",fontSize:11,textTransform:"uppercase",letterSpacing:"0.05em"}}>Carriage</td>
+                                {allAnalyses.map(qa=>(
+                                  <td key={qa._id} style={{padding:"10px 16px",textAlign:"center",borderLeft:"1px solid var(--border)",fontSize:12,color:qa.carriageCharge==="Free"?"var(--green-dark)":"var(--text-secondary)",fontWeight:qa.carriageCharge==="Free"?600:400}}>{qa.carriageCharge||"-"}</td>
+                                ))}
+                              </tr>
+                              <tr style={{background:"var(--bg-subtle)"}}>
+                                <td style={{padding:"10px 16px",position:"sticky",left:0,background:"var(--bg-subtle)",zIndex:1,fontWeight:700,color:"var(--text-secondary)",fontSize:11,textTransform:"uppercase",letterSpacing:"0.05em"}}>Lead time</td>
+                                {allAnalyses.map(qa=>(
+                                  <td key={qa._id} style={{padding:"10px 16px",textAlign:"center",borderLeft:"1px solid var(--border)",fontSize:12,color:"var(--text-secondary)"}}>{qa.leadTime||"-"}</td>
+                                ))}
+                              </tr>
+                              <tr style={{background:"var(--green-mint)",borderTop:"2px solid var(--green-light)"}}>
+                                <td style={{padding:"12px 16px",position:"sticky",left:0,background:"var(--green-mint)",zIndex:1,fontWeight:700,color:"var(--green-deep)",fontSize:12}}>Estimated total{marginPct>0?` (+ ${marginPct}% markup)`:""}</td>
+                                {allAnalyses.map(qa=>{
+                                  const cost = parsePrice(qa.estimatedTotal)||parsePrice(qa.subtotal);
+                                  const allCosts = allAnalyses.map(a=>parsePrice(a.estimatedTotal)||parsePrice(a.subtotal)).filter(x=>x!=null);
+                                  const isCheapest = cost!=null && allCosts.length>1 && cost===Math.min(...allCosts);
+                                  const display = cost!=null ? (marginPct>0 ? cost*(1+marginPct/100) : cost) : null;
+                                  return(
+                                    <td key={qa._id} style={{padding:"12px 16px",textAlign:"center",borderLeft:"1px solid var(--green-light)"}}>
+                                      <div style={{fontSize:15,fontWeight:800,color:"var(--green-dark)",fontFamily:"monospace"}}>{display!=null?`£${display.toFixed(2)}`:(qa.estimatedTotal||"-")}</div>
+                                      {isCheapest&&<div style={{fontSize:9,fontWeight:700,color:"var(--green-deep)",background:"var(--green-light)",borderRadius:99,padding:"1px 8px",marginTop:4,display:"inline-block"}}>LOWEST</div>}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                              {/* Action row */}
+                              <tr>
+                                <td style={{padding:"12px 16px",position:"sticky",left:0,background:"var(--bg-card-solid)",zIndex:1}}></td>
+                                {allAnalyses.map(qa=>{
+                                  const isApproved = approvedQuoteId===qa._id;
+                                  return(
+                                    <td key={qa._id} style={{padding:"12px 16px",textAlign:"center",borderLeft:"1px solid var(--border)"}}>
+                                      {isApproved?(
+                                        <span style={{fontSize:11,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",borderRadius:6,padding:"6px 12px",display:"inline-block"}}>Approved</span>
+                                      ):(
+                                        <button onClick={()=>setApproveConfirm(qa)} style={{fontSize:11,fontWeight:700,color:"white",background:"var(--green-dark)",border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer"}}>Approve</button>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {view==="orders"&&(
+          <div style={{maxWidth:900,animation:"fadeIn 0.25s ease"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+              <div>
+                <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Orders</h1>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{orders.length} total orders</p>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                {[
+                  {id:"all",      label:"All",       count:orders.length},
+                  {id:"active",   label:"Active",    count:orders.filter(o=>o.status!=="delivered").length},
+                  {id:"delivered",label:"Delivered", count:orders.filter(o=>o.status==="delivered").length},
+                ].map(f=>(
+                  <button key={f.id} onClick={()=>setOrderFilter(f.id)}
+                    style={{padding:"7px 16px",borderRadius:"var(--radius-sm)",border:`1px solid ${orderFilter===f.id?"var(--green-dark)":"var(--border)"}`,background:orderFilter===f.id?"var(--green-mint)":"var(--bg-card-solid)",color:orderFilter===f.id?"var(--green-deep)":"var(--text-secondary)",fontSize:13,fontWeight:orderFilter===f.id?600:400,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                    {f.label}
+                    {f.count>0&&<span style={{fontSize:10,fontWeight:700,background:orderFilter===f.id?"var(--green-dark)":"var(--bg-subtle2)",color:orderFilter===f.id?"white":"var(--text-muted)",padding:"1px 6px",borderRadius:99}}>{f.count}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {orders.filter(o=>{
+              if(orderFilter==="active") return o.status!=="delivered";
+              if(orderFilter==="delivered") return o.status==="delivered";
+              return true;
+            }).length===0?(
+              <Card style={{textAlign:"center",padding:"48px 32px",color:"var(--text-tertiary)"}}>
+                <div style={{fontSize:15,marginBottom:8}}>No orders yet</div>
+                <div style={{fontSize:13}}>Approve a supplier quote to generate a purchase order</div>
+              </Card>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {orders.filter(o=>{
+                  if(orderFilter==="active") return o.status!=="delivered";
+                  if(orderFilter==="delivered") return o.status==="delivered";
+                  return true;
+                }).map(order=>{
+                  const STATUS_STEPS = [
+                    {key:"pending-send",label:"Ready to send",color:"var(--green-dark)",  bg:"var(--green-mint)"},
+                    {key:"sent",        label:"Sent",          color:"var(--indigo)",      bg:"var(--indigo-light)"},
+                    {key:"confirmed",   label:"Confirmed",     color:"var(--green-dark)",  bg:"var(--green-light)"},
+                    {key:"delivered",   label:"Delivered",     color:"var(--text-secondary)",bg:"var(--bg-subtle2)"},
+                  ];
+                  const stepIdx   = STATUS_STEPS.findIndex(s=>s.key===order.status);
+                  const curStep   = STATUS_STEPS[stepIdx]||STATUS_STEPS[0];
+                  const isExpanded = expandedOrder===order.id;
+
+                  return(
+                    <div key={order.id} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isExpanded?"var(--green-dark)":"var(--border)"}`,overflow:"hidden",boxShadow:isExpanded?"var(--shadow-md)":"var(--shadow-sm)",transition:"all 0.2s"}}>
+
+                      {/* Clickable header row */}
+                      <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)}
+                        style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isExpanded?"var(--green-mint)":"var(--bg-card-solid)",transition:"background 0.2s"}}>
+                        <div style={{width:38,height:38,borderRadius:10,background:order.status==="pending-send"?"linear-gradient(135deg,#22C55E,#16A34A)":order.status==="sent"?"linear-gradient(135deg,#6366F1,#4F46E5)":order.status==="confirmed"?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#4B5563,#374151)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                          {order.status==="pending-send"?"📦":order.status==="sent"?"✈️":order.status==="confirmed"?"✅":"🏁"}
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
+                            <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:curStep.bg,color:curStep.color}}>{curStep.label}</span>
+                          </div>
+                          <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{order.supplier} · {order.jobRef} · {order.site}</div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+                          {order.expectedDelivery&&order.status!=="delivered"&&(
+                            <span style={{fontSize:11,color:"var(--green-dark)",background:"var(--green-light)",padding:"3px 10px",borderRadius:99,fontWeight:500}}>{new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span>
+                          )}
+                          <span style={{fontSize:11,color:"var(--text-muted)"}}>{order.poDate}</span>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{transform:isExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
+                        </div>
+                      </div>
+
+                      {/* Expanded body */}
+                      {isExpanded&&(
+                        <div style={{borderTop:"1px solid var(--border)",animation:"cardExpand 0.2s ease"}}>
+
+                          {/* Status timeline */}
+                          <div style={{padding:"16px 20px",borderBottom:"1px solid var(--border)",background:"var(--bg-subtle)"}}>
+                            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
+                              {STATUS_STEPS.map((s,i)=>(
+                                <div key={s.key} style={{display:"flex",alignItems:"center",flex:i<STATUS_STEPS.length-1?1:"none"}}>
+                                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                                    <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,background:stepIdx>i?s.color:stepIdx===i?s.color:"var(--bg-subtle2)",color:stepIdx>=i?"white":"var(--text-muted)",border:`2px solid ${stepIdx>=i?s.color:"var(--border)"}`}}>
+                                      {stepIdx>i?<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>:i+1}
+                                    </div>
+                                    <span style={{fontSize:9,color:stepIdx===i?s.color:"var(--text-muted)",fontWeight:stepIdx===i?700:400,whiteSpace:"nowrap"}}>{s.label}</span>
+                                  </div>
+                                  {i<STATUS_STEPS.length-1&&<div style={{flex:1,height:2,background:stepIdx>i?s.color:"var(--bg-subtle2)",margin:"0 4px",marginBottom:14}}/>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Order details */}
+                          <div style={{padding:"16px 20px",display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}}>
+                            {/* Left: items */}
+                            <div>
+                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Order items</div>
+                              {(order.items||[]).map((item,i)=>(
+                                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid var(--border)"}}>
+                                  <div style={{fontSize:13,color:"var(--text-primary)",flex:1}}>{item.description}</div>
+                                  <div style={{fontSize:12,color:"var(--text-secondary)",fontFamily:"monospace",flexShrink:0,marginLeft:12}}>{item.quantity} {item.unit}</div>
+                                </div>
+                              ))}
+                              <div style={{marginTop:12}}>
+                                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Supplier</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{order.supplier}</span></div>
+                                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Job ref</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{order.jobRef}</span></div>
+                                {order.estimatedTotal&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Total</span><span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",fontFamily:"monospace"}}>{order.estimatedTotal}</span></div>}
+                              </div>
+                            </div>
+
+                            {/* Right: actions */}
+                            <div>
+                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Actions</div>
+
+                              {order.status==="pending-send"&&(
+                                <div>
+                                  <div style={{marginBottom:10}}>
+                                    <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Note to supplier (optional)</label>
+                                    <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Any special instructions..." style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"none",fontFamily:"inherit"}}></textarea>
+                                  </div>
+                                  <div style={{marginBottom:12}}>
+                                    <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Expected delivery date</label>
+                                    <input type="date" value={expectedDelivery[order.id]||""} onChange={e=>setExpectedDelivery(p=>({...p,[order.id]:e.target.value}))} style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                                  </div>
+                                  {settings.resendKey?(
+                                    <Btn onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id} color="#16A34A">
+                                      {sendingOrder===order.id?<><Spinner/> Sending...</>:"Send order to supplier"}
+                                    </Btn>
+                                  ):(
+                                    <div style={{fontSize:12,color:"var(--text-tertiary)"}}>Add Resend key in Settings to send orders by email</div>
+                                  )}
+                                </div>
+                              )}
+
+                              {order.status==="sent"&&(
+                                <div>
+                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>Upload the supplier confirmation to move this order to Confirmed.</div>
+                                  <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer",marginBottom:10}}>
+                                    <input type="file" accept=".pdf,.jpg,.png,.doc,.docx" style={{display:"none"}} onChange={e=>handleOrderConfirmationUpload(order,e.target.files[0])}/>
+                                    <span style={{fontSize:13,color:"var(--text-secondary)"}}>Upload confirmation document</span>
+                                    <span style={{fontSize:12,color:"var(--text-muted)"}}>PDF, Word, or image</span>
+                                  </label>
+                                  <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Expected delivery: {order.expectedDelivery?new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):"Not set"}</div>
+                                </div>
+                              )}
+
+                              {order.status==="confirmed"&&(
+                                <div>
+                                  {order.confirmationDoc&&<div style={{fontSize:12,color:"var(--green-dark)",marginBottom:10}}>Confirmation received: {order.confirmationDoc}</div>}
+                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12}}>Expected delivery: {order.expectedDelivery?new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):"Not set"}</div>
+                                  <Btn onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o))} color="#059669">Mark as delivered</Btn>
+                                </div>
+                              )}
+
+                              {order.status==="delivered"&&(
+                                <div>
+                                  <div style={{display:"flex",alignItems:"center",gap:10,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-sm)",padding:"12px 16px"}}>
+                                    <span style={{fontSize:16}}>D</span>
+                                    <div>
+                                      <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)"}}>Order delivered</div>
+                                      {order.deliveredAt&&<div style={{fontSize:11,color:"var(--green-dark)",opacity:0.8}}>{new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}</div>}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view==="suppliers"&&(
+          <div style={{maxWidth:900,animation:"fadeIn 0.25s ease"}}>
+            <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",marginBottom:4,color:"var(--text-primary)"}}>Suppliers</h1>
+            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Manage your supplier accounts and contact details</p>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:12,marginBottom:24}}>
+              {suppliers.map(s=>(
+                <Card key={s.id}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                    <div style={{width:40,height:40,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:16,flexShrink:0}}>{s.name[0]}</div>
+                    <button onClick={()=>setSuppliers(p=>p.filter(x=>x.id!==s.id))} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
+                  </div>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:3}}>{s.name}</div>
+                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:8}}>{s.email}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+                    {s.categories.map(cat=><Badge key={cat} bg="var(--green-light)" text="var(--green-deep)">{cat}</Badge>)}
+                  </div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:4}}>
+                  {requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length>0&&(
+                    <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--bg-subtle2)",color:"var(--text-tertiary)"}}>
+                      {requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length} RFQ{requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length!==1?"s":""}
+                    </span>
+                  )}
+                  {requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length>0&&(
+                    <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:Math.round(requests.filter(r=>r.sentTo?.some(st=>st.id===s.id&&st.saved)).length/requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length*100)>=80?"var(--green-light)":Math.round(requests.filter(r=>r.sentTo?.some(st=>st.id===s.id&&st.saved)).length/requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length*100)>=50?"var(--amber-light)":"var(--red-light)",color:Math.round(requests.filter(r=>r.sentTo?.some(st=>st.id===s.id&&st.saved)).length/requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length*100)>=80?"var(--green-dark)":Math.round(requests.filter(r=>r.sentTo?.some(st=>st.id===s.id&&st.saved)).length/requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length*100)>=50?"var(--amber)":"var(--red)"}}>
+                      {Math.round(requests.filter(r=>r.sentTo?.some(st=>st.id===s.id&&st.saved)).length/requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length*100)}% response
+                    </span>
+                  )}
+                  {quoteLibrary.filter(q=>q.supplierName===s.name).length>0&&(
+                    <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:Math.round(quoteLibrary.filter(q=>q.supplierName===s.name).reduce((a,q)=>a+(q.completeness||0),0)/quoteLibrary.filter(q=>q.supplierName===s.name).length)>=80?"var(--green-light)":Math.round(quoteLibrary.filter(q=>q.supplierName===s.name).reduce((a,q)=>a+(q.completeness||0),0)/quoteLibrary.filter(q=>q.supplierName===s.name).length)>=60?"var(--amber-light)":"var(--red-light)",color:Math.round(quoteLibrary.filter(q=>q.supplierName===s.name).reduce((a,q)=>a+(q.completeness||0),0)/quoteLibrary.filter(q=>q.supplierName===s.name).length)>=80?"var(--green-dark)":Math.round(quoteLibrary.filter(q=>q.supplierName===s.name).reduce((a,q)=>a+(q.completeness||0),0)/quoteLibrary.filter(q=>q.supplierName===s.name).length)>=60?"var(--amber)":"var(--red)"}}>
+                      avg {Math.round(quoteLibrary.filter(q=>q.supplierName===s.name).reduce((a,q)=>a+(q.completeness||0),0)/quoteLibrary.filter(q=>q.supplierName===s.name).length)}%
+                    </span>
+                  )}
+                  {orders.filter(o=>o.supplier===s.name).length>0&&(
+                    <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>
+                      {orders.filter(o=>o.supplier===s.name).length} PO{orders.filter(o=>o.supplier===s.name).length!==1?"s":""}
+                    </span>
+                  )}
+                  {requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length===0&&quoteLibrary.filter(q=>q.supplierName===s.name).length===0&&(
+                    <span style={{fontSize:11,color:"var(--text-muted)"}}>No activity yet</span>
+                  )}
+                </div>
+                </Card>
+              ))}
+            </div>
+            <Card>
+              <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:14}}>Add a supplier</div>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr auto",gap:10,alignItems:"end"}}>
+                {[
+                  {label:"Company name",val:"name",ph:"e.g. BSS Industrial"},
+                  {label:"Quote email",val:"email",ph:"quotes@supplier.co.uk"},
+                  {label:"Trades (comma-sep)",val:"categories",ph:"Plumbing, HVAC"},
+                ].map(f=>(
+                  <div key={f.val}>
+                    <label style={{fontSize:11,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5}}>{f.label}</label>
+                    <input value={newSup[f.val]||""} onChange={e=>setNewSup(p=>({...p,[f.val]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  </div>
+                ))}
+                <Btn onClick={()=>{
+                  if(!newSup.name?.trim()||!newSup.email?.trim()){showToast("Name and email required","warn");return;}
+                  const ns={id:Date.now(),name:newSup.name.trim(),email:newSup.email.trim(),categories:(newSup.categories||"General").split(",").map(s=>s.trim()).filter(Boolean)};
+                  setSuppliers(p=>[...p,ns]);setNewSup({name:"",email:"",categories:""});showToast(`${ns.name} added`);
+                }} color="#16A34A">Add</Btn>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {view==="requests"&&(
+          <div style={{maxWidth:1000,animation:"fadeIn 0.25s ease"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+              <div>
+                <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>All requests</h1>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{requests.length} total requests</p>
+              </div>
+              <Btn onClick={()=>{setView("new");resetNewRequest();}} color="#16A34A">+ New request</Btn>
+            </div>
+            <Card>
+              {requests.length===0?(
+                <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
+                  <div style={{fontSize:15,marginBottom:8}}>No requests yet</div>
+                  <div style={{fontSize:13}}>Create your first material request to get started</div>
+                </div>
+              ):(
+                <div>
+                  <div style={{display:"grid",gridTemplateColumns:"80px 1fr 120px 100px 80px 140px",gap:8,padding:"10px 16px",background:"var(--bg-subtle)",fontSize:11,fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em",borderRadius:"var(--radius-sm) var(--radius-sm) 0 0"}}>
+                    <span>ID</span><span>Job ref</span><span>Trade</span><span>Status</span><span>Quotes</span><span>Actions</span>
+                  </div>
+                  {requests.map((r,idx)=>{
+                    const sc = STATUS[r.status]||STATUS.draft;
+                    const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
+                    const quotesTotal = (r.sentTo||[]).length;
+                    return(
+                      <div key={r.id} style={{display:"grid",gridTemplateColumns:"80px 1fr 120px 100px 80px 140px",gap:8,padding:"12px 16px",borderTop:"1px solid var(--border)",alignItems:"center",fontSize:13}}>
+                        <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)",fontWeight:600,fontSize:12}}>{r.id}</span>
+                        <div>
+                          <div style={{fontWeight:500,color:"var(--text-primary)"}}>{r.jobRef}</div>
+                          <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>{r.site}{r.notes&&<span style={{marginLeft:6,color:"var(--amber)",fontStyle:"italic"}}>· {r.notes.slice(0,35)}{r.notes.length>35?"...":""}</span>}</div>
+                        </div>
+                        <span style={{fontSize:12,color:"var(--text-secondary)"}}>{r.trade}</span>
+                        <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
+                        <span style={{fontSize:12,color:"var(--text-secondary)"}}>{quotesIn}/{quotesTotal}</span>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:11,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View</button>
+                          <button onClick={()=>handleDuplicate(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
+                          <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
+                          <button onClick={()=>setActivityModal(r)} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
+                          <button onClick={()=>setDeleteConfirm(r)} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Del</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {view==="library"&&(
+          <div style={{maxWidth:1000,animation:"fadeIn 0.25s ease"}}>
+            <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",marginBottom:4,color:"var(--text-primary)"}}>Quote library</h1>
+            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>{quoteLibrary.length} quotes saved · Supplier price history</p>
+            {supplierScoreCards.length>0&&(
+              <div style={{marginBottom:24}}>
+                <div style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Supplier scorecards</div>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(3,1fr)",gap:12}}>
+                  {supplierScoreCards.map(sc=>(
+                    <Card key={sc.name}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{sc.name}</div>
+                          <div style={{fontSize:11,color:"var(--text-tertiary)"}}>{sc.quotes.length} quotes</div>
+                        </div>
+                        <div style={{fontSize:26,fontWeight:800,color:sc.avgCompleteness>=80?"var(--green-dark)":sc.avgCompleteness>=60?"var(--amber)":"var(--red)",fontFamily:"monospace"}}>{sc.avgCompleteness}%</div>
+                      </div>
+                      <div style={{height:4,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:`${sc.avgCompleteness}%`,background:sc.avgCompleteness>=80?"var(--green-dark)":sc.avgCompleteness>=60?"var(--amber)":"var(--red)",borderRadius:99}}/>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+            <Card>
+              {quoteLibrary.length===0?(
+                <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
+                  <div style={{fontSize:15,marginBottom:8}}>No quotes in library yet</div>
+                  <div style={{fontSize:13}}>Quotes are saved here when you approve a PO or save a draft</div>
+                </div>
+              ):(
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                    <thead>
+                      <tr style={{background:"var(--bg-subtle)"}}>
+                        {["Date","Supplier","Job","Trade","Completeness","Est. Total","Carriage","Expiry"].map(h=>(
+                          <th key={h} style={{padding:"9px 12px",textAlign:"left",fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quoteLibrary.map((q,i)=>(
+                        <tr key={q.id||i} style={{borderTop:"1px solid var(--border)"}}>
+                          <td style={{padding:"9px 12px",color:"var(--text-tertiary)"}}>{q.savedAt?new Date(q.savedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"}):"—"}</td>
+                          <td style={{padding:"9px 12px",fontWeight:500,color:"var(--text-primary)"}}>{q.supplierName}</td>
+                          <td style={{padding:"9px 12px",fontFamily:"monospace",color:"var(--indigo)",fontSize:11}}>{q.jobRef}</td>
+                          <td style={{padding:"9px 12px"}}><Badge bg="var(--bg-subtle2)" text="var(--text-secondary)">{q.trade}</Badge></td>
+                          <td style={{padding:"9px 12px"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <div style={{width:50,height:4,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
+                                <div style={{height:"100%",width:`${q.completeness}%`,background:q.completeness>=80?"var(--green-dark)":q.completeness>=60?"var(--amber)":"var(--red)",borderRadius:99}}/>
+                              </div>
+                              <span style={{fontSize:11,fontWeight:600,color:q.completeness>=80?"var(--green-dark)":q.completeness>=60?"var(--amber)":"var(--red)"}}>{q.completeness}%</span>
+                            </div>
+                          </td>
+                          <td style={{padding:"9px 12px",fontFamily:"monospace",color:"var(--green-dark)",fontWeight:600}}>{q.totalEstimate||"—"}</td>
+                          <td style={{padding:"9px 12px",fontSize:11,color:q.carriageCharge==="Free"?"var(--green-dark)":"var(--text-secondary)"}}>{q.carriageCharge||"—"}</td>
+                          <td style={{padding:"9px 12px"}}>
+                            {q.expiryDate&&(
+                              <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:Math.ceil((new Date(q.expiryDate).getTime()-Date.now())/86400000)<=0?"var(--red-light)":Math.ceil((new Date(q.expiryDate).getTime()-Date.now())/86400000)<=5?"var(--amber-light)":"var(--green-light)",color:Math.ceil((new Date(q.expiryDate).getTime()-Date.now())/86400000)<=0?"var(--red)":Math.ceil((new Date(q.expiryDate).getTime()-Date.now())/86400000)<=5?"var(--amber)":"var(--green-dark)"}}>
+                                {Math.ceil((new Date(q.expiryDate).getTime()-Date.now())/86400000)<=0?"Expired":`${Math.ceil((new Date(q.expiryDate).getTime()-Date.now())/86400000)}d left`}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {view==="help"&&(
+          <div style={{maxWidth:900,animation:"fadeIn 0.25s ease"}}>
+            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
+              <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.12),transparent 70%)",borderRadius:"50%"}}/>
+              <div style={{position:"relative",zIndex:1}}>
+                <div style={{fontSize:11,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Help Centre</div>
+                <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px",marginBottom:8}}>How can we help?</h1>
+                <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:0}}>Ask the AI assistant or browse the FAQ below</p>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:20,marginBottom:28}}>
+              <Card>
+                <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:4}}>AI Assistant</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12}}>{settings.openRouterKey?"Online - ask me anything about ProQuote":"Add your OpenRouter key in Settings to use the AI assistant"}</div>
+                <div style={{maxHeight:260,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,marginBottom:12}}>
+                  {helpMessages.length===0&&(
+                    <div style={{textAlign:"center",padding:"20px 0",color:"var(--text-tertiary)",fontSize:13}}>Try: "How do I send an RFQ?" or "Where are my saved quotes?"</div>
+                  )}
+                  {helpMessages.map((m,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+                      <div style={{maxWidth:"85%",padding:"10px 14px",borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",background:m.role==="user"?"linear-gradient(135deg,#22C55E,#16A34A)":"var(--bg-subtle)",color:m.role==="user"?"white":"var(--text-primary)",fontSize:13,lineHeight:1.6}}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ))}
+                  {helpLoading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"var(--bg-subtle)",borderRadius:"14px 14px 14px 4px",padding:"10px 14px",fontSize:13,color:"var(--text-secondary)"}}>Thinking...</div></div>}
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <input value={helpInput} onChange={e=>setHelpInput(e.target.value)}
+                    onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&handleHelpChat(helpInput)}
+                    placeholder={settings.openRouterKey?"Ask me anything...":"Add OpenRouter key in Settings"}
+                    disabled={!settings.openRouterKey}
+                    style={{flex:1,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}
+                  />
+                  <Btn onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey} color="#16A34A">Send</Btn>
+                </div>
+              </Card>
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                <Card>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Quick actions</div>
+                  {[
+                    {label:"Create a new request",action:()=>{setView("new");resetNewRequest();}},
+                    {label:"Analyse supplier quotes",action:()=>setView("quotes")},
+                    {label:"View & send orders",action:()=>setView("orders")},
+                    {label:"Manage suppliers",action:()=>setView("suppliers")},
+                    {label:"Configure settings",action:()=>setView("settings")},
+                  ].map(l=>(
+                    <button key={l.label} onClick={l.action} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"var(--radius-sm)",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",marginBottom:2,fontSize:13,color:"var(--text-primary)",transition:"background 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background="var(--bg-subtle)"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      {l.label}
+                    </button>
+                  ))}
+                </Card>
+                <Card>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Keyboard shortcuts</div>
+                  {[["N","New request"],["Q","Quote analysis"],["O","Orders"],["D","Dashboard"],["S","Settings"],["H","Help"],["Esc","Close modals"]].map(([k,l])=>(
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid var(--border)"}}>
+                      <span style={{fontSize:12,color:"var(--text-secondary)"}}>{l}</span>
+                      <kbd style={{background:"var(--bg-subtle2)",color:"var(--text-primary)",border:"1px solid var(--border)",borderRadius:5,padding:"2px 8px",fontSize:11,fontFamily:"monospace",fontWeight:600}}>{k}</kbd>
+                    </div>
+                  ))}
+                </Card>
+              </div>
+            </div>
+            <Card>
+              <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Frequently asked questions</div>
+              {helpFaqs.map((section,si)=>(
+                <div key={si} style={{marginBottom:20}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:10,paddingBottom:6,borderBottom:"2px solid var(--green-light)"}}>{section.cat}</div>
+                  {section.qs.map((faq,i)=>(
+                    <details key={i} style={{marginBottom:6}}>
+                      <summary style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",cursor:"pointer",padding:"10px 12px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",listStyle:"none",display:"flex",justifyContent:"space-between",alignItems:"center",userSelect:"none"}}>
+                        {faq.q}
+                        <span style={{color:"var(--text-muted)",fontSize:12}}>+</span>
+                      </summary>
+                      <div style={{fontSize:13,color:"var(--text-secondary)",padding:"10px 12px",lineHeight:1.7,borderLeft:"3px solid var(--green-dark)",marginLeft:4,marginTop:4}}>{faq.a}</div>
+                    </details>
+                  ))}
+                </div>
+              ))}
+            </Card>
+            <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12,marginTop:16}}>
+              <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>Pro<span style={{color:"var(--green-dark)"}}>Quote</span> v1.0</span>
+              <button onClick={()=>setView("contact")} style={{fontSize:12,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Contact support</button>
+            </div>
+          </div>
+        )}
+
+        {view==="contact"&&(
+          <div style={{maxWidth:760,animation:"fadeIn 0.25s ease"}}>
+            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
+              <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(99,102,241,0.12),transparent 70%)",borderRadius:"50%"}}/>
+              <div style={{position:"relative",zIndex:1}}>
+                <div style={{fontSize:11,color:"#818CF8",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Support</div>
+                <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px",marginBottom:8}}>Contact us</h1>
+                <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:0}}>Raise a support request, report a bug, or suggest a feature</p>
+              </div>
+            </div>
+            {contactSent?(
+              <Card style={{textAlign:"center",padding:"48px 40px"}}>
+                <div style={{fontSize:36,marginBottom:16}}>ok</div>
+                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request sent</div>
+                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Thank you for getting in touch. We will respond as soon as possible.</div>
+                <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+                  <button onClick={()=>setContactSent(false)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Send another</button>
+                  <button onClick={()=>setView("dashboard")} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Back to dashboard</button>
+                </div>
+              </Card>
+            ):(
+              <Card>
+                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Submit a support request</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Your name</label>
+                    <input value={contactForm.name} onChange={e=>setContactForm(p=>({...p,name:e.target.value}))} placeholder="Your name" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Email address</label>
+                    <input type="email" value={contactForm.email} onChange={e=>setContactForm(p=>({...p,email:e.target.value}))} placeholder="your@email.co.uk" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Category</label>
+                    <select value={contactForm.category} onChange={e=>setContactForm(p=>({...p,category:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}>
+                      {["Bug report","Feature request","Account issue","General enquiry"].map(o=><option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Priority</label>
+                    <select value={contactForm.priority} onChange={e=>setContactForm(p=>({...p,priority:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}>
+                      {["Low","Normal","High","Urgent"].map(o=><option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Description</label>
+                  <textarea value={contactForm.description} onChange={e=>setContactForm(p=>({...p,description:e.target.value}))} placeholder="Please describe your issue in as much detail as possible..." style={{width:"100%",height:120,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6}}></textarea>
+                </div>
+                <button
+                  onClick={()=>{
+                    if(!contactForm.description.trim()){showToast("Please add a description","warn");return;}
+                    showToast("Support request submitted");
+                    setContactSent(true);
+                    setContactForm(p=>({...p,description:""}));
+                  }}
+                  disabled={!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim()}
+                  style={{background:"linear-gradient(135deg,#6366F1,#4338CA)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:"pointer",opacity:(!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
+                  Submit request
+                </button>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {view==="settings"&&(
+          <div style={{maxWidth:720,animation:"fadeIn 0.25s ease"}}>
+            <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",marginBottom:4,color:"var(--text-primary)"}}>Settings</h1>
+            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Configure your company details and API keys</p>
+            <div style={{display:"grid",gap:16}}>
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:16}}>Company details</div>
+                <div style={{display:"grid",gap:12}}>
+                  {[
+                    {label:"Company name",k:"company",ph:"e.g. Initial Mechanical"},
+                    {label:"Contact name",k:"contactName",ph:"e.g. Andy Hammill"},
+                    {label:"From email",k:"fromEmail",ph:"e.g. quotes@company.co.uk"},
+                    {label:"Site address",k:"siteAddress",ph:"e.g. 52 Stretton Street"},
+                  ].map(f=>(
+                    <div key={f.k}>
+                      <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5}}>{f.label}</label>
+                      <input value={sForm[f.k]||""} onChange={e=>setSForm(p=>({...p,[f.k]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:10}}>Company branding</div>
+                <div style={{display:"grid",gap:12}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Company logo</label>
+                    <div style={{display:"flex",alignItems:"center",gap:12}}>
+                      {sForm.logoBase64&&(
+                        <img src={sForm.logoBase64} alt="Logo" style={{height:48,maxWidth:120,objectFit:"contain",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:4}}/>
+                      )}
+                      <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:500}}>
+                        📎 {sForm.logoBase64?"Change logo":"Upload logo"}
+                        <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{
+                          const file = e.target.files[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = ev => {
+                            // Resize logo to max 240px wide to keep localStorage small
+                            const img = new Image();
+                            img.onload = () => {
+                              const maxW = 240;
+                              const scale = Math.min(1, maxW / img.width);
+                              const canvas = document.createElement("canvas");
+                              canvas.width = img.width * scale;
+                              canvas.height = img.height * scale;
+                              const ctx2 = canvas.getContext("2d");
+                              ctx2.drawImage(img, 0, 0, canvas.width, canvas.height);
+                              const compressed = canvas.toDataURL("image/png");
+                              setSForm(p=>({...p,logoBase64:compressed}));
+                            };
+                            img.onerror = () => showToast("Could not read that image","warn");
+                            img.src = ev.target.result;
+                          };
+                          reader.readAsDataURL(file);
+                        }}/>
+                      </label>
+                      {sForm.logoBase64&&<button onClick={()=>setSForm(p=>({...p,logoBase64:""}))} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer"}}>Remove</button>}
+                    </div>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Appears on PO emails · PNG or JPG recommended</div>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Quote validity (days)</label>
+                      <input type="number" min="1" max="90" value={sForm.quoteValidityDays||30} onChange={e=>setSForm(p=>({...p,quoteValidityDays:parseInt(e.target.value)||30}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                      <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Quotes saved to library expire after this many days</div>
+                    </div>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Default PO terms</label>
+                      <input value={sForm.poNotes||""} onChange={e=>setSForm(p=>({...p,poNotes:e.target.value}))} placeholder="e.g. 30 day payment terms" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>AI (OpenRouter)</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:12}}>Required for AI parsing and quote analysis. Free at openrouter.ai</div>
+                <input type="password" value={sForm.openRouterKey||""} onChange={e=>setSForm(p=>({...p,openRouterKey:e.target.value}))} placeholder="sk-or-..." style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:8}}/>
+                {sForm.openRouterKey?<div style={{fontSize:11,color:"var(--green-dark)"}}>Key entered - AI features active</div>:<div style={{fontSize:11,color:"var(--amber)"}}>No key - AI features disabled</div>}
+              </Card>
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Email sending (Resend)</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:12}}>Required for sending RFQ emails. Free tier at resend.com</div>
+                <input type="password" value={sForm.resendKey||""} onChange={e=>setSForm(p=>({...p,resendKey:e.target.value}))} placeholder="re_..." style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:8}}/>
+                {sForm.resendKey?<div style={{fontSize:11,color:"var(--green-dark)"}}>Key entered</div>:<div style={{fontSize:11,color:"var(--amber)"}}>No key - email sending disabled</div>}
+              </Card>
+              <div style={{display:"flex",gap:10}}>
+                <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}} color="#6366F1">Save settings</Btn>
+                <Btn outline onClick={()=>setSForm({...settings})}>Reset</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* Mobile bottom bar */}
       {isMobile&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,height:68,background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
           {[
@@ -1575,58 +3225,43 @@ ${settings.company||""}`;
           ].map(tab=>(
             <button key={tab.id}
               onClick={()=>{
-                if(tab.id==="settings"){ setMoreMenuOpen(p=>!p); return; }
+                if(tab.id==="settings"){setMoreMenuOpen(p=>!p);return;}
                 setMoreMenuOpen(false);
-                setView(tab.id);
-                if(tab.id==="quotes"&&requests.length&&!activeReq)setActiveReq(requests[0]);
+                handleNav(tab.id);
               }}
               style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"8px 14px",borderRadius:10,minWidth:56,position:"relative",flex:1}}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                stroke={tab.id==="settings"?moreMenuOpen?"#22C55E":"#64748B":view===tab.id?"#22C55E":"#64748B"}
-                strokeWidth={tab.id==="settings"?moreMenuOpen?2.2:1.8:view===tab.id?2.2:1.8}
+                stroke={tab.id==="settings"?moreMenuOpen?"var(--green)":"var(--sidebar-text)":view===tab.id?"var(--green)":"var(--sidebar-text)"}
+                strokeWidth={view===tab.id||tab.id==="settings"&&moreMenuOpen?2.2:1.8}
                 strokeLinecap="round" strokeLinejoin="round"><path d={tab.d}/></svg>
-              <span style={{fontSize:10,fontWeight:(tab.id==="settings"?moreMenuOpen:view===tab.id)?700:400,color:(tab.id==="settings"?moreMenuOpen:view===tab.id)?"#22C55E":"#64748B"}}>{tab.label}</span>
-              {tab.id==="orders"&&orders.filter(o=>o.status==="pending-send").length>0&&(
-                <span style={{position:"absolute",top:4,right:"20%",background:"#22C55E",color:"white",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:99}}>{orders.filter(o=>o.status==="pending-send").length}</span>
+              <span style={{fontSize:10,fontWeight:(tab.id==="settings"?moreMenuOpen:view===tab.id)?700:400,color:(tab.id==="settings"?moreMenuOpen:view===tab.id)?"var(--green)":"var(--sidebar-text)"}}>{tab.label}</span>
+              {tab.id==="orders"&&pendingOrders>0&&(
+                <span style={{position:"absolute",top:4,right:"20%",background:"var(--green)",color:"white",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:99}}>{pendingOrders}</span>
               )}
-              {(tab.id==="settings"?moreMenuOpen:view===tab.id)&&<div style={{position:"absolute",bottom:-1,width:24,height:3,background:"#22C55E",borderRadius:"3px 3px 0 0"}}/>}
             </button>
           ))}
-
-          {/* -- More menu overlay -- */}
           {moreMenuOpen&&(
             <div style={{position:"fixed",bottom:68,left:0,right:0,zIndex:200,animation:"fadeIn 0.15s ease"}}>
-              {/* Backdrop */}
-              <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,bottom:68,background:"rgba(10,15,30,0.6)",backdropFilter:"blur(4px)",zIndex:198}}/>
-              {/* Menu sheet */}
+              <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,bottom:68,background:"rgba(0,0,0,0.6)",zIndex:198}}/>
               <div style={{position:"relative",zIndex:199,background:"var(--topbar-bg)",borderRadius:"20px 20px 0 0",padding:"8px 0 12px",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)",border:"1px solid var(--sidebar-border)"}}>
-                {/* Handle bar */}
                 <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
                 <div style={{padding:"0 8px"}}>
                   {[
-                    {id:"requests", label:"All requests",   sub:"View and manage all RFQs",        icon:"📋", d:"M4 6h16M4 12h10M4 18h6"},
-                    {id:"suppliers",label:"Suppliers",      sub:"Manage your supplier accounts",   icon:"🏢", d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
-                    {id:"library",  label:"Quote library",  sub:"Price history and supplier scores",icon:"📚", d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
-                    {id:"settings", label:"Settings",       sub:"API keys, email, company details", icon:"⚙️", d:"M12 15a3 3 0 100-6 3 3 0 000 6z"},
-                    {id:"help",     label:"Help & FAQ",      sub:"Guides, AI assistant, FAQs",        icon:"❓", d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
-                    {id:"contact",  label:"Contact support", sub:"Raise a request or report a bug",   icon:"📧", d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
+                    {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"📋"},
+                    {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"🏢"},
+                    {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"📚"},
+                    {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"❓"},
+                    {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"📧"},
+                    {id:"settings", label:"Settings",         sub:"API keys and company details",     icon:"⚙️"},
                   ].map(item=>(
-                    <button key={item.id} onClick={()=>{ setView(item.id); setMoreMenuOpen(false); }} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:view===item.id?"rgba(34,197,94,0.12)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
-                      <div style={{width:44,height:44,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{item.icon}</div>
+                    <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
+                      <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)"}}>{item.icon}</div>
                       <div style={{flex:1}}>
-                        <div style={{fontSize:15,fontWeight:600,color:view===item.id?"#22C55E":"white"}}>{item.label}</div>
-                        <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{item.sub}</div>
+                        <div style={{fontSize:14,fontWeight:600,color:view===item.id?"var(--green)":"white"}}>{item.label}</div>
+                        <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{item.sub}</div>
                       </div>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={view===item.id?"#22C55E":"#374151"} strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
                     </button>
                   ))}
-                </div>
-                {/* Status strip */}
-                <div style={{margin:"12px 16px 0",padding:"10px 14px",background:"rgba(255,255,255,0.04)",borderRadius:10,display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"#22C55E":"#F59E0B",flexShrink:0}}/>
-                  <span style={{fontSize:12,color:settings.openRouterKey?"#22C55E":"#F59E0B"}}>
-                    {settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active · email not set"):"Setup needed - tap Settings"}
-                  </span>
                 </div>
               </div>
             </div>
@@ -1634,2174 +3269,21 @@ ${settings.company||""}`;
         </div>
       )}
 
-      {/* Floating background orbs */}
-      {!isMobile&&(
-        <>
-          <div className="orb" style={{width:400,height:400,background:darkMode?"rgba(34,197,94,0.04)":"rgba(34,197,94,0.06)",top:"10%",right:"5%",animationDelay:"0s"}}/>
-          <div className="orb" style={{width:300,height:300,background:darkMode?"rgba(99,102,241,0.04)":"rgba(99,102,241,0.05)",top:"60%",right:"15%",animationDelay:"3s"}}/>
-          <div className="orb" style={{width:250,height:250,background:darkMode?"rgba(34,197,94,0.03)":"rgba(34,197,94,0.04)",top:"40%",left:"50%",animationDelay:"6s"}}/>
-        </>
-      )}
-
-      {/* Main content */}
-      <div style={{
-        marginLeft:isMobile?0:240,
-        padding:isMobile?"76px 16px 88px":"32px 40px",
-        maxWidth:isMobile?"100%":"100%",
-        animation:"fadeIn 0.2s ease",
-        minHeight:"100vh",
-        position:"relative",
-        zIndex:1
-      }}>
-
-        {/* == DASHBOARD == */}
-        {view==="dashboard"&&(
-          <div style={{animation:"fadeIn 0.25s ease"}}>
-
-            {/* -- Hero header -- */}
-            <div style={{
-              background:darkMode?"#111827":"linear-gradient(135deg,#0A0F1E,#1a2744)",
-              borderRadius:24,padding:isMobile?"24px":"36px 40px",marginBottom:24,
-              position:"relative",overflow:"hidden",
-              boxShadow:"0 8px 40px rgba(0,0,0,0.2)"
-            }}>
-              {/* Background glow */}
-              <div style={{position:"absolute",top:-60,right:-60,width:300,height:300,background:darkMode?"radial-gradient(circle,rgba(52,211,153,0.08) 0%,transparent 70%)":"radial-gradient(circle,rgba(34,197,94,0.15) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
-              <div style={{position:"absolute",bottom:-40,left:100,width:200,height:200,background:"radial-gradient(circle,rgba(99,102,241,0.08) 0%,transparent 70%)",borderRadius:"50%",pointerEvents:"none"}}/>
-              <div style={{position:"relative",zIndex:1,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:16}}>
-                <div>
-                  <div style={{fontSize:11,fontWeight:600,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:8}}>
-                    {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
-                  </div>
-                  <h1 style={{fontSize:isMobile?26:38,fontWeight:800,letterSpacing:"-1.5px",margin:0,color:"white",lineHeight:1.1,marginBottom:10}}>
-                    Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"} 👋
-                  </h1>
-                  <p style={{fontSize:isMobile?13:15,color:"rgba(148,163,184,0.9)",margin:0,maxWidth:480,lineHeight:1.6}}>
-                    {requests.length===0
-                      ?"Welcome to ProQuote - create your first material request to get started"
-                      :`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.${orders.filter(o=>o.status==="pending-send").length>0?` ${orders.filter(o=>o.status==="pending-send").length} PO${orders.filter(o=>o.status==="pending-send").length!==1?"s":""} ready to send.`:""}`
-                    }
-                  </p>
-                </div>
-                <button onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",letterSpacing:"-0.2px",whiteSpace:"nowrap",flexShrink:0}}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  New request
-                </button>
-              </div>
-
-
-            </div>
-
-            {/* -- Overdue quote reminders -- */}
-            {(()=>{
-              const now = Date.now();
-              const overdue = requests.filter(r=>{
-                if (r.status!=="pending") return false;
-                const sent = r.activity?.find(a=>a.action==="Created")?.ts;
-                if (!sent) return false;
-                const hoursAgo = (now - new Date(sent).getTime()) / 3600000;
-                return hoursAgo >= 24;
-              });
-              if (!overdue.length) return null;
-              return(
-                <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:14,padding:"14px 20px",marginBottom:20}}>
-                  <div style={{fontSize:13,fontWeight:700,color:"#9A3412",marginBottom:10}}>⏰ Suppliers haven't responded yet</div>
-                  {overdue.map(r=>{
-                    const sent = r.activity?.find(a=>a.action==="Created")?.ts;
-                    const hoursAgo = Math.floor((now - new Date(sent).getTime()) / 3600000);
-                    const daysAgo = Math.floor(hoursAgo/24);
-                    const pendingSups = (r.sentTo||[]).filter(s=>!s.saved).map(s=>s.name);
-                    return(
-                      <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #FED7AA"}}>
-                        <div>
-                          <span style={{fontSize:13,fontWeight:600,color:"#7C2D12"}}>{r.jobRef}</span>
-                          <span style={{fontSize:12,color:"#C2410C",marginLeft:8}}>
-                            {pendingSups.length>0?`${pendingSups.join(", ")} hasn't responded`:"No quotes received"}
-                          </span>
-                          <span style={{fontSize:11,color:"#EA580C",marginLeft:8}}>· {daysAgo>0?`${daysAgo} day${daysAgo!==1?"s":""}`:`${hoursAgo}h`} ago</span>
-                        </div>
-                        <div style={{display:"flex",gap:8}}>
-                          <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:11,color:"#EA580C",background:"#FEF3C7",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>View ></button>
-                          {r.rfqEmail&&<button onClick={async()=>{
-                            const unsent = (r.sentTo||[]).filter(s=>!s.saved);
-                            if(!unsent.length||!settings.resendKey) return;
-                            const subject = `REMINDER: Request for Quotation - ${r.jobRef}`;
-                            await sendRFQEmails(unsent, subject, `Hi,
-
-This is a friendly reminder regarding our request for quotation sent ${daysAgo>0?`${daysAgo} days ago`:`${hoursAgo} hours ago`} for job ${r.jobRef}.
-
-Could you please send us your quotation at your earliest convenience?
-
-Kind regards
-${settings.contactName||settings.company||"The Procurement Team"}`, settings.resendKey, settings.fromEmail||"onboarding@resend.dev");
-                            showToast(`Reminder sent to ${unsent.map(s=>s.name).join(", ")}`);
-                          }} style={{fontSize:11,color:"white",background:"#EA580C",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>Send reminder</button>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-
-            {/* -- Setup warnings -- */}
-            {!settings.openRouterKey&&(
-              <div style={{background:"#FFF1F2",border:"1px solid #FDA4AF",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:32,height:32,background:"#FEE2E2",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>!️</div>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:600,color:"#9F1239"}}>AI key required</div>
-                    <div style={{fontSize:12,color:"#BE123C",marginTop:1}}>Add your free OpenRouter key in Settings to enable AI features</div>
-                  </div>
-                </div>
-                <button onClick={()=>setView("settings")} style={{background:"#9F1239",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure ></button>
-              </div>
-            )}
-            {settings.openRouterKey&&!settings.resendKey&&(
-              <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:12,padding:"14px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:32,height:32,background:"#FEF3C7",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>📧</div>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:600,color:"var(--amber)"}}>Email not configured</div>
-                    <div style={{fontSize:12,color:"var(--amber)",marginTop:1}}>Add your Resend API key to send RFQs directly to suppliers</div>
-                  </div>
-                </div>
-                <button onClick={()=>setView("settings")} style={{background:"#D97706",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Configure ></button>
-              </div>
-            )}
-
-            {/* -- Stat cards -- */}
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
-              {[
-                {label:"Total requests",  value:stats.total,    color:"#6366F1", grad:"linear-gradient(135deg,#6366F1,#4338CA)", icon:"📋", nav:()=>setView("requests")},
-                {label:"Awaiting quotes", value:stats.pending,  color:"#F59E0B", grad:"linear-gradient(135deg,#F59E0B,#D97706)", icon:"⏳", nav:()=>setView("quotes")},
-                {label:"Quotes received", value:stats.received, color:"#8B5CF6", grad:"linear-gradient(135deg,#8B5CF6,#7C3AED)", icon:"📬", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
-                {label:"Approved POs",    value:stats.approved, color:"#22C55E", grad:"linear-gradient(135deg,#22C55E,#16A34A)", icon:"✅", nav:()=>setView("orders")},
-              ].map(s=>(
-                <button key={s.label} onClick={s.nav} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"14px 16px":"20px 22px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",transition:"all 0.15s",display:"block",width:"100%"}}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 4px 16px ${s.color}22`;}}
-                  onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                    <div style={{fontSize:22}}>{s.icon}</div>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-                  </div>
-                  <div style={{fontSize:isMobile?26:36,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:4}}>{s.value}</div>
-                  <div style={{fontSize:12,color:"var(--text-secondary)",fontWeight:500}}>{s.label}</div>
-                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:s.value>0?s.grad:"transparent",borderRadius:"0 0 var(--radius-md) var(--radius-md)"}}/>
-                </button>
-              ))}
-            </div>
-
-            {/* -- Quick actions -- */}
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:isMobile?8:12,marginBottom:isMobile?18:24}}>
-              {[
-                {label:"New request",  sub:"Voice or type",              icon:"🎤", action:()=>setView("new"),      accent:"#6366F1"},
-                {label:"Analyse",      sub:"Compare supplier quotes",    icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#8B5CF6"},
-                {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#22C55E"},
-                {label:"Suppliers",    sub:"Manage accounts",            icon:"🏢", action:()=>setView("suppliers"), accent:"#F59E0B"},
-              ].map(q=>(
-                <button key={q.label} onClick={q.action} style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"12px 14px":"18px 20px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:16,cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"all 0.2s ease",position:"relative",overflow:"hidden",minHeight:isMobile?90:100}}>
-                  <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:q.accent,borderRadius:"16px 16px 0 0"}}/>
-                  <div style={{fontSize:20,marginTop:2}}>{q.icon}</div>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:2}}>{q.label}</div>
-                    <div style={{fontSize:11,color:"var(--text-tertiary)",lineHeight:1.4}}>{q.sub}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* -- Requests table -- */}
-            <div style={{background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04),0 4px 16px rgba(0,0,0,0.03)"}}>
-              <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center",background:darkMode?"rgba(34,197,94,0.04)":"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
-                <div>
-                  <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",letterSpacing:"-0.3px"}}>Recent requests</div>
-                  <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>{requests.length} total · sorted by most recent</div>
-                </div>
-                <button onClick={()=>setView("requests")} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>View all ></button>
-              </div>
-
-              {requests.length===0?(
-                <div style={{padding:"80px 24px",textAlign:"center"}}>
-                  <div style={{width:80,height:80,background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📋</div>
-                  <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8,letterSpacing:"-0.5px"}}>No requests yet</div>
-                  <div style={{fontSize:14,color:"var(--text-tertiary)",marginBottom:28,maxWidth:340,margin:"0 auto 28px",lineHeight:1.6}}>Create your first material request - speak or type what you need, and we'll send RFQs to your suppliers automatically</div>
-                  <button onClick={()=>setView("new")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(34,197,94,0.35)"}}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Create first request
-                  </button>
-                </div>
-              ):(
-                <div>
-                  {requests.slice(0,8).map((r,idx)=>{
-                    const sc=STATUS[r.status];
-                    const savedCount=(r.sentTo||[]).filter(s=>s.saved).length;
-                    const totalCount=(r.sentTo||[]).length;
-                    return(
-                    <div key={r.id} onClick={()=>{setActiveReq(r);setView("quotes");}} style={{display:"flex",alignItems:"center",gap:0,padding:"0 24px",borderTop:idx===0?"none":"1px solid var(--border)",cursor:"pointer",transition:"all 0.15s ease",borderRadius:idx===0?0:0}}
-                      onMouseEnter={e=>{e.currentTarget.style.background=darkMode?"rgba(34,197,94,0.06)":"rgba(34,197,94,0.03)";e.currentTarget.style.transform="translateX(2px)"}}
-                      onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.transform="translateX(0)"}}>
-                      {/* Status bar */}
-                      <div style={{width:3,height:40,background:sc.text,borderRadius:99,marginRight:20,flexShrink:0,opacity:0.6}}/>
-                      {/* ID */}
-                      <div style={{width:100,flexShrink:0,padding:"16px 0"}}>
-                        <div style={{fontSize:12,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"var(--indigo)"}}>{r.id}</div>
-                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:2}}>{r.created}</div>
-                      </div>
-                      {/* Job & site */}
-                      <div style={{flex:1,padding:"16px 20px 16px 0"}}>
-                        <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{r.jobRef}</div>
-                        <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{r.site}</div>
-                      </div>
-                      {/* Trade badge */}
-                      <div style={{width:110,padding:"16px 0",flexShrink:0}}>
-                        <span style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:20}}>{r.trade}</span>
-                      </div>
-                      {/* Items count */}
-                      <div style={{width:80,padding:"16px 0",flexShrink:0,textAlign:"center"}}>
-                        <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{r.items.length}</div>
-                        <div style={{fontSize:11,color:"var(--text-tertiary)"}}>items</div>
-                      </div>
-                      {/* Quote progress */}
-                      {totalCount>0&&(
-                        <div style={{width:100,padding:"16px 0",flexShrink:0,textAlign:"center"}}>
-                          <div style={{fontSize:12,fontWeight:600,color:savedCount===totalCount?"#22C55E":"#F59E0B"}}>{savedCount}/{totalCount}</div>
-                          <div style={{fontSize:11,color:"var(--text-tertiary)"}}>quotes in</div>
-                        </div>
-                      )}
-                      {/* Status + deadline */}
-                      <div style={{width:150,padding:"16px 0",flexShrink:0}}>
-                        <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
-                        {r.rfqDeadline&&r.status==="pending"&&(()=>{
-                          const daysLeft = Math.ceil((new Date(r.rfqDeadline).getTime()-Date.now())/86400000);
-                          return <div style={{fontSize:10,marginTop:4,color:daysLeft<=0?"#DC2626":daysLeft<=1?"#D97706":"#16A34A",fontWeight:600}}>{daysLeft<=0?"Deadline passed":`⏰ ${daysLeft}d left`}</div>;
-                        })()}
-                      </div>
-                      {/* Arrow */}
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-                    </div>
-                  )})}
-                  {requests.length>8&&(
-                    <div style={{padding:"14px 28px",borderTop:"1px solid var(--border)",textAlign:"center"}}>
-                      <button onClick={()=>setView("requests")} style={{fontSize:13,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View all {requests.length} requests ></button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* == NEW REQUEST WIZARD == */}
-        {view==="new"&&(
-          <div>
-            <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>New material request</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Speak or type your list - AI structures it and sends RFQs to suppliers</p>
-            </div>
-            <div style={{display:"flex",gap:8,marginBottom:28,alignItems:"center"}}>
-              {["Describe materials","Review & configure","Send RFQs"].map((s,i)=>(
-                <div key={s} style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,background:step>i+1?"#6366F1":step===i+1?"#6366F1":"#E5E7EB",color:step>=i+1?"white":"#9CA3AF",boxShadow:step===i+1?"0 4px 12px rgba(99,102,241,0.35)":"none"}}>{step>i+1?"v":i+1}</div>
-                  <span style={{fontSize:13,color:step===i+1?"#111827":"#9CA3AF",fontWeight:step===i+1?500:400,display:isMobile?"none":"block"}}>{s}</span>
-                  {i<2&&<div style={{width:36,height:1,background:"#E5E7EB"}}/>}
-                </div>
-              ))}
-            </div>
-
-            {/* Step 1 */}
-            {step===1&&(
-              <Card>
-                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:isMobile?12:16,marginBottom:20}}>
-                  {[{label:"Job reference",val:jobRef,set:setJobRef,ph:"e.g. JOB-2024-056"},{label:"Site / location",val:site,set:setSite,ph:"e.g. Unit 7, High Street"}].map(f=>(
-                    <div key={f.label}>
-                      <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>{f.label}</label>
-                      <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
-                    </div>
-                  ))}
-                  <div>
-                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Trade</label>
-                    <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"var(--bg-card-solid)",outline:"none"}}>
-                      {TRADES.map(t=><option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)"}}>Material requirements <span style={{color:"#9CA3AF",fontWeight:400}}>(speak or type naturally)</span></label>
-                  {voiceOk?(
-                    <button onClick={()=>listening?micStop():micStart()}
-                      style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${listening?"#DC2626":"#6366F1"}`,background:listening?"#FEF2F2":"#EEF2FF",color:listening?"#DC2626":"#6366F1",boxShadow:listening?"none":"0 2px 8px rgba(99,102,241,0.2)",fontSize:12,fontWeight:500,cursor:"pointer"}}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        {listening?<rect x="6" y="6" width="12" height="12" rx="2"/>:<><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>}
-                      </svg>
-                      {listening?"Stop":"Speak list"}
-                      {listening&&<span style={{width:7,height:7,borderRadius:"50%",background:"#DC2626",display:"inline-block",animation:"pulse 1s infinite"}}/>}
-                    </button>
-                  ):(
-                    <span style={{fontSize:11,color:"#9CA3AF"}}>Voice not available in this browser</span>
-                  )}
-                </div>
-                {listening&&(
-                  <div style={{background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:8,fontSize:13,color:"var(--red)"}}>
-                    <span style={{fontWeight:500}}>Listening... </span>
-                    {interim?<span style={{color:"var(--red)"}}>{interim}</span>:<span style={{color:"#FCA5A5"}}>speak your list now</span>}
-                  </div>
-                )}
-                <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)}
-                  placeholder={"Plumbing: \"I need 20 metres of 22mm copper pipe, 12 compression elbows, 6 isolation valves for the plant room.\"\n\nElectrical: \"100m of 2.5mm twin and earth, 20 double sockets, a 10-way consumer unit and 20mm conduit.\""}
-                  style={{width:"100%",height:150,padding:"12px 14px",border:`1.5px solid ${listening?"#FECACA":"#E2E8F0"}`,borderRadius:12,fontSize:13,lineHeight:1.7,resize:"vertical",outline:"none",fontFamily:"inherit",background:listening?"#FFFBFB":"white",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}/>
-                <div style={{marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"#16A34A",background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>📋 Load template</button>
-                  <Btn onClick={handleParse} disabled={!rawInput.trim()||loading}>
-                    {loading?<><Spinner/>{loadMsg}</>:"* Parse with AI"}
-                  </Btn>
-                </div>
-              </Card>
-            )}
-
-            {/* Step 2 */}
-            {step===2&&parsed&&(
-              <Card>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-                  <div>
-                    <div style={{fontSize:15,fontWeight:500}}>AI parsed {parsed.items?.length} items</div>
-                    <div style={{fontSize:13,color:"#6B7280",marginTop:2}}>Review before sending</div>
-                  </div>
-                  {parsed.urgency&&<Badge bg={parsed.urgency==="urgent"?"#FEF3C7":"#F0FDF4"} text={parsed.urgency==="urgent"?"#92400E":"#166534"}>{parsed.urgency}</Badge>}
-                </div>
-                <div style={{overflowX:"auto"}}>
-                <table style={{width:"100%",borderCollapse:"collapse",minWidth:680}}>
-                  <thead><tr style={{background:"var(--bg-subtle)"}}>
-                    {["#","Description","Qty","Unit","Category","Notes"].map(h=>(
-                      <th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</th>
-                    ))}
-                    <th style={{padding:"9px 8px",width:32}}></th>
-                  </tr></thead>
-                  <tbody>{parsed.items?.map((item,i)=>{
-                    const updateItem = (field,val) => setParsed(p=>({...p,items:p.items.map((it,ii)=>ii===i?{...it,[field]:val}:it)}));
-                    const cellStyle = {padding:"4px 6px",border:"1px solid transparent",borderRadius:6,fontSize:13,outline:"none",fontFamily:"inherit",background:"transparent",color:"var(--text-primary)",width:"100%",transition:"all 0.15s"};
-                    const cellHover = {border:"1px solid var(--border)",background:"var(--bg-subtle)"};
-                    return(
-                    <tr key={item.id||i} style={{borderTop:"1px solid var(--border)"}}>
-                      <td style={{padding:"8px 14px",fontSize:12,color:"var(--text-muted)",width:32,fontFamily:"monospace"}}>{i+1}</td>
-                      <td style={{padding:"4px 8px",minWidth:180}}>
-                        <input value={item.description||""} onChange={e=>updateItem("description",e.target.value)}
-                          style={{...cellStyle,fontWeight:500}}
-                          onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
-                          onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}
-                        />
-                      </td>
-                      <td style={{padding:"4px 8px",width:80}}>
-                        <input type="number" value={item.quantity||""} onChange={e=>updateItem("quantity",e.target.value)}
-                          style={{...cellStyle,fontFamily:"'JetBrains Mono',monospace",width:70}}
-                          onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
-                          onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}
-                        />
-                      </td>
-                      <td style={{padding:"4px 8px",width:90}}>
-                        <input value={item.unit||""} onChange={e=>updateItem("unit",e.target.value)}
-                          style={{...cellStyle,width:80}}
-                          onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
-                          onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}
-                        />
-                      </td>
-                      <td style={{padding:"4px 8px",width:130}}>
-                        <select value={item.category||"General"} onChange={e=>updateItem("category",e.target.value)}
-                          style={{...cellStyle,width:120,cursor:"pointer"}}
-                          onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
-                          onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}
-                        >
-                          {["Plumbing","HVAC","Electrical","Mechanical","Ventilation","Gas","General"].map(cat=>(
-                            <option key={cat} value={cat}>{cat}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td style={{padding:"4px 6px"}}>
-                        <input value={item.notes||""} onChange={e=>updateItem("notes",e.target.value)}
-                          placeholder="Add note..."
-                          style={{...cellStyle,color:"var(--text-secondary)",fontSize:12}}
-                          onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--border)",background:"var(--bg-subtle)"})}
-                          onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}
-                        />
-                      </td>
-                      <td style={{padding:"4px 6px",width:32,textAlign:"center"}}>
-                        <button onClick={()=>setParsed(p=>({...p,items:p.items.filter((_,ii)=>ii!==i)}))}
-                          title="Remove item"
-                          style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",fontSize:14,lineHeight:1,padding:"2px 4px",borderRadius:4}}
-                          onMouseEnter={e=>e.target.style.color="var(--red)"}
-                          onMouseLeave={e=>e.target.style.color="var(--text-muted)"}
-                        >×</button>
-                      </td>
-                    </tr>
-                  )})}
-                  </tbody>
-                </table>
-                </div>
-                <button onClick={()=>setParsed(p=>({...p,items:[...p.items,{id:Date.now(),description:"",quantity:1,unit:"pcs",category:"General",notes:""}]}))}
-                  style={{marginTop:8,fontSize:12,color:"var(--green-dark)",background:"none",border:"1px dashed var(--green-dark)",borderRadius:6,padding:"5px 14px",cursor:"pointer",fontWeight:500}}>
-                  + Add item
-                </button>
-                <div style={{marginTop:20,padding:16,background:"var(--bg-subtle)",borderRadius:8}}>
-                  <div style={{fontSize:13,fontWeight:500,marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"#6B7280",fontWeight:400}}>({trade})</span></div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                    {filteredSup.map(s=>(
-                      <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",background:selSup.includes(s.id)?"var(--green-mint)":"var(--bg-card-solid)",border:`1px solid ${selSup.includes(s.id)?"var(--green-dark)":"var(--border)"}`,borderRadius:8,padding:"8px 14px",transition:"all 0.15s"}}>
-                        <input type="checkbox" checked={selSup.includes(s.id)} onChange={e=>setSelSup(p=>e.target.checked?[...p,s.id]:p.filter(id=>id!==s.id))} style={{accentColor:"var(--green-dark)"}}/>
-                        <span style={{fontWeight:600,color:"var(--text-primary)"}}>{s.name}</span>
-                        <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{s.email}</span>
-                      </label>
-                    ))}
-                    {filteredSup.length===0&&<div style={{fontSize:13,color:"#9CA3AF"}}>No suppliers for {trade} - add them in Suppliers.</div>}
-                  </div>
-                </div>
-                {/* -- Delivery method -- */}
-                <div style={{marginTop:16,padding:18,background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)"}}>
-                  <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)",marginBottom:14}}>🚚 Delivery requirements</div>
-                  <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:14}}>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",marginBottom:8}}>Delivery method</div>
-                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                        {[
-                          {val:"direct",    icon:"📍", label:"Deliver direct to site",         sub:`${site||"site address"}`},
-                          {val:"alternative",icon:"🏢", label:"Deliver to alternative address", sub:"specify address below"},
-                          {val:"collect",   icon:"🏪", label:"Collect from branch",             sub:"we will collect"},
-                          {val:"tbc",       icon:"❓", label:"To be confirmed",                 sub:"supplier to await confirmation"},
-                        ].map(opt=>(
-                          <label key={opt.val} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:8,border:`1.5px solid ${deliveryMethod===opt.val?"var(--green-dark)":"var(--border)"}`,background:deliveryMethod===opt.val?"var(--green-mint)":"var(--bg-card-solid)",cursor:"pointer",transition:"all 0.15s"}}>
-                            <input type="radio" name="deliveryMethod" value={opt.val} checked={deliveryMethod===opt.val} onChange={()=>setDeliveryMethod(opt.val)} style={{accentColor:"var(--green-dark)",marginTop:2}}/>
-                            <div>
-                              <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)"}}>{opt.icon} {opt.label}</div>
-                              <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:1}}>{opt.sub}</div>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                      {deliveryMethod==="alternative"&&(
-                        <div style={{marginTop:10}}>
-                          <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Alternative delivery address</label>
-                          <textarea value={altAddress} onChange={e=>setAltAddress(e.target.value)} placeholder="Full delivery address..." style={{width:"100%",height:70,padding:"8px 10px",border:"1px solid #BFDBFE",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",marginBottom:8}}>Required delivery date</div>
-                      <div style={{background:"var(--bg-subtle)",borderRadius:10,padding:14,border:"1px solid var(--border)"}}>
-                        <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} min={new Date().toISOString().split("T")[0]} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:14,outline:"none",color:deliveryDate?"var(--text-primary)":"var(--text-tertiary)"}}/>
-                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:8}}>Leave blank if date is flexible</div>
-                        {deliveryDate&&(
-                          <div style={{marginTop:8,padding:"8px 12px",background:"var(--green-mint)",borderRadius:6,fontSize:12,color:"var(--green-deep)",fontWeight:500}}>
-                            v Required by {new Date(deliveryDate).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
-                          </div>
-                        )}
-                        <div style={{marginTop:12,fontSize:11,color:"var(--text-secondary)",lineHeight:1.6}}>
-                          <div style={{fontWeight:500,marginBottom:4}}>This will tell suppliers to:</div>
-                          <div>- Include carriage/delivery charges in their quote</div>
-                          <div>- Confirm they can meet your required date</div>
-                          <div>- State lead times clearly</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{background:"var(--bg-card-solid)",borderRadius:8,padding:"10px 14px",border:"1px solid var(--border)",fontSize:12,color:"var(--indigo)"}}>
-                    i These delivery details will be included in the RFQ email and the AI will extract carriage charges from supplier responses during quote analysis.
-                  </div>
-                </div>
-
-                <div style={{marginTop:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-                  <Btn outline onClick={()=>setStep(1)}>← Back</Btn>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                    <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid #C7D2FE",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>💾 Save as template</button>
-                    <Btn onClick={handleGenRFQ} disabled={loading}>{loading?<><Spinner/>{loadMsg}</>:"Generate RFQ email >"}</Btn>
-                  </div>
-                </div>
-              </Card>
-            )}
-
-            {/* Step 3 */}
-            {step===3&&rfqEmail&&(
-              <Card>
-                <div style={{fontSize:15,fontWeight:500,marginBottom:4}}>RFQ email ready</div>
-                <div style={{fontSize:13,color:"#6B7280",marginBottom:16}}>Will be sent to: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.name).join(", ")}</div>
-                <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:8,padding:20,marginBottom:16}}>
-                  <div style={{fontSize:12,color:"#9CA3AF",marginBottom:4}}>To: {suppliers.filter(s=>selSup.includes(s.id)).map(s=>s.email).join(", ")}</div>
-                  <div style={{fontSize:12,color:"#9CA3AF",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #E5E7EB"}}>Subject: Request for Quotation - {jobRef||parsed?.jobRef||"TBC"}</div>
-                  <pre style={{fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0,color:"var(--text-secondary)"}}>{rfqEmail}</pre>
-                </div>
-
-                {!settings.resendKey&&(
-                  <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:"var(--amber)"}}>
-                    ! Resend not configured. <button onClick={()=>setView("settings")} style={{background:"none",border:"none",color:"#B45309",textDecoration:"underline",cursor:"pointer",fontSize:13,padding:0}}>Add it in Settings</button> to send for real. You can still save the request.
-                  </div>
-                )}
-
-                {emailRes&&(
-                  <div style={{marginBottom:16}}>
-                    {emailRes.map((r,i)=>(
-                      <div key={i} style={{padding:"10px 14px",borderRadius:8,marginBottom:8,background:r.success?"#F0FDF4":"#FEF2F2",border:`1px solid ${r.success?"#A7F3D0":"#FECACA"}`}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{color:r.success?"#059669":"#DC2626",fontWeight:600}}>{r.success?"v":"x"}</span>
-                          <span style={{fontWeight:500}}>{r.supplier}</span>
-                          <span style={{color:r.success?"#059669":"#DC2626"}}>{r.success?"Email sent successfully":`Error ${r.statusCode||""}: ${r.error}`}</span>
-                        </div>
-                        {r.success&&r.id&&<div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>Message ID: {r.id}</div>}
-                        {!r.success&&r.error?.includes("CORS")&&(
-                          <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
-                            CORS error - Resend blocks direct browser calls in some environments. Try deploying to Vercel where this works correctly.
-                          </div>
-                        )}
-                        {!r.success&&r.statusCode===403&&(
-                          <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
-                            403 Forbidden - your Resend key may not have send permissions. Go to resend.com > API Keys > check the key has "Full access" not "Read only".
-                          </div>
-                        )}
-                        {!r.success&&r.statusCode===422&&(
-                          <div style={{fontSize:12,color:"var(--red)",marginTop:6,background:"#FEE2E2",padding:"8px 10px",borderRadius:6}}>
-                            422 - Resend rejected the request. On free accounts you can only send to your own verified email address. Go to resend.com > click your email in the top right > verify it, then use that address as a test recipient in Suppliers.
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div style={{display:"flex",gap:10,justifyContent:"space-between"}}>
-                  <Btn outline onClick={()=>setStep(2)}>← Back</Btn>
-                  <div style={{display:"flex",gap:10}}>
-                    {settings.resendKey&&!emailRes&&(
-                      <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#16A34A">
-                        {loading?<><Spinner/>{loadMsg}</>:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""} >`}
-                      </Btn>
-                    )}
-                    {emailRes&&emailRes.some(r=>r.success)&&(
-                      <div style={{display:"flex",alignItems:"center",gap:10,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:10,padding:"10px 16px"}}>
-                        <span style={{fontSize:18}}>✅</span>
-                        <div>
-                          <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)"}}>Quotes sent successfully</div>
-                          <div style={{fontSize:12,color:"var(--green-dark)",opacity:0.8}}>Redirecting to dashboard...</div>
-                        </div>
-                      </div>
-                    )}
-                    {!settings.resendKey&&(
-                      <div style={{fontSize:13,color:"var(--text-tertiary)",display:"flex",alignItems:"center",gap:6}}>
-                        <span>Configure Resend in</span>
-                        <button onClick={()=>setView("settings")} style={{color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:13,padding:0}}>Settings</button>
-                        <span>to send emails</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* == QUOTE ANALYSIS == */}
-        {view==="quotes"&&(
-          <div>
-            <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Quote analysis</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Select a request, enter each supplier quote, then run AI analysis</p>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"240px 1fr",gap:isMobile?12:20}}>
-              <div>
-                <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Requests</div>
-                {requests.length===0&&<div style={{fontSize:13,color:"#9CA3AF",padding:"20px 0"}}>No requests yet - create one first</div>}
-                {requests.map(r=>{
-                  const savedCount = (r.sentTo||[]).filter(s=>s.saved).length;
-                  const totalCount = (r.sentTo||[]).length;
-                  return(
-                  <button key={r.id} onClick={()=>{setActiveReq(r);setQuoteAnalysis(null);setAllAnalyses([]);}}
-                    style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${activeReq?.id===r.id?"#3B82F6":"#E5E7EB"}`,background:activeReq?.id===r.id?"#EFF6FF":"white",cursor:"pointer",marginBottom:8,transition:"all 0.15s"}}>
-                    <div style={{fontSize:12,fontWeight:600,fontFamily:"'JetBrains Mono',monospace",color:"#3B82F6"}}>{r.id}</div>
-                    <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)",marginTop:3}}>{r.jobRef}</div>
-                    <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:1}}>{r.trade} · {r.items.length} items</div>
-                    <div style={{marginTop:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <Badge bg={STATUS[r.status].bg} text={STATUS[r.status].text}>{STATUS[r.status].label}</Badge>
-                      {totalCount>0&&<span style={{fontSize:11,color:"var(--text-secondary)"}}>{savedCount}/{totalCount} quotes in</span>}
-                    </div>
-                    {r.notes&&<div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:4,fontStyle:"italic"}}>{r.notes}</div>}
-                  </button>
-                  );
-                })}
-              </div>
-              <div>
-                {activeReq?(
-                  <>
-                    {/* Request summary header */}
-                    <Card style={{marginBottom:16}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-                        <div>
-                          <div style={{fontSize:16,fontWeight:600,color:"#0F172A"}}>{activeReq.id} - {activeReq.jobRef}</div>
-                          <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:2}}>{activeReq.site} · {activeReq.trade} · {activeReq.items.length} items</div>
-                        </div>
-                        <div style={{display:"flex",gap:8}}>
-                          <button onClick={()=>{setEditModal(activeReq);setEditForm({jobRef:activeReq.jobRef,site:activeReq.site,status:activeReq.status,notes:activeReq.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>️ Edit</button>
-                          <button onClick={()=>setActivityModal(activeReq)} style={{fontSize:12,color:"#6B7280",background:"var(--bg-subtle)",border:"1px solid var(--border-solid)",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>📋 Log {activeReq.activity?.length?`(${activeReq.activity.length})`:""}</button>
-                          <button onClick={()=>setDeleteConfirm(activeReq.id)} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>🗑️ Delete</button>
-                        </div>
-                      </div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
-                        {activeReq.items.map((item,i)=>(
-                          <span key={i} style={{background:"var(--bg-subtle2)",borderRadius:6,padding:"4px 10px",fontSize:12,color:"var(--text-secondary)"}}>
-                            <span style={{fontWeight:600}}>{item.quantity} {item.unit}</span> {item.description}
-                          </span>
-                        ))}
-                      </div>
-                      {/* Pending status timeline */}
-                      {activeReq.status==="pending"&&(activeReq.sentTo||[]).every(s=>!s.saved)&&(
-                        <div style={{marginTop:12,padding:"12px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)"}}>
-                          <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:8}}>⏳ Awaiting supplier responses</div>
-                          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                            {(activeReq.sentTo||[]).map(sup=>{
-                              const sent = activeReq.activity?.find(a=>a.action==="RFQ emails sent")?.ts;
-                              const hoursAgo = sent?Math.floor((Date.now()-new Date(sent).getTime())/3600000):0;
-                              return(
-                                <div key={sup.id} style={{display:"flex",alignItems:"center",gap:6,background:"var(--bg-card-solid)",border:`1px solid ${sup.saved?"var(--green-dark)":"var(--border)"}`,borderRadius:8,padding:"6px 12px"}}>
-                                  <div style={{width:8,height:8,borderRadius:"50%",background:sup.saved?"var(--green-dark)":"var(--amber)",flexShrink:0}}/>
-                                  <div>
-                                    <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{sup.name}</div>
-                                    <div style={{fontSize:10,color:"var(--text-tertiary)"}}>{sup.saved?"Quote received":sent?`Sent ${hoursAgo}h ago`:"Pending"}</div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                          {(()=>{
-                            const sent = activeReq.activity?.find(a=>a.action==="RFQ emails sent")?.ts;
-                            const hoursAgo = sent?Math.floor((Date.now()-new Date(sent).getTime())/3600000):0;
-                            if(hoursAgo>=24&&settings.resendKey){
-                              return <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center"}}>
-                                <span style={{fontSize:11,color:"var(--amber)"}}>No responses after {Math.floor(hoursAgo/24)}d {hoursAgo%24}h</span>
-                                <button style={{fontSize:11,fontWeight:600,color:"white",background:"var(--amber)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>Send reminder</button>
-                              </div>;
-                            }
-                          })()}
-                        </div>
-                      )}
-
-                      {(activeReq.deliveryMethod||activeReq.deliveryDate)&&(
-                        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                          {activeReq.deliveryMethod&&(
-                            <span style={{background:"var(--indigo-light)",border:"1px solid var(--border)",color:"var(--indigo)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
-                              🚚 {{direct:"Deliver to site",alternative:"Alt. address delivery",collect:"Collect from branch",tbc:"Delivery TBC"}[activeReq.deliveryMethod]||activeReq.deliveryMethod}
-                            </span>
-                          )}
-                          {activeReq.deliveryDate&&(
-                            <span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"var(--green-deep)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>
-                              📅 Required by {new Date(activeReq.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}
-                            </span>
-                          )}
-                          {activeReq.rfqDeadline&&(()=>{
-                            const daysLeft = Math.ceil((new Date(activeReq.rfqDeadline).getTime()-Date.now())/86400000);
-                            return <span style={{background:daysLeft<=0?"#FEF2F2":daysLeft<=1?"#FFFBEB":"#FFFBEB",border:`1px solid ${daysLeft<=0?"#FECACA":"#FDE68A"}`,color:daysLeft<=0?"#DC2626":"#92400E",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>
-                              ⏰ {daysLeft<=0?"Deadline passed":`Respond by ${new Date(activeReq.rfqDeadline).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`}
-                            </span>;
-                          })()}
-                          {activeReq.altAddress&&(
-                            <span style={{background:"var(--amber-light)",border:"1px solid #FDE68A",color:"var(--amber)",fontSize:12,padding:"4px 12px",borderRadius:20}}>
-                              📍 {activeReq.altAddress}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </Card>
-
-                    {/* Quote input boxes - one per supplier */}
-                    {(activeReq.sentTo&&activeReq.sentTo.length>0)?(
-                      <div style={{marginBottom:16}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                          <div>
-                            <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>Supplier quotes</div>
-                            <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:2}}>
-                              RFQ was sent to {activeReq.sentTo.length} supplier{activeReq.sentTo.length!==1?"s":""}. Paste each quote below, save it, then run the AI analysis.
-                            </div>
-                          </div>
-                          <div style={{fontSize:13,fontWeight:600,color:"#3B82F6"}}>
-                            {activeReq.sentTo.filter(s=>s.saved).length} of {activeReq.sentTo.length} quotes entered
-                          </div>
-                        </div>
-
-                        {activeReq.sentTo.map((sup,si)=>(
-                          <Card key={sup.id} style={{marginBottom:12,border:sup.saved?"1px solid #A7F3D0":"1px solid #E2E8F0"}}>
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                                <div style={{width:36,height:36,background:sup.saved?"#D1FAE5":"#EFF6FF",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:sup.saved?"#059669":"#3B82F6"}}>{sup.name.charAt(0)}</div>
-                                <div>
-                                  <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>{sup.name}</div>
-                                  <div style={{fontSize:12,color:"var(--text-secondary)"}}>{sup.email}</div>
-                                </div>
-                              </div>
-                              {sup.saved
-                                ? <span style={{background:"#D1FAE5",color:"var(--green-deep)",fontSize:12,fontWeight:600,padding:"4px 12px",borderRadius:20}}>Quote saved</span>
-                                : <span style={{background:"#FEF3C7",color:"var(--amber)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>Awaiting quote</span>
-                              }
-                            </div>
-                            {/* Drag and drop + file upload zone */}
-                            {(()=>{
-                              const processFile = async(file) => {
-                                if (!file) return;
-                                if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
-                                window.__piq_or_key__ = settings.openRouterKey;
-                                setFileExtracting(prev=>({...prev,[si]:true}));
-                                showToast(`Reading ${file.name}...`);
-                                try {
-                                  const { content, type } = await readFileForExtraction(file);
-                                  showToast(`AI extracting data from ${file.name}...`);
-                                  const extracted = await extractQuoteFromFile(content, file.name, type);
-                                  const newQuote = sup.quote?.trim()
-                                    ? sup.quote + "\n\n--- From " + file.name + " ---\n" + extracted
-                                    : "--- Extracted from " + file.name + " ---\n" + extracted;
-                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:newQuote,saved:false}:s)}:r));
-                                  setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:newQuote,saved:false}:s)}));
-                                  showToast(`v ${file.name} extracted - review and save`);
-                                } catch(err) {
-                                  showToast(`Could not read ${file.name}: ${err.message}`,"warn");
-                                }
-                                setFileExtracting(prev=>({...prev,[si]:false}));
-                              };
-                              return (
-                                <div
-                                  onDragOver={e=>{e.preventDefault();setDragOver(prev=>({...prev,[si]:true}));}}
-                                  onDragLeave={e=>{e.preventDefault();setDragOver(prev=>({...prev,[si]:false}));}}
-                                  onDrop={e=>{
-                                    e.preventDefault();
-                                    setDragOver(prev=>({...prev,[si]:false}));
-                                    const file = e.dataTransfer.files[0];
-                                    if (file) processFile(file);
-                                  }}
-                                  style={{
-                                    marginBottom:10,
-                                    padding:"14px 16px",
-                                    background: dragOver[si]?"var(--indigo-light)":fileExtracting[si]?"var(--bg-subtle)":"var(--bg-subtle)",
-                                    borderRadius:10,
-                                    border: dragOver[si]?"2px dashed #3B82F6":fileExtracting[si]?"2px dashed #93C5FD":"2px dashed #CBD5E1",
-                                    display:"flex",
-                                    alignItems:"center",
-                                    justifyContent:"space-between",
-                                    gap:12,
-                                    transition:"all 0.15s"
-                                  }}
-                                >
-                                  <div>
-                                    {fileExtracting[si]?(
-                                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                                        <Spinner/>
-                                        <div>
-                                          <div style={{fontSize:12,fontWeight:500,color:"#3B82F6"}}>AI reading document...</div>
-                                          <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>Extracting pricing and availability data</div>
-                                        </div>
-                                      </div>
-                                    ):dragOver[si]?(
-                                      <div>
-                                        <div style={{fontSize:12,fontWeight:600,color:"#3B82F6"}}>Drop to upload</div>
-                                        <div style={{fontSize:11,color:"#60A5FA",marginTop:1}}>Release to let AI read this document</div>
-                                      </div>
-                                    ):(
-                                      <div>
-                                        <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)"}}>📎 Drag & drop supplier document here</div>
-                                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>PDF · Word · Excel · CSV - AI reads it and fills the box below</div>
-                                      </div>
-                                    )}
-                                  </div>
-                                  <label style={{
-                                    display:"inline-flex",alignItems:"center",gap:6,
-                                    background:fileExtracting[si]?"#DBEAFE":"white",
-                                    color:fileExtracting[si]?"#93C5FD":"#3B82F6",
-                                    fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,
-                                    cursor:fileExtracting[si]?"not-allowed":"pointer",
-                                    border:"1px solid #BFDBFE",whiteSpace:"nowrap",flexShrink:0
-                                  }}>
-                                    {fileExtracting[si]?"Reading...":"Browse file"}
-                                    <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt,.ods" disabled={fileExtracting[si]} style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) processFile(e.target.files[0]); e.target.value=""; }}/>
-                                  </label>
-                                </div>
-                              );
-                            })()}
-
-                            <textarea
-                              value={sup.quote||""}
-                              onChange={e=>{
-                                setRequests(p=>p.map(r=>r.id===activeReq.id?{
-                                  ...r,
-                                  sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value,saved:false}:s)
-                                }:r));
-                                setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value,saved:false}:s)}));
-                              }}
-                              placeholder={`Option 1: Paste ${sup.name}'s quote email directly here\nOption 2: Upload their PDF/Excel above - AI reads it and fills this box automatically\n\nEither way, review the content then click Save quote`}
-                              style={{width:"100%",height:140,padding:"10px 12px",border:`1px solid ${sup.quote?.trim()?"var(--green-dark)":"var(--border)"}`,borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit",background:sup.saved?"var(--green-mint)":"var(--bg-input)"}}
-                            />
-                            <div style={{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                              <div style={{fontSize:11,color:"var(--text-tertiary)"}}>
-                                {sup.quote?.trim()?`${sup.quote.trim().split(/\s+/).length} words entered`:"No quote entered yet"}
-                              </div>
-                              <div style={{display:"flex",gap:8}}>
-                                {sup.quote?.trim()&&(
-                                  <button onClick={()=>{
-                                    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:"",saved:false}:s)}:r));
-                                    setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,quote:"",saved:false}:s)}));
-                                  }} style={{fontSize:12,color:"var(--text-tertiary)",background:"none",border:"none",cursor:"pointer"}}>Clear</button>
-                                )}
-                                {sup.saved&&(
-                                  <button onClick={()=>{
-                                    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}:r));
-                                    setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:false}:s)}));
-                                  }} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"1px solid var(--border-solid)",borderRadius:6,padding:"6px 12px",cursor:"pointer"}}>Edit</button>
-                                )}
-                                <Btn
-                                  disabled={!sup.quote?.trim()}
-                                  color={sup.saved?"#059669":"#3B82F6"}
-                                  onClick={()=>{
-                                    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}:r));
-                                    setActiveReq(prev=>({...prev,sentTo:prev.sentTo.map((s,i)=>i===si?{...s,saved:true}:s)}));
-                                    showToast(`${sup.name} quote saved`);
-                                  }}
-                                >{sup.saved?"v Saved":"Save quote"}</Btn>
-                              </div>
-                            </div>
-                          </Card>
-                        ))}
-
-                        {/* Analyse button - enabled when at least 1 quote saved */}
-                        {activeReq.sentTo.some(s=>s.saved)&&(
-                          <div style={{background:"linear-gradient(135deg,#0F172A,#1E3A5F)",borderRadius:14,padding:"20px 24px",marginTop:8}}>
-                            <div style={{fontSize:14,fontWeight:600,color:"white",marginBottom:4}}>
-                              {activeReq.sentTo.filter(s=>s.saved).length === activeReq.sentTo.length
-                                ? "v All quotes received - ready for AI analysis"
-                                : `${activeReq.sentTo.filter(s=>s.saved).length} of ${activeReq.sentTo.length} quotes saved - you can analyse now or wait for more`
-                              }
-                            </div>
-                            <div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:16}}>
-                              AI will compare all saved quotes against your original request - pricing, availability, carriage, discounts, alternatives
-                            </div>
-                            <Btn onClick={handleAnalyseAll} disabled={loading} color="#3B82F6">
-                              {loading?<><Spinner/>{loadMsg}</>:`Analyse ${activeReq.sentTo.filter(s=>s.saved).length} quote${activeReq.sentTo.filter(s=>s.saved).length!==1?"s":""} with AI >`}
-                            </Btn>
-                          </div>
-                        )}
-                      </div>
-                    ):(
-                      /* Manual entry fallback for requests without sentTo data */
-                      <Card style={{marginBottom:16}}>
-                        <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Paste supplier quote</div>
-                        <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:12}}>This request has no supplier tracking. Enter supplier name and paste their quote.</div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-                          <div>
-                            <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Supplier name</label>
-                            <input value={quoteSupplierName} onChange={e=>setQuoteSupplierName(e.target.value)} placeholder="e.g. BSS Industrial" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
-                          </div>
-                        </div>
-                        <textarea value={quoteInput} onChange={e=>setQuoteInput(e.target.value)}
-                          placeholder="Paste the supplier quote here..."
-                          style={{width:"100%",height:120,padding:"12px 14px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,lineHeight:1.6,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
-                        <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
-                          <Btn onClick={handleAnalyse} disabled={!quoteInput.trim()||loading} color="#7C3AED">
-                            {loading?<><Spinner/>{loadMsg}</>:"Analyse with AI >"}
-                          </Btn>
-                        </div>
-                      </Card>
-                    )}
-
-                    {allAnalyses.length>0&&(
-                      <div>
-                        {/* Comparison summary bar if multiple quotes */}
-                        {allAnalyses.length>1&&(
-                          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:"20px 24px",marginBottom:20,border:"1px solid var(--border)",boxShadow:"var(--shadow-sm)"}}>
-                            <div style={{fontSize:14,fontWeight:600,marginBottom:16,color:"var(--text-primary)"}}>⚡ AI Comparison Summary - {allAnalyses.length} quotes received</div>
-                            <div style={{display:"grid",gridTemplateColumns:`repeat(${allAnalyses.length},1fr)`,gap:12}}>
-                              {[...allAnalyses].sort((a,b)=>b.completeness-a.completeness).map((a,i)=>{
-                                const isBest = i===0;
-                                const verdictColor = a.overallVerdict==="excellent"?"#4ADE80":a.overallVerdict==="good"?"#60A5FA":a.overallVerdict==="partial"?"#FBBF24":"#F87171";
-                                return(
-                                  <div key={a._id} style={{background:isBest?"var(--green-mint)":"var(--bg-subtle)",borderRadius:10,padding:"14px 16px",border:isBest?"1px solid var(--green-dark)":"1px solid var(--border)"}}>
-                                    {isBest&&<div style={{fontSize:10,fontWeight:700,color:"var(--green-dark)",marginBottom:6,letterSpacing:"0.1em"}}>* RECOMMENDED</div>}
-                                    <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>{a.supplierName}</div>
-                                    <div style={{fontSize:22,fontWeight:700,color:verdictColor||"var(--text-primary)",fontFamily:"monospace"}}>{a.completeness}%</div>
-                                    <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:2}}>completeness</div>
-                                    <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)",marginTop:8}}>{a.estimatedTotal||a.subtotal||"-"}</div>
-                                    <div style={{fontSize:11,color:"var(--text-tertiary)"}}>est. total inc. carriage</div>
-                                    {a.carriageCharge&&a.carriageCharge!=="Not stated"&&<div style={{fontSize:11,color:"var(--amber)",marginTop:4}}>🚚 {a.carriageCharge}</div>}
-                                    {a.missing?.length>0&&<div style={{fontSize:11,color:"var(--red)",marginTop:4}}>x {a.missing.length} item{a.missing.length!==1?"s":""} missing</div>}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Individual quote cards */}
-                        {allAnalyses.map((qa,qi)=>{
-                          const verdictConfig = {
-                            excellent:{bg:"var(--green-light)",  border:"var(--green-dark)", text:"var(--green-deep)", label:"Excellent"},
-                            good:     {bg:"var(--indigo-light)", border:"var(--indigo)",     text:"var(--indigo)",     label:"Good"},
-                            partial:  {bg:"var(--amber-light)",  border:"var(--amber)",      text:"var(--amber)",      label:"Partial"},
-                            poor:     {bg:"var(--red-light)",    border:"var(--red)",        text:"var(--red)",        label:"Poor"},
-                          }[qa.overallVerdict||"good"]||{bg:"var(--indigo-light)",border:"var(--indigo)",text:"var(--indigo)",label:"Good"};
-                          const isQExp = expandedQuote===qa._id;
-                          const scoreCol = qa.completeness>=80?"var(--green-dark)":qa.completeness>=60?"var(--amber)":"var(--red)";
-                          return(
-                          <div key={qa._id} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid var(--border)`,borderTop:`3px solid ${verdictConfig.border}`,overflow:"hidden",boxShadow:isQExp?"var(--shadow-lg)":"var(--shadow-sm)",transition:"all 0.25s ease"}}>
-                            {/* Clickable header */}
-                            <div onClick={()=>setExpandedQuote(isQExp?null:qa._id)} style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isQExp?verdictConfig.bg:"var(--bg-card-solid)",transition:"background 0.2s"}}>
-                              <div style={{width:52,height:52,borderRadius:"50%",background:`conic-gradient(${scoreCol} ${qa.completeness*3.6}deg, var(--bg-subtle2) 0deg)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                                <div style={{width:40,height:40,borderRadius:"50%",background:"var(--bg-card-solid)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                  <span style={{fontSize:12,fontWeight:800,color:scoreCol,fontFamily:"'JetBrains Mono',monospace"}}>{qa.completeness}%</span>
-                                </div>
-                              </div>
-                              <div style={{flex:1,minWidth:0}}>
-                                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
-                                  <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
-                                  <span style={{background:verdictConfig.bg,color:verdictConfig.text,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,border:`1px solid ${verdictConfig.border}`}}>{verdictConfig.label}</span>
-                                  {approvedQuoteId===qa._id&&<span style={{background:"var(--green-light)",color:"var(--green-deep)",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99}}>Approved</span>}
-                                </div>
-                                <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{qa.recommendation}</div>
-                              </div>
-                              <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-                                {qa.estimatedTotal&&qa.estimatedTotal!=="Not calculated"&&(
-                                  <div style={{textAlign:"right"}}>
-                                    <div style={{fontSize:11,color:"var(--text-muted)"}}>Est. total</div>
-                                    <div style={{fontSize:14,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}}>{qa.estimatedTotal}</div>
-                                  </div>
-                                )}
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{transform:isQExp?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.25s ease",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
-                              </div>
-                            </div>
-                            {/* Expanded body */}
-                            {isQExp&&(
-                            <div style={{borderTop:"1px solid var(--border)",padding:"20px",animation:"cardExpand 0.2s ease"}}>
-                            {/* Detail header */}
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,paddingBottom:16,borderBottom:"1px solid var(--border)"}}>
-                              <div>
-                                <div style={{fontSize:13,color:"var(--text-secondary)"}}>{qa.recommendation}</div>
-                                {qa._stages&&<div style={{fontSize:10,color:"var(--text-muted)",marginTop:4}}>{qa._stages.extracted} lines extracted · {qa._stages.matched} items matched · JS-validated</div>}
-                              </div>
-                              <div style={{textAlign:"right",flexShrink:0,marginLeft:20}}>
-                                <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:2}}>Completeness</div>
-                                <div style={{fontSize:32,fontWeight:700,fontFamily:"monospace",color:scoreCol,lineHeight:1}}>{qa.completeness}%</div>
-                              </div>
-                            </div>
-
-                            {/* Financial summary strip */}
-                            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
-                              {[
-                                {label:"Subtotal (ex VAT)",value:qa.subtotal||"-",color:"var(--text-primary)"},
-                                {label:"Carriage / delivery",value:qa.carriageCharge||"Not stated",color:qa.carriageCharge==="Free"?"var(--green-dark)":qa.carriageCharge==="Not stated"?"var(--text-muted)":"var(--red)"},
-                                {label:"Estimated total",value:qa.estimatedTotal||qa.subtotal||"-",color:"var(--text-primary)",bold:true},
-                                {label:"Lead time",value:qa.leadTime||"Not stated",color:"var(--text-secondary)"},
-                              ].map(f=>(
-                                <div key={f.label} style={{background:"var(--bg-subtle)",borderRadius:10,padding:"12px 14px"}}>
-                                  <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:4,fontWeight:500}}>{f.label}</div>
-                                  <div style={{fontSize:14,fontWeight:f.bold?700:500,color:f.color}}>{f.value}</div>
-                                </div>
-                              ))}
-                            </div>
-
-                            {/* Positives */}
-                            {qa.positives?.length>0&&(
-                              <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:8}}>
-                                {qa.positives.map((p,i)=>(
-                                  <span key={i} style={{fontSize:12,color:"var(--green-deep)",display:"flex",alignItems:"center",gap:4}}>v {p}</span>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Discounts */}
-                            {qa.discounts?.length>0&&(
-                              <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:8}}>🏷️ Discounts available</div>
-                                {qa.discounts.map((d,i)=>(
-                                  <div key={i} style={{fontSize:13,color:"var(--text-primary)",marginBottom:4}}>
-                                    <span style={{fontWeight:500}}>{d.item}</span> - {d.discount} {d.detail&&<span style={{color:"var(--amber)"}}>({d.detail})</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Matched items table */}
-                            {qa.matched?.length>0&&(
-                              <div style={{marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"#059669",marginBottom:8}>Matched items ({qa.matched.length})</div>
-                                <div style={{overflowX:"auto"}}>
-                                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                                    <thead><tr style={{background:"var(--green-mint)"}}>
-                                      {["Item","Requested","Quoted","Unit price","Line total","Stock","Qty v","Notes",""].map(h=>(
-                                        <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{h}</th>
-                                      ))}
-                                    </tr></thead>
-                                    <tbody>{qa.matched.map((m,i)=>(
-                                      <tr key={i} style={{borderTop:"1px solid #F3F4F6",background:i%2===0?"var(--bg-card-solid)":"var(--bg-subtle)"}}>
-                                        <td style={{padding:"9px 10px",fontWeight:500,color:"#0F172A"}}>{m.item}</td>
-                                        <td style={{padding:"9px 10px",color:"var(--text-secondary)",fontFamily:"monospace",fontSize:12}}>{m.requestedQty} {m.requestedUnit}</td>
-                                        <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,color:m.qtyMatch?"#0F172A":"#DC2626",fontWeight:m.qtyMatch?400:600}}>{m.quotedQty||m.requestedQty} {m.quotedUnit||m.requestedUnit}</td>
-                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#059669",fontFamily:"monospace",fontSize:12}}>{m.unitPrice||m.quotedPrice||"-"}</td>
-                                        <td style={{padding:"9px 10px",fontWeight:600,color:"#0F172A",fontFamily:"monospace",fontSize:12}}>{m.lineTotal||"-"}</td>
-                                        <td style={{padding:"9px 10px"}}>
-                                          <Badge bg={m.inStock?"#D1FAE5":"#FEE2E2"} text={m.inStock?"#065F46":"#991B1B"}>{m.inStock?(m.stockQty&&m.stockQty!=="unknown"?`${m.stockQty} in stock`:"In stock"):"Out of stock"}</Badge>
-                                        </td>
-                                        <td style={{padding:"9px 10px"}}>
-                                          {m.qtyMatch===false
-                                            ? <span style={{fontSize:11,color:"var(--red)",fontWeight:600}}>! Mismatch</span>
-                                            : <span style={{fontSize:11,color:"#059669"}}>Match</span>
-                                          }
-                                        </td>
-                                        <td style={{padding:"9px 10px",fontSize:12,color:"var(--text-secondary)"}}>{m.notes||"-"}</td>
-                                        <td style={{padding:"9px 10px"}}>
-                                          {m.confidence==="low"&&<span title="Low confidence match - please verify" style={{fontSize:11,background:"var(--amber-light)",color:"var(--amber)",fontWeight:700,padding:"2px 8px",borderRadius:99,cursor:"help"}}>! Check</span>}
-                                          {m.confidence==="medium"&&<span title="Medium confidence - likely correct" style={{fontSize:11,background:"var(--bg-subtle2)",color:"var(--text-tertiary)",padding:"2px 8px",borderRadius:99}}>~</span>}
-                                        </td>
-                                      </tr>
-                                    ))}</tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Missing items */}
-                            {qa.missing?.length>0&&(
-                              <div style={{background:"var(--red-light)",border:"1px solid var(--red)",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--red)",marginBottom:8}}>x Not quoted ({qa.missing.length} item{qa.missing.length!==1?"s":""})</div>
-                                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                                  {qa.missing.map((m,i)=>(
-                                    <div key={i} style={{background:"#FEE2E2",borderRadius:6,padding:"4px 10px",fontSize:12,color:"var(--red)"}}>
-                                      {m.item||m} {m.reason&&<span style={{color:"#B91C1C"}}>- {m.reason}</span>}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Alternatives */}
-                            {qa.alternatives?.length>0&&(
-                              <div style={{background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--indigo)",marginBottom:8}}>💡 Alternative options offered</div>
-                                {qa.alternatives.map((a,i)=>(
-                                  <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,border:"1px solid #E0F2FE"}}>
-                                    <div style={{fontSize:12,color:"var(--text-secondary)"}}>Instead of: <span style={{fontWeight:500,color:"#0F172A"}}>{a.requestedItem}</span></div>
-                                    <div style={{fontSize:13,fontWeight:500,color:"var(--indigo)",marginTop:2}}>{a.alternativeOffered} {a.altPrice&&<span style={{color:"#059669",fontFamily:"monospace"}}>- {a.altPrice}</span>}</div>
-                                    {a.reason&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{a.reason}</div>}
-                                    {a.recommended&&<span style={{fontSize:10,background:"#0369A1",color:"white",padding:"1px 7px",borderRadius:10,marginTop:4,display:"inline-block"}}>AI recommends</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Warnings */}
-                            {qa.warnings?.length>0&&(
-                              <div style={{background:"var(--amber-light)",border:"1px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:6}}>! Warnings</div>
-                                {qa.warnings.map((w,i)=><div key={i} style={{fontSize:13,color:"#78350F",marginTop:3}}>- {w}</div>)}
-                              </div>
-                            )}
-
-                            {/* VAT note */}
-                            {qa.vatNote&&<div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:16,fontStyle:"italic"}}>VAT: {qa.vatNote}</div>}
-
-                            {/* Action buttons - smart conditional */}
-                            <div style={{paddingTop:16,borderTop:"1px solid var(--border)",marginTop:16}}>
-                              {approvedQuoteId===qa._id ? (
-                                /* -- This quote IS the approved one -- */
-                                <div>
-                                  <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 18px",background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,border:"1px solid #A7F3D0",marginBottom:12}}>
-                                    <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,boxShadow:"0 4px 12px rgba(34,197,94,0.3)",flexShrink:0}}>v</div>
-                                    <div style={{flex:1}}>
-                                      <div style={{fontSize:14,fontWeight:700,color:"var(--green-deep)"}}>Quote approved - PO generated</div>
-                                      <div style={{fontSize:12,color:"#16A34A",marginTop:2}}>This quote has been approved and sent to Orders. The PO has been downloaded.</div>
-                                    </div>
-                                    <button onClick={handleUndoApproval} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-                                      Undo Undo approval
-                                    </button>
-                                  </div>
-                                  <button onClick={()=>setView("orders")} style={{fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600}}>
-                                    View in Orders >
-                                  </button>
-                                </div>
-                              ) : approvedQuoteId && approvedQuoteId!==qa._id ? (
-                                /* -- Another quote has been approved - show reduced options -- */
-                                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                                  <div style={{fontSize:12,color:"var(--text-tertiary)",flex:1}}>Another quote has been approved for this job.</div>
-                                  <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft</Btn>
-                                  <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
-                                </div>
-                              ) : (
-                                /* -- No quote approved yet - show all options -- */
-                                <div>
-                                  <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
-                                    <Btn onClick={()=>handleApprovePO(qa)} color="#16A34A">Approve &amp; generate PO</Btn>
-                                    <Btn onClick={()=>handleSaveDraftQuote(qa)} color="#7C3AED">Save as draft PDF</Btn>
-                                    <Btn outline onClick={()=>setAllAnalyses(p=>p.filter(x=>x._id!==qa._id))}>Remove</Btn>
-                                  </div>
-                                  <div style={{fontSize:11,color:"var(--text-tertiary)"}}>
-                                    Approving generates the PO, sends it to Orders for dispatch, and locks this quote. Other quotes will show reduced options.
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            </div>
-                            )}
-                          </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {/* -- Document store -- */}
-                    <Card style={{marginTop:8}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-                        <div>
-                          <div style={{fontSize:14,fontWeight:600,color:"#0F172A"}}>📎 Documents</div>
-                          <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Generated POs, draft quotes, and uploaded third-party documents</div>
-                        </div>
-                        <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"var(--indigo-light)",color:"#2563EB",fontSize:12,fontWeight:500,padding:"7px 14px",borderRadius:8,cursor:"pointer",border:"1px solid #BFDBFE"}}>
-                          Upload document
-                          <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) handleUploadDocument(e.target.files[0]); e.target.value=""; }}/>
-                        </label>
-                      </div>
-
-                      {(!activeReq.documents||activeReq.documents.length===0)?(
-                        <div style={{textAlign:"center",padding:"30px 0",color:"var(--text-tertiary)",fontSize:13}}>
-                          <div style={{fontSize:28,marginBottom:8}}>📄</div>
-                          No documents yet - approve a quote to generate a PO, save a draft, or upload a third-party document
-                        </div>
-                      ):(
-                        <div>
-                          {activeReq.documents.map((doc,i)=>{
-                            const typeConfig = {
-                              generated:{ bg:"#D1FAE5", text:"#065F46", icon:"v", label:"Approved PO" },
-                              draft:    { bg:"#EDE9FE", text:"#5B21B6", icon:"o", label:"Draft PDF" },
-                              uploaded: { bg:"#DBEAFE", text:"#1E40AF", icon:"^", label:"Uploaded" },
-                            }[doc.type]||{ bg:"#F1F5F9", text:"#475569", icon:"📄", label:"Document" };
-                            return(
-                              <div key={doc.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:"1px solid var(--border)"}}>
-                                <div style={{width:38,height:38,background:typeConfig.bg,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:typeConfig.text,flexShrink:0}}>{typeConfig.icon}</div>
-                                <div style={{flex:1,minWidth:0}}>
-                                  <div style={{fontSize:13,fontWeight:500,color:"#0F172A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.label}</div>
-                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{doc.supplier&&`${doc.supplier} · `}{doc.date}{doc.fileSize&&` · ${doc.fileSize}`}</div>
-                                </div>
-                                <span style={{background:typeConfig.bg,color:typeConfig.text,fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:12,flexShrink:0}}>{typeConfig.label}</span>
-                                {doc.dataUrl&&(
-                                  <a href={doc.dataUrl} download={doc.label} style={{fontSize:12,color:"#3B82F6",textDecoration:"none",fontWeight:500,flexShrink:0,padding:"5px 10px",border:"1px solid #BFDBFE",borderRadius:6}}>Download</a>
-                                )}
-                                <button onClick={()=>{
-                                  setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,documents:r.documents.filter((_,di)=>di!==i)}:r));
-                                  setActiveReq(prev=>({...prev,documents:prev.documents.filter((_,di)=>di!==i)}));
-                                }} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer",flexShrink:0}}>Remove</button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </Card>
-                  </>
-                ):(
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:200,color:"#9CA3AF",fontSize:14}}>Select a request from the left</div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* == ORDERS == */}
-        {view==="orders"&&(
-          <div style={{animation:"fadeIn 0.25s ease"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
-              <div>
-                <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>ORDER MANAGEMENT</div>
-                <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-1px",margin:0,color:"var(--text-primary)"}}>Orders</h1>
-                <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Send approved purchase orders to suppliers and track their status</p>
-              </div>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {[
-                    {label:"Ready",     color:"var(--green-deep)", bg:"var(--green-light)", count:orders.filter(o=>o.status==="pending-send").length},
-                    {label:"Sent",      color:"var(--indigo)", bg:"var(--indigo-light)", count:orders.filter(o=>o.status==="sent").length},
-                    {label:"Confirmed", color:"var(--green-dark)", bg:"var(--green-light)", count:orders.filter(o=>o.status==="confirmed").length},
-                    {label:"Delivered", color:"var(--text-secondary)", bg:"#F1F5F9", count:orders.filter(o=>o.status==="delivered").length},
-                  ].map(s=>(
-                    <div key={s.label} style={{background:s.bg,borderRadius:8,padding:"6px 14px",fontSize:12,color:s.color,fontWeight:600}}>
-                      {s.count} {s.label}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {orders.length===0?(
-              <div style={{background:"var(--bg-card-solid)",borderRadius:24,border:"1px solid var(--border)",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-                <div style={{width:80,height:80,background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📦</div>
-                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8,letterSpacing:"-0.5px"}}>No orders yet</div>
-                <div style={{fontSize:14,color:"var(--text-tertiary)",maxWidth:380,margin:"0 auto 28px",lineHeight:1.7}}>
-                  Orders appear here when you approve a PO in Quote Analysis, or when you promote an uploaded document to an order. Once here, send them directly to your supplier with one click.
-                </div>
-                <button onClick={()=>setView("quotes")} style={{display:"inline-flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:12,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(99,102,241,0.3)"}}>
-                  Go to Quote Analysis >
-                </button>
-              </div>
-            ):(
-              <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {orders.filter(o=>{
-                  if(orderFilter==="active") return o.status!=="delivered";
-                  if(orderFilter==="delivered") return o.status==="delivered";
-                  return true;
-                }).map(order=>{
-                  const STATUS_STEPS = [
-                    {key:"pending-send", label:"Ready to send", icon:"📦", color:"#22C55E", bg:"var(--green-mint)"},
-                    {key:"sent",         label:"Sent",          icon:"✈️", color:"var(--indigo)", bg:"var(--indigo-light)"},
-                    {key:"confirmed",    label:"Confirmed",     icon:"✅", color:"var(--green-dark)", bg:"var(--green-light)"},
-                    {key:"delivered",    label:"Delivered",     icon:"🏁", color:"var(--text-secondary)", bg:"var(--bg-subtle2)"},
-                  ];
-                  const stepIdx = STATUS_STEPS.findIndex(s=>s.key===order.status);
-                  const currentStep = STATUS_STEPS[stepIdx]||STATUS_STEPS[0];
-                  const isPending = order.status==="pending-send";
-                  const isSent    = order.status==="sent";
-                  const isConfirmed = order.status==="confirmed";
-                  const isDelivered = order.status==="delivered";
-                  const isExpanded = expandedOrder === order.id;
-
-                  return(
-                  <div key={order.id} className="card-hover" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isConfirmed?"var(--green-dark)":isPending?"var(--green)":isSent?"var(--indigo)":"var(--border)"}`,overflow:"hidden",boxShadow:isExpanded?"var(--shadow-lg)":"var(--shadow-sm)",opacity:isDelivered?0.85:1,transition:"all 0.25s ease"}}>
-
-                    {/* -- Clickable order header row -- */}
-                    <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)} style={{padding:"16px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",background:isExpanded?`linear-gradient(135deg,${currentStep.bg},var(--bg-card-solid))`:"var(--bg-card-solid)",transition:"background 0.2s"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:14,flex:1,minWidth:0}}>
-                        <div style={{width:40,height:40,background:isPending?"linear-gradient(135deg,#22C55E,#16A34A)":isSent?"linear-gradient(135deg,#6366F1,#4F46E5)":isConfirmed?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#4B5563,#374151)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0,boxShadow:`0 4px 12px ${currentStep.color}40`}}>
-                          {currentStep.icon}
-                        </div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
-                            <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
-                            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:currentStep.bg,color:currentStep.color}}>{currentStep.label}</span>
-                          </div>
-                          <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{order.supplier} · {order.jobRef} · {order.site}</div>
-                        </div>
-                      </div>
-                      <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-                        {order.expectedDelivery&&!isDelivered&&(
-                          <span style={{fontSize:11,color:"var(--green-dark)",background:"var(--green-light)",padding:"3px 10px",borderRadius:99,fontWeight:500}}>
-                            📅 {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
-                          </span>
-                        )}
-                        <div style={{fontSize:11,color:"var(--text-muted)"}}>{order.poDate}</div>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{transform:isExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.25s ease",flexShrink:0}}>
-                          <polyline points="6 9 12 15 18 9"/>
-                        </svg>
-                      </div>
-                    </div>
-
-                    {/* -- Expanded order body -- */}
-                    {isExpanded&&(
-
-                    {/* -- Status timeline -- */}
-                    <div style={{padding:"16px 28px",borderBottom:"1px solid var(--border)",background:"#FAFFFE"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:0}}>
-                        {STATUS_STEPS.map((step,si)=>{
-                          const done = si<=stepIdx;
-                          const active = si===stepIdx;
-                          return(
-                            <div key={step.key} style={{display:"flex",alignItems:"center",flex:si<STATUS_STEPS.length-1?1:"none"}}>
-                              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                                <div style={{width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,background:done?step.color:"#F1F5F9",boxShadow:active?`0 0 0 4px ${step.color}20`:"none",transition:"all 0.3s",flexShrink:0}}>
-                                  {done?<span style={{fontSize:12}}>{si<stepIdx?"v":step.icon}</span>:<span style={{fontSize:12,color:"var(--text-muted)"}}>o</span>}
-                                </div>
-                                <span style={{fontSize:9,fontWeight:active?700:400,color:active?step.color:"var(--text-tertiary)",whiteSpace:"nowrap"}}>{step.label}</span>
-                              </div>
-                              {si<STATUS_STEPS.length-1&&(
-                                <div style={{flex:1,height:2,background:si<stepIdx?"#22C55E":"#F1F5F9",margin:"0 4px",marginBottom:14,transition:"background 0.3s"}}/>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* -- Order body -- */}
-                    <div style={{padding:"20px 28px"}}>
-                      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:isMobile?14:20}}>
-
-                        {/* Left - details + activity */}
-                        <div>
-                          <div style={{marginBottom:16}}>
-                            <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Items ordered ({order.items?.length||0})</div>
-                            <div style={{background:"var(--bg-subtle)",borderRadius:10,padding:"12px 14px",maxHeight:120,overflowY:"auto"}}>
-                              {(order.items||[]).map((item,i)=>(
-                                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:i<order.items.length-1?"1px solid #F1F5F9":"none"}}>
-                                  <span style={{fontSize:13,color:"var(--text-secondary)"}}>{item.description}</span>
-                                  <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{item.quantity} {item.unit}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          {(order.deliveryMethod||order.deliveryDate)&&(
-                            <div style={{marginBottom:16}}>
-                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Delivery</div>
-                              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                                {order.deliveryMethod&&<span style={{background:"var(--indigo-light)",border:"1px solid var(--border)",color:"var(--indigo)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🚚 {{"direct":"To site","alternative":"Alt. address","collect":"Collect","tbc":"TBC"}[order.deliveryMethod]||order.deliveryMethod}</span>}
-                                {order.deliveryDate&&<span style={{background:"var(--green-mint)",border:"1px solid #A7F3D0",color:"var(--green-deep)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>📅 {new Date(order.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
-                                {order.expectedDelivery&&<span style={{background:"var(--amber-light)",border:"1px solid #FDE68A",color:"var(--amber)",fontSize:12,fontWeight:500,padding:"4px 12px",borderRadius:20}}>🗓 Expected {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</span>}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Confirmation document */}
-                          {order.confirmationDoc&&(
-                            <div style={{marginBottom:16,background:"var(--green-mint)",border:"1px solid #A7F3D0",borderRadius:10,padding:"12px 14px"}}>
-                              <div style={{fontSize:12,fontWeight:600,color:"var(--green-deep)",marginBottom:6}}>✅ Supplier confirmation attached</div>
-                              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                                <div style={{width:32,height:32,background:"#D1FAE5",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📎</div>
-                                <div style={{flex:1}}>
-                                  <div style={{fontSize:12,fontWeight:500,color:"var(--text-primary)"}}>{order.confirmationDoc.label}</div>
-                                  <div style={{fontSize:11,color:"var(--text-secondary)"}}>{order.confirmationDoc.date} · {order.confirmationDoc.fileSize}</div>
-                                </div>
-                                <a href={order.confirmationDoc.dataUrl} download={order.confirmationDoc.label} style={{fontSize:11,color:"#059669",fontWeight:600,textDecoration:"none",background:"#D1FAE5",padding:"4px 10px",borderRadius:6}}>Download</a>
-                              </div>
-                            </div>
-                          )}
-
-                          {order.activity?.length>0&&(
-                            <div>
-                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Activity</div>
-                              {[...(order.activity||[])].reverse().map((a,i)=>(
-                                <div key={i} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid var(--border)"}}>
-                                  <div style={{width:6,height:6,borderRadius:"50%",background:"#22C55E",marginTop:5,flexShrink:0}}/>
-                                  <div style={{flex:1}}>
-                                    <div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)"}}>{a.action}</div>
-                                    <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>{new Date(a.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})} · {a.user}</div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Right - action panel */}
-                        <div style={{background:"var(--bg-subtle)",borderRadius:14,padding:"20px"}}>
-
-                          {/* PENDING - send panel */}
-                          {isPending&&(
-                            <>
-                              <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Send this order to supplier</div>
-                              <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12,lineHeight:1.6}}>An email will be sent with the full PO details. The supplier will be asked to confirm receipt.</div>
-                              <div style={{marginBottom:10}}>
-                                <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Supplier email</label>
-                                <input value={order.supplierEmail||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,supplierEmail:e.target.value}:o))} placeholder="supplier@company.co.uk" style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",background:"var(--bg-card-solid)"}}/>
-                              </div>
-                              <div style={{marginBottom:14}}>
-                                <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>Notes (optional)</label>
-                                <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Site access, contact details, special instructions..." style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"var(--bg-card-solid)"}}/>
-                              </div>
-                              <button onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id||!order.supplierEmail} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:sendingOrder===order.id||!order.supplierEmail?"#D1FAE5":"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:sendingOrder===order.id||!order.supplierEmail?"not-allowed":"pointer",boxShadow:"0 4px 16px rgba(34,197,94,0.3)",marginBottom:8}}>
-                                {sendingOrder===order.id?<><Spinner/>Sending...</>:<><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send order to {order.supplier}</>}
-                              </button>
-                            </>
-                          )}
-
-                          {/* SENT - awaiting confirmation */}
-                          {isSent&&(
-                            <>
-                              <div style={{background:"var(--indigo-light)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
-                                <div style={{fontSize:13,fontWeight:600,color:"#4338CA",marginBottom:2}}>✈️ Order sent</div>
-                                <div style={{fontSize:11,color:"var(--indigo)"}}>Sent to {order.supplierEmail} · {order.sentAt?new Date(order.sentAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"-"}</div>
-                              </div>
-
-                              <div style={{marginBottom:14}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Attach supplier confirmation</div>
-                                <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,lineHeight:1.6}}>When the supplier emails back with an order confirmation PDF, upload it here. The order will automatically move to Confirmed.</div>
-                                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"var(--bg-card-solid)",border:"2px dashed #BBF7D0",borderRadius:10,padding:"16px",cursor:"pointer",fontSize:13,fontWeight:600,color:"#16A34A"}}>
-                                  📎 Upload confirmation document
-                                  <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
-                                </label>
-                                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:6,textAlign:"center"}}>PDF, Word, or image - drag and drop or click to browse</div>
-                              </div>
-
-                              <div style={{marginBottom:10}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Expected delivery date</div>
-                                <input type="date" value={expectedDelivery[order.id]||""} onChange={e=>{
-                                  setExpectedDelivery(p=>({...p,[order.id]:e.target.value}));
-                                  const expEntry={ts:new Date().toISOString(),action:"Expected delivery set",detail:`Expected: ${new Date(e.target.value).toLocaleDateString("en-GB")}`,user:settings.contactName||"You"};
-                                  setOrders(p=>p.map(o=>o.id===order.id?{...o,expectedDelivery:e.target.value,activity:[...(o.activity||[]),expEntry]}:o));
-                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none"}}/>
-                              </div>
-
-                              <div style={{display:"flex",gap:8}}>
-                                <button onClick={()=>{
-                              const entry={ts:new Date().toISOString(),action:"Order resent",detail:`PO ${order.poNumber} resent to ${order.supplierEmail}`,user:settings.contactName||"You"};
-                              setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"pending-send",activity:[...(o.activity||[]),entry]}:o));
-                            }} style={{flex:1,fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Resend</button>
-                                <button onClick={()=>{
-                                  const entry={ts:new Date().toISOString(),action:"Manually confirmed",detail:`Order ${order.poNumber} confirmed without document upload`,user:settings.contactName||"You"};
-                                  setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",activity:[...(o.activity||[]),entry]}:o));
-                                  showToast("Order marked as confirmed");
-                                }} style={{flex:1,fontSize:12,color:"#059669",background:"var(--green-light)",border:"none",borderRadius:8,padding:"8px",cursor:"pointer",fontWeight:600}}>Mark confirmed</button>
-                              </div>
-                            </>
-                          )}
-
-                          {/* CONFIRMED - awaiting delivery */}
-                          {isConfirmed&&(
-                            <>
-                              <div style={{background:"var(--green-mint)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
-                                <div style={{fontSize:13,fontWeight:600,color:"var(--green-deep)",marginBottom:2}}>✅ Order confirmed by supplier</div>
-                                {order.expectedDelivery&&<div style={{fontSize:11,color:"#16A34A"}}>Expected delivery: {new Date(order.expectedDelivery).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>}
-                              </div>
-
-                              {!order.confirmationDoc&&(
-                                <div style={{marginBottom:14}}>
-                                  <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Attach confirmation document</div>
-                                  <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"var(--bg-card-solid)",border:"2px dashed #BBF7D0",borderRadius:10,padding:"14px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#16A34A"}}>
-                                    📎 Upload supplier confirmation
-                                    <input type="file" accept=".pdf,.doc,.docx,.jpg,.png" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleOrderConfirmationUpload(e.target.files[0],order.id);e.target.value="";}}/>
-                                  </label>
-                                </div>
-                              )}
-
-                              <div style={{marginBottom:10}}>
-                                <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Expected delivery date</div>
-                                <input type="date" value={expectedDelivery[order.id]||order.expectedDelivery||""} onChange={e=>{
-                                  setExpectedDelivery(p=>({...p,[order.id]:e.target.value}));
-                                  setOrders(p=>p.map(o=>o.id===order.id?{...o,expectedDelivery:e.target.value}:o));
-                                }} style={{width:"100%",padding:"8px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none"}}/>
-                              </div>
-
-                              <button onClick={()=>{
-                                const entry={ts:new Date().toISOString(),action:"Materials delivered",detail:"Order marked as delivered",user:settings.contactName||"You"};
-                                setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),activity:[...(o.activity||[]),entry]}:o));
-                                showToast("Order marked as delivered - job complete");
-                              }} style={{width:"100%",background:"linear-gradient(135deg,#374151,#1F2937)",color:"white",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8}}>
-                                🏁 Mark as delivered
-                              </button>
-                            </>
-                          )}
-
-                          {/* DELIVERED - complete */}
-                          {isDelivered&&(
-                            <div style={{background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)",borderRadius:12,padding:"16px",textAlign:"center"}}>
-                              <div style={{fontSize:24,marginBottom:8}}>🏁</div>
-                              <div style={{fontSize:14,fontWeight:700,color:"var(--green-deep)",marginBottom:4}}>Order complete</div>
-                              <div style={{fontSize:12,color:"#16A34A"}}>Delivered {order.deliveredAt?new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"-"}</div>
-                            </div>
-                          )}
-
-                          {/* Remove always available */}
-                          <div style={{marginTop:10,textAlign:"right"}}>
-                            <button onClick={()=>setOrders(p=>p.filter(o=>o.id!==order.id))} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Remove order</button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                    )}
-                  </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Promote uploaded docs to orders */}
-            {requests.some(r=>(r.documents||[]).some(d=>d.type==="uploaded"&&!orders.find(o=>o.id===d.id)))&&(
-              <div style={{marginTop:24,background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",padding:"20px 28px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-                <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Uploaded documents ready to send</div>
-                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:16}}>These documents were uploaded to jobs but haven't been sent as orders yet</div>
-                {requests.flatMap(r=>(r.documents||[]).filter(d=>d.type==="uploaded"&&!orders.find(o=>o.id===d.id)).map(d=>({...d,_req:r}))).map((d,i)=>(
-                  <div key={d.id} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderTop:i>0?"1px solid #F8FAFC":"none"}}>
-                    <div style={{width:40,height:40,background:"var(--indigo-light)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>📎</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:500,color:"var(--text-primary)"}}>{d.label}</div>
-                      <div style={{fontSize:12,color:"var(--text-secondary)"}}>{d._req.jobRef} · {d._req.site} · {d.date}</div>
-                    </div>
-                    <button onClick={()=>handleCreateOrderFromDoc(d,d._req)} style={{background:"linear-gradient(135deg,#6366F1,#4F46E5)",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                      Add to Orders >
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* == SUPPLIERS == */}
-        {view==="suppliers"&&(
-          <div>
-            <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Suppliers</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Your supplier accounts - add your real ones here</p>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:isMobile?10:16,marginBottom:isMobile?16:24}}>
-              {suppliers.map(s=>(
-                <Card key={s.id}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                    <div style={{width:44,height:44,background:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:"#4F46E5",boxShadow:"0 2px 8px rgba(99,102,241,0.15)"}}>{s.name.charAt(0)}</div>
-                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                      <Badge bg="#F0FDF4" text="#166534">Active</Badge>
-                      <button onClick={()=>saveSuppliers(suppliers.filter(x=>x.id!==s.id))} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
-                    </div>
-                  </div>
-                  <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:3}}>{s.name}</div>
-                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>{s.email}</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
-                    {s.categories.map(cat=><Badge key={cat} bg="var(--green-light)" text="var(--green-deep)">{cat}</Badge>)}
-                  </div>
-                  {(()=>{
-                    const rfqsSent = requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length;
-                    const responded = requests.filter(r=>r.sentTo?.some(st=>st.id===s.id&&st.saved)).length;
-                    const libEntries = quoteLibrary.filter(q=>q.supplierName===s.name);
-                    const avgScore = libEntries.length?Math.round(libEntries.reduce((a,q)=>a+q.completeness,0)/libEntries.length):null;
-                    if(!rfqsSent&&!libEntries.length) return <div style={{fontSize:11,color:"var(--text-muted)"}}>No activity yet</div>;
-                    return(
-                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                        {rfqsSent>0&&<span style={{fontSize:10,color:"var(--text-tertiary)",background:"var(--bg-subtle2)",padding:"2px 8px",borderRadius:99}}>{rfqsSent} RFQ{rfqsSent!==1?"s":""} sent</span>}
-                        {responded>0&&rfqsSent>0&&<span style={{fontSize:10,color:"var(--green-dark)",background:"var(--green-light)",padding:"2px 8px",borderRadius:99}}>{Math.round(responded/rfqsSent*100)}% response rate</span>}
-                        {avgScore!==null&&<span style={{fontSize:10,color:avgScore>=80?"var(--green-dark)":avgScore>=60?"var(--amber)":"var(--red)",background:avgScore>=80?"var(--green-light)":avgScore>=60?"var(--amber-light)":"var(--red-light)",padding:"2px 8px",borderRadius:99}}>Avg {avgScore}% completeness</span>}
-                        {libEntries.length>0&&<span style={{fontSize:10,color:"var(--text-tertiary)",background:"var(--bg-subtle2)",padding:"2px 8px",borderRadius:99}}>{libEntries.length} quote{libEntries.length!==1?"s":""} in library</span>}
-                      </div>
-                    );
-                  })()}
-                </Card>
-              ))}
-            </div>
-            <Card>
-              <div style={{fontSize:14,fontWeight:500,marginBottom:16}}>Add a supplier</div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr auto",gap:12,alignItems:"end"}}>
-                {[{label:"Company name",val:"name",ph:"e.g. BSS Industrial"},{label:"Quote email",val:"email",ph:"quotes@supplier.co.uk"},{label:"Categories",val:"categories",ph:"Plumbing, HVAC"}].map(f=>(
-                  <div key={f.val}>
-                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>{f.label}</label>
-                    <input value={newSup[f.val]} onChange={e=>setNewSup(p=>({...p,[f.val]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
-                  </div>
-                ))}
-                <Btn onClick={()=>{
-                  if(!newSup.name||!newSup.email)return;
-                  const cats=newSup.categories.split(",").map(c=>c.trim()).filter(Boolean).map(c=>c.charAt(0).toUpperCase()+c.slice(1));
-                  saveSuppliers([...suppliers,{id:Date.now(),name:newSup.name,email:newSup.email,categories:cats.length?cats:["Plumbing"]}]);
-                  setNewSup({name:"",email:"",categories:""});
-                  showToast("Supplier added");
-                }}>Add</Btn>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* == ALL REQUESTS == */}
-        {view==="requests"&&(
-          <div>
-            <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>All requests</h1>
-            </div>
-            <Card style={{padding:0,overflow:"hidden"}}>
-              <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:isMobile?600:"auto"}}>
-                <thead><tr style={{background:"var(--bg-subtle)"}}>
-                  {["Request","Job ref","Site","Trade","Items","Status","Created","Action"].map(h=>(
-                    <th key={h} style={{padding:"12px 16px",textAlign:"left",fontSize:12,fontWeight:500,color:"#6B7280"}}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>{requests.map(r=>{const sc=STATUS[r.status];return(
-                  <tr key={r.id} style={{borderTop:"1px solid #F3F4F6"}}>
-                    <td style={{padding:"13px 16px",fontSize:13,fontWeight:500,fontFamily:"'JetBrains Mono',monospace",color:"#2563EB"}}>{r.id}</td>
-                    <td style={{padding:"13px 16px",fontSize:13}}>{r.jobRef}</td>
-                    <td style={{padding:"13px 16px",fontSize:13,color:"#6B7280"}}>{r.site}</td>
-                    <td style={{padding:"13px 16px",fontSize:13}}>{r.trade}</td>
-                    <td style={{padding:"13px 16px",fontSize:13}}>{r.items.length}</td>
-                    <td style={{padding:"13px 16px"}}><Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge></td>
-                    <td style={{padding:"13px 16px",fontSize:12,color:"#9CA3AF"}}>{r.created}</td>
-                    <td style={{padding:"13px 16px"}}>
-                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                        <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:12,color:"#2563EB",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>View ></button>
-                        <button onClick={()=>handleDuplicate(r)} style={{fontSize:12,color:"#16A34A",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
-                        <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:12,color:"#6B7280",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
-                        <button onClick={()=>setActivityModal(r)} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer",fontWeight:r.activity?.length?"500":"400"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
-                        <button onClick={()=>setDeleteConfirm(r.id)} style={{fontSize:12,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                )})}</tbody>
-              </table>
-            </div>
-            </Card>
-          </div>
-        )}
-
-        {/* == QUOTE LIBRARY == */}
-        {view==="library"&&(
-          <div style={{animation:"fadeIn 0.25s ease"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:32}}>
-              <div>
-                <div style={{fontSize:12,fontWeight:600,color:"#22C55E",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>PRICE HISTORY</div>
-                <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-1px",margin:0,color:"var(--text-primary)"}}>Quote Library</h1>
-                <p style={{fontSize:15,color:"var(--text-secondary)",marginTop:6}}>Every supplier quote ever received - track price changes over time</p>
-              </div>
-              <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                <div style={{background:"var(--green-mint)",border:"1px solid #BBF7D0",borderRadius:10,padding:"8px 16px",fontSize:13,color:"var(--green-deep)",fontWeight:500}}>
-                  {quoteLibrary.length} quotes saved
-                </div>
-                {quoteLibrary.length>0&&(
-                  <button onClick={()=>{ if(window.confirm("Clear entire quote library? This cannot be undone.")) { setQuoteLibrary([]); localStorage.removeItem("piq_quote_library"); showToast("Library cleared"); }}} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"1px solid #FECACA",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:500}}>
-                    Clear all
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {quoteLibrary.length===0?(
-              <div style={{background:"var(--bg-card-solid)",borderRadius:24,border:"1px solid var(--border)",padding:"80px 40px",textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-                <div style={{width:80,height:80,background:"linear-gradient(135deg,#EEF2FF,#E0E7FF)",borderRadius:24,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 20px"}}>📚</div>
-                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>No quotes saved yet</div>
-                <div style={{fontSize:14,color:"var(--text-tertiary)",maxWidth:380,margin:"0 auto",lineHeight:1.7}}>
-                  Every time you run AI analysis on a supplier quote, it gets saved here automatically. You can then track pricing trends and compare against previous quotes.
-                </div>
-              </div>
-            ):(
-              <div>
-                {/* Supplier scorecards */}
-                {(()=>{
-                  const bySupplier = {};
-                  quoteLibrary.forEach(q=>{
-                    if (!bySupplier[q.supplierName]) bySupplier[q.supplierName]={name:q.supplierName,quotes:[],avgCompleteness:0,priceHistory:[]};
-                    bySupplier[q.supplierName].quotes.push(q);
-                  });
-                  Object.values(bySupplier).forEach(s=>{
-                    s.avgCompleteness = Math.round(s.quotes.reduce((a,q)=>a+q.completeness,0)/s.quotes.length);
-                    s.quoteCount = s.quotes.length;
-                    s.lastQuoted = s.quotes[0]?.savedAt;
-                  });
-                  const scorecards = Object.values(bySupplier).sort((a,b)=>b.quoteCount-a.quoteCount);
-                  return(
-                    <div>
-                      <div style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Supplier scorecards</div>
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:28}}>
-                        {scorecards.map(s=>(
-                          <div key={s.name} style={{background:"var(--bg-card-solid)",borderRadius:16,border:"1px solid var(--border)",padding:"18px 20px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                              <div style={{width:40,height:40,background:"linear-gradient(135deg,#DCFCE7,#BBF7D0)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"#16A34A"}}>{s.name.charAt(0)}</div>
-                              <span style={{fontSize:11,fontWeight:600,background:"var(--green-mint)",color:"var(--green-deep)",padding:"3px 8px",borderRadius:20}}>{s.quoteCount} quote{s.quoteCount!==1?"s":""}</span>
-                            </div>
-                            <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>{s.name}</div>
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                              <div style={{fontSize:12,color:"var(--text-secondary)"}}>Avg. completeness</div>
-                              <div style={{fontSize:18,fontWeight:700,color:s.avgCompleteness>=80?"#22C55E":s.avgCompleteness>=60?"#F59E0B":"#DC2626",fontFamily:"'JetBrains Mono',monospace"}}>{s.avgCompleteness}%</div>
-                            </div>
-                            <div style={{marginTop:6,height:4,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
-                              <div style={{height:"100%",width:`${s.avgCompleteness}%`,background:s.avgCompleteness>=80?"linear-gradient(90deg,#22C55E,#16A34A)":s.avgCompleteness>=60?"linear-gradient(90deg,#F59E0B,#D97706)":"linear-gradient(90deg,#EF4444,#DC2626)",borderRadius:99}}/>
-                            </div>
-                            {s.lastQuoted&&<div style={{fontSize:11,color:"var(--text-muted)",marginTop:8}}>Last quoted {new Date(s.lastQuoted).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Full quote history table */}
-                <div style={{background:"var(--bg-card-solid)",borderRadius:20,border:"1px solid var(--border)",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-                  <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",background:"linear-gradient(135deg,#FAFFFE,#F0FDF4)"}}>
-                    <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>Full quote history</div>
-                    <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>All quotes saved from AI analysis - newest first</div>
-                  </div>
-                  <table style={{width:"100%",borderCollapse:"collapse"}}>
-                    <thead><tr style={{background:"var(--bg-subtle)"}}>
-                      {["Date","Supplier","Job ref","Trade","Completeness","Est. total","Carriage","Lead time","Items","Missing",""].map(h=>(
-                        <th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:11,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.06em",whiteSpace:"nowrap"}}>{h}</th>
-                      ))}
-                    </tr></thead>
-                    <tbody>{quoteLibrary.map((q,i)=>(
-                      <tr key={q.id} style={{borderTop:"1px solid var(--border)"}}>
-                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{new Date(q.savedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</td>
-                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{q.supplierName}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:"var(--indigo)"}}>{q.jobRef}</td>
-                        <td style={{padding:"12px 14px"}}><span style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",fontSize:11,fontWeight:500,padding:"3px 8px",borderRadius:20}}>{q.trade}</span></td>
-                        <td style={{padding:"12px 14px"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <div style={{width:48,height:5,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
-                              <div style={{height:"100%",width:`${q.completeness}%`,background:q.completeness>=80?"#22C55E":q.completeness>=60?"#F59E0B":"#EF4444",borderRadius:99}}/>
-                            </div>
-                            <span style={{fontSize:12,fontWeight:600,color:q.completeness>=80?"#22C55E":q.completeness>=60?"#F59E0B":"#EF4444"}}>{q.completeness}%</span>
-                          </div>
-                        </td>
-                        <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{q.totalEstimate||"-"}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,color:q.carriageCharge==="Free"?"#22C55E":q.carriageCharge==="Not stated"?"#94A3B8":"#DC2626",fontWeight:500}}>{q.carriageCharge||"-"}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.leadTime||"-"}</td>
-                        <td style={{padding:"12px 14px",fontSize:12,color:"var(--text-secondary)"}}>{q.items?.length||0}</td>
-                        <td style={{padding:"12px 14px"}}>
-                          {q.missing?.length>0?<span style={{background:"var(--red-light)",color:"var(--red)",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>{q.missing.length} missing</span>:<span style={{background:"var(--green-mint)",color:"#16A34A",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20}}>Complete</span>}
-                        </td>
-                        <td style={{padding:"12px 14px"}}>
-                          <button onClick={()=>setQuoteLibrary(p=>{ const n=p.filter(x=>x.id!==q.id); localStorage.setItem("piq_quote_library",JSON.stringify(n)); return n; })} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
-                        </td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* == HELP == */}
-        {view==="help"&&(
-          <div style={{animation:"fadeIn 0.25s ease",maxWidth:900}}>
-            {/* Header */}
-            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
-              <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.15),transparent 70%)",borderRadius:"50%"}}/>
-              <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",gap:20}}>
-                <div style={{width:56,height:56,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>
-                  <svg width="28" height="28" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
-                </div>
-                <div>
-                  <div style={{fontSize:11,color:"#4ADE80",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:4}}>ProQuote Help Centre</div>
-                  <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px"}}>How can we help?</h1>
-                  <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:"6px 0 0"}}>Ask the AI assistant, browse FAQs, or raise a support request</p>
-                </div>
-              </div>
-            </div>
-
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:20,marginBottom:28}}>
-              {/* AI Assistant */}
-              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",boxShadow:"var(--shadow-sm)",display:"flex",flexDirection:"column"}}>
-                <div style={{padding:"18px 20px",borderBottom:"1px solid var(--border)",background:darkMode?"rgba(34,197,94,0.05)":"linear-gradient(135deg,#F0FDF4,#FAFFFE)"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{width:36,height:36,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🤖</div>
-                    <div>
-                      <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>AI Assistant</div>
-                      <div style={{fontSize:11,color:"var(--text-secondary)"}}>Ask anything about ProQuote</div>
-                    </div>
-                    {settings.openRouterKey&&<span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:"var(--green-dark)",background:"var(--green-light)",padding:"2px 8px",borderRadius:99}}>Online</span>}
-                  </div>
-                </div>
-                <div style={{flex:1,padding:"16px",overflowY:"auto",maxHeight:320,display:"flex",flexDirection:"column",gap:10}}>
-                  {helpMessages.length===0&&(
-                    <div style={{textAlign:"center",padding:"24px 0",color:"var(--text-tertiary)"}}>
-                      <div style={{fontSize:28,marginBottom:8}}>💬</div>
-                      <div style={{fontSize:13,fontWeight:500,color:"var(--text-secondary)",marginBottom:4}}>Start a conversation</div>
-                      <div style={{fontSize:12,lineHeight:1.6}}>Try: "How do I send an RFQ?" or "Where are my saved quotes?"</div>
-                    </div>
-                  )}
-                  {helpMessages.map((m,i)=>(
-                    <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
-                      <div style={{maxWidth:"85%",padding:"10px 14px",borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",background:m.role==="user"?"linear-gradient(135deg,#22C55E,#16A34A)":"var(--bg-subtle)",color:m.role==="user"?"white":"var(--text-primary)",fontSize:13,lineHeight:1.6}}>
-                        {m.content}
-                      </div>
-                    </div>
-                  ))}
-                  {helpLoading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"var(--bg-subtle)",borderRadius:"14px 14px 14px 4px",padding:"10px 14px",fontSize:13,color:"var(--text-secondary)",display:"flex",alignItems:"center",gap:8}}><Spinner/>Thinking...</div></div>}
-                </div>
-                <div style={{padding:"12px 16px",borderTop:"1px solid var(--border)",display:"flex",gap:8}}>
-                  <input value={helpInput} onChange={e=>setHelpInput(e.target.value)}
-                    onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&handleHelpChat(helpInput)}
-                    placeholder={settings.openRouterKey?"Ask me anything about ProQuote...":"Add your OpenRouter key in Settings to use the AI assistant"}
-                    disabled={!settings.openRouterKey}
-                    style={{flex:1,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}
-                  />
-                  <button onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey}
-                    style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 16px",fontSize:13,fontWeight:600,cursor:"pointer",opacity:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?0.5:1}}>
-                    Send
-                  </button>
-                </div>
-                {helpMessages.length>0&&<div style={{padding:"8px 16px",borderTop:"1px solid var(--border)",textAlign:"right"}}><button onClick={()=>setHelpMessages([])} style={{fontSize:11,color:"var(--text-muted)",background:"none",border:"none",cursor:"pointer"}}>Clear conversation</button></div>}
-              </div>
-
-              {/* Quick links + keyboard shortcuts */}
-              <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
-                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>⚡ Quick actions</div>
-                  {[
-                    {label:"Create a new request",    action:()=>{setView("new");resetNewRequest();},  icon:"🎤"},
-                    {label:"Analyse supplier quotes",  action:()=>setView("quotes"),                    icon:"🔍"},
-                    {label:"View & send orders",       action:()=>setView("orders"),                    icon:"📦"},
-                    {label:"Manage suppliers",         action:()=>setView("suppliers"),                 icon:"🏢"},
-                    {label:"Configure settings",       action:()=>setView("settings"),                  icon:"⚙️"},
-                  ].map(l=>(
-                    <button key={l.label} onClick={l.action} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"var(--radius-sm)",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",marginBottom:2,transition:"background 0.15s"}}
-                      onMouseEnter={e=>e.currentTarget.style.background="var(--bg-subtle)"}
-                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <span style={{fontSize:16}}>{l.icon}</span>
-                      <span style={{fontSize:13,color:"var(--text-primary)",fontWeight:500}}>{l.label}</span>
-                      <svg style={{marginLeft:"auto"}} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-                    </button>
-                  ))}
-                </div>
-                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
-                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>️ Keyboard shortcuts</div>
-                  {[["N","New request"],["Q","Quote analysis"],["O","Orders"],["D","Dashboard"],["S","Settings"],["H","Help"],["Esc","Close modals"]].map(([k,l])=>(
-                    <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid var(--border)"}}>
-                      <span style={{fontSize:12,color:"var(--text-secondary)"}}>{l}</span>
-                      <kbd style={{background:"var(--bg-subtle2)",color:"var(--text-primary)",border:"1px solid var(--border)",borderRadius:5,padding:"2px 8px",fontSize:11,fontFamily:"monospace",fontWeight:600}}>{k}</kbd>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* FAQ */}
-            <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px 28px",boxShadow:"var(--shadow-sm)",marginBottom:20}}>
-              <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Frequently asked questions</div>
-              {(()=>{
-                const faqs = [
-                  {cat:"Getting started",qs:[
-                    {q:"What is ProQuote?",a:"ProQuote is an AI-powered procurement platform for trades contractors. It automates the full procurement workflow from creating a material request on site through to sending a purchase order to your supplier."},
-                    {q:"What trades does ProQuote support?",a:"ProQuote supports Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas - with General as a catch-all category for any other trade."},
-                    {q:"Does ProQuote work on my phone?",a:"Yes. ProQuote is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar. Voice input works natively on both iOS and Android."},
-                    {q:"Do I need to install anything?",a:"No. ProQuote runs entirely in a browser - Chrome, Safari, Edge, Firefox. No app download, no installation."},
-                    {q:"Where is my data stored?",a:"Currently all data is stored in your browser's local storage and persists across sessions. Cloud backup and multi-device sync are coming in the next major update."},
-                  ]},
-                  {cat:"Creating requests",qs:[
-                    {q:"How does voice input work?",a:"Tap the microphone button on the new request page and speak your list naturally - just as you would on a phone call. The app transcribes in real time and the AI structures it into a clean itemised list."},
-                    {q:"Can I edit the parsed list before sending?",a:"Yes. Every field in the parsed items table is editable - description, quantity, unit, category, and notes per line. You can also add new items or remove incorrect ones."},
-                    {q:"What are templates?",a:"Templates let you save common material lists for instant reuse. They're grouped by trade so you can find them quickly. When loaded, the full item list populates into Step 2 ready to send immediately."},
-                    {q:"Can I set a deadline for supplier responses?",a:"Yes. In Step 2 there's a response deadline date picker. The date appears prominently in the RFQ email and shows as a countdown on the dashboard."},
-                  ]},
-                  {cat:"Quotes & analysis",qs:[
-                    {q:"How do I enter a supplier quote?",a:"In Quote Analysis, each supplier you contacted has their own box. Paste their email response or upload their PDF/Excel document. The AI reads documents and extracts all pricing automatically."},
-                    {q:"What does the AI check in a quote?",a:"The AI checks every item for price, stock availability, quantity accuracy, carriage charges, lead times, discounts, and alternatives. It produces a completeness score and recommends the best supplier."},
-                    {q:"What happens to other quotes when I approve one?",a:"All other quotes are automatically saved to the Quote Library in the background. They're not lost - you can reference them at any time in the Library page."},
-                    {q:"Can I undo an approval?",a:"Yes. The approved quote card shows an Undo button. Tapping it reverses the approval, removes the order from Orders, and returns the job to received status."},
-                  ]},
-                  {cat:"Orders",qs:[
-                    {q:"How do I send a PO to a supplier?",a:"In the Orders page, find the order and tap Send order. An email is sent to the supplier with the full PO details and any notes you add. The order moves to Sent status."},
-                    {q:"How do I attach a supplier confirmation?",a:"When an order is in Sent status, the right panel shows an upload area. Upload the supplier's confirmation PDF and the order automatically moves to Confirmed."},
-                    {q:"Do completed orders disappear?",a:"No. All orders stay permanently. Use the All / Active / Delivered filter to manage what you see. Delivered orders are kept for reference with their full history."},
-                    {q:"Can I upload a PO from my own software?",a:"Yes. In Quote Analysis, the Documents section allows you to upload any PDF or document. Uploaded documents can be promoted to the Orders page for dispatch."},
-                  ]},
-                  {cat:"Settings & troubleshooting",qs:[
-                    {q:"Why isn't the AI working?",a:"You need a free OpenRouter API key. Go to openrouter.ai, sign up (no credit card for basic use), copy your key, and paste it in ProQuote Settings. The status dot in the sidebar will turn green."},
-                    {q:"Why aren't emails sending?",a:"Email sending requires a Resend API key and a verified sending domain. Go to resend.com, create a free account, verify your domain, and add the key in Settings."},
-                    {q:"My data disappeared after refreshing - what happened?",a:"Data is stored in your browser's local storage. Clearing your browser data or using a different browser/device will not show your data. Full cloud sync is coming soon."},
-                    {q:"Can I use ProQuote on multiple devices?",a:"Not yet - data is currently local to the browser you use. Cloud sync across devices is part of the upcoming backend storage update."},
-                  ]},
-                ];
-                return faqs.map(section=>(
-                  <div key={section.cat} style={{marginBottom:20}}>
-                    <div style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:10,paddingBottom:6,borderBottom:`2px solid var(--green-light)`}}>{section.cat}</div>
-                    {section.qs.map((faq,i)=>(
-                      <details key={i} style={{marginBottom:6}}>
-                        <summary style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",cursor:"pointer",padding:"10px 12px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",listStyle:"none",display:"flex",justifyContent:"space-between",alignItems:"center",userSelect:"none"}}>
-                          {faq.q}
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-                        </summary>
-                        <div style={{fontSize:13,color:"var(--text-secondary)",padding:"10px 12px",lineHeight:1.7,borderLeft:"3px solid var(--green-dark)",marginLeft:4,marginTop:4}}>
-                          {faq.a}
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                ));
-              })()}
-            </div>
-
-            {/* Footer */}
-            <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <div style={{width:28,height:28,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
-                </div>
-                <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>Pro<span style={{color:"var(--green-dark)"}}>Quote</span></span>
-                <span style={{fontSize:11,color:"var(--text-muted)"}}>Smart Procurement Platform · Version 1.0</span>
-              </div>
-              <div style={{display:"flex",gap:16}}>
-                <button onClick={()=>setView("contact")} style={{fontSize:12,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Contact support ></button>
-                <button onClick={()=>setView("settings")} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Settings ></button>
-              </div>
-            </div>
-          </div>
-          );
-        })()}
-
-        {/* == CONTACT == */}
-        {view==="contact"&&(()=>{
-          if(!contactForm.name&&settings.contactName) setContactForm(p=>({...p,name:settings.contactName,email:settings.fromEmail||p.email}));
-          return(
-          <div style={{animation:"fadeIn 0.25s ease",maxWidth:760}}>
-            {/* Header */}
-            <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
-              <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.12),transparent 70%)",borderRadius:"50%"}}/>
-              <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",gap:20}}>
-                <div style={{width:56,height:56,background:"linear-gradient(135deg,#6366F1,#4338CA)",borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 8px 24px rgba(99,102,241,0.3)",fontSize:26}}>📧</div>
-                <div>
-                  <div style={{fontSize:11,color:"#818CF8",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:4}}>ProQuote Support</div>
-                  <h1 style={{fontSize:28,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.8px"}}>Contact us</h1>
-                  <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:"6px 0 0"}}>Raise a support request, report a bug, or suggest a feature</p>
-                </div>
-              </div>
-            </div>
-
-            {contactSent?(
-              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-lg)",padding:"48px 40px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
-                <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.25)"}}>v</div>
-                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request sent</div>
-                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24,lineHeight:1.6}}>Thank you for getting in touch. We'll respond to your request as soon as possible.</div>
-                <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-                  <button onClick={()=>setContactSent(false)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Send another</button>
-                  <button onClick={()=>setView("dashboard")} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Back to dashboard</button>
-                </div>
-              </div>
-            ):(
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 300px",gap:20}}>
-                {/* Form */}
-                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px 28px",boxShadow:"var(--shadow-sm)"}}>
-                  <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Submit a support request</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-                    <div>
-                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Your name</label>
-                      <input value={contactForm.name} onChange={e=>setContactForm(p=>({...p,name:e.target.value}))} placeholder="Andy Hammill" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}/>
-                    </div>
-                    <div>
-                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Email address</label>
-                      <input type="email" value={contactForm.email} onChange={e=>setContactForm(p=>({...p,email:e.target.value}))} placeholder="andy@company.co.uk" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}/>
-                    </div>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-                    <div>
-                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Category</label>
-                      <select value={contactForm.category} onChange={e=>setContactForm(p=>({...p,category:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}>
-                        {["Bug report","Feature request","Account issue","Billing","General enquiry"].map(o=><option key={o} value={o}>{o}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Priority</label>
-                      <select value={contactForm.priority} onChange={e=>setContactForm(p=>({...p,priority:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}>
-                        {["Low","Normal","High","Urgent"].map(o=><option key={o} value={o}>{o}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  <div style={{marginBottom:14}}>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Description</label>
-                    <textarea value={contactForm.description} onChange={e=>setContactForm(p=>({...p,description:e.target.value}))} placeholder="Please describe your issue or request in as much detail as possible. Include any steps to reproduce a bug, or what you'd like to see improved." style={{width:"100%",height:140,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",background:"var(--bg-input)",color:"var(--text-primary)",lineHeight:1.6}}/>
-                  </div>
-                  <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",padding:"10px 14px",marginBottom:16,fontSize:12,color:"var(--text-secondary)"}}>
-                    i App version: 1.0 · {settings.company||"Company not set"} · {requests.length} requests · {orders.length} orders
-                  </div>
-                  <button
-                    onClick={()=>{
-                      if(!contactForm.description.trim()){showToast("Please add a description","warn");return;}
-                      showToast("Support request submitted - we'll be in touch soon");
-                      setContactSent(true);
-                      setContactForm(p=>({...p,description:""}));
-                    }}
-                    disabled={!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim()}
-                    style={{background:"linear-gradient(135deg,#6366F1,#4338CA)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 12px rgba(99,102,241,0.3)",opacity:(!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
-                    Submit request
-                  </button>
-                </div>
-
-                {/* Info sidebar */}
-                <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
-                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>⏱ Response times</div>
-                    {[["Urgent","Within 2 hours","var(--red)"],["High","Within 4 hours","var(--amber)"],["Normal","Within 1 business day","var(--green-dark)"],["Low","Within 2 business days","var(--text-secondary)"]].map(([p,t,col])=>(
-                      <div key={p} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
-                        <span style={{fontSize:12,fontWeight:600,color:col}}>{p}</span>
-                        <span style={{fontSize:11,color:"var(--text-secondary)"}}>{t}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)"}}>
-                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:12}}>🔗 Quick links</div>
-                    <button onClick={()=>setView("help")} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 0",background:"none",border:"none",cursor:"pointer",borderBottom:"1px solid var(--border)"}}>
-                      <span style={{fontSize:13}}>❓</span><span style={{fontSize:12,color:"var(--text-secondary)"}}>Help & FAQ</span>
-                    </button>
-                    <button onClick={()=>setView("settings")} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 0",background:"none",border:"none",cursor:"pointer"}}>
-                      <span style={{fontSize:13}}>⚙️</span><span style={{fontSize:12,color:"var(--text-secondary)"}}>Settings</span>
-                    </button>
-                  </div>
-                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 20px",boxShadow:"var(--shadow-sm)",textAlign:"center"}}>
-                    <div style={{width:40,height:40,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}>
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
-                    </div>
-                    <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:2}}>Pro<span style={{color:"var(--green-dark)"}}>Quote</span></div>
-                    <div style={{fontSize:11,color:"var(--text-muted)"}}>Smart Procurement · v1.0</div>
-                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Plumbing · HVAC · Electrical · Mechanical</div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* == SETTINGS == */}
-        {view==="settings"&&(
-          <div>
-            <div style={{marginBottom:24}}>
-              <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Settings</h1>
-              <p style={{fontSize:14,color:"#6B7280",marginTop:4}}>Configure your company and email sending</p>
-            </div>
-            <Card style={{marginBottom:20}}>
-              <div style={{fontSize:14,fontWeight:500,marginBottom:16}}>Company details</div>
-              <div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-                  <div>
-                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Company name (appears on POs)</label>
-                    <input value={sForm.company||""} onChange={e=>setSForm(p=>({...p,company:e.target.value}))} placeholder="e.g. Initial Mechanical Ltd" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
-                  </div>
-                  <div>
-                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Your name (appears on emails)</label>
-                    <input value={sForm.contactName||""} onChange={e=>setSForm(p=>({...p,contactName:e.target.value}))} placeholder="e.g. Andy Smith" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            <Card style={{marginBottom:20}}>
-              <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>AI key - OpenRouter (free, no credit card)</div>
-              <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>OpenRouter gives you free AI access. No credit card. Takes 2 minutes.</p>
-              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"var(--text-secondary)",lineHeight:2}}>
-                <strong>Setup (2 minutes, completely free):</strong><br/>
-                1. Go to <a href="https://openrouter.ai/signup" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>openrouter.ai/signup</a> - sign up free, no card needed<br/>
-                2. Click your avatar > <strong>Keys</strong> > <strong>Create key</strong> - copy it<br/>
-                3. Paste it below and save - AI features work immediately<br/>
-                4. Free tier uses Gemini Flash which is excellent for this use case<br/>
-                <span style={{color:"#9CA3AF",fontSize:12}}>Key stored only in your browser. Never sent anywhere except OpenRouter.</span>
-              </div>
-              <div>
-                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>OpenRouter API key</label>
-                <input type="password" value={sForm.openRouterKey||""} onChange={e=>setSForm(p=>({...p,openRouterKey:e.target.value}))} placeholder="sk-or-v1-xxxxxxxxxxxxxxxx" style={{width:"60%",padding:"9px 12px",border:`1px solid ${sForm.openRouterKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
-                {sForm.openRouterKey
-                  ? <div style={{fontSize:11,color:"#059669",marginTop:4}}>Key active - AI features enabled</div>
-                  : <div style={{fontSize:11,color:"#F59E0B",marginTop:4}}>! No key yet - AI features will redirect you to Settings when used</div>
-                }
-              </div>
-            </Card>
-
-            <Card style={{marginBottom:20}}>
-              <div style={{fontSize:14,fontWeight:500,marginBottom:4}}>Email sending - Resend</div>
-              <p style={{fontSize:13,color:"#6B7280",marginTop:4,marginBottom:16}}>Free tier: 3,000 emails/month. No credit card. Works on Vercel.</p>
-              <div style={{background:"#F8F7F4",border:"1px solid var(--border-solid)",borderRadius:8,padding:"16px 18px",marginBottom:16,fontSize:13,color:"var(--text-secondary)",lineHeight:2}}>
-                <strong>Setup (2 minutes, completely free):</strong><br/>
-                1. Go to <a href="https://resend.com" target="_blank" rel="noreferrer" style={{color:"#2563EB"}}>resend.com</a> > log in<br/>
-                2. Click <strong>API Keys</strong> > <strong>Create API Key</strong> > Full Access > copy it<br/>
-                3. Paste below. Use <code style={{background:"#E5E7EB",padding:"1px 6px",borderRadius:4,fontSize:12}}>onboarding@resend.dev</code> as From address for now<br/>
-                4. To send to any supplier email, add your domain under <strong>Domains</strong> in Resend (free, 5 mins)
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-                <div>
-                  <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Resend API key</label>
-                  <input type="password" value={sForm.resendKey||""} onChange={e=>setSForm(p=>({...p,resendKey:e.target.value}))} placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx" style={{width:"100%",padding:"9px 12px",border:`1px solid ${sForm.resendKey?"#86EFAC":"#E5E7EB"}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"monospace"}}/>
-                  {sForm.resendKey&&<div style={{fontSize:11,color:"#059669",marginTop:4}}>Key entered</div>}
-                </div>
-                <div>
-                  <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>From email address</label>
-                  <input value={sForm.fromEmail||""} onChange={e=>setSForm(p=>({...p,fromEmail:e.target.value}))} placeholder="onboarding@resend.dev" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
-                  <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>Use onboarding@resend.dev for now. Add your own domain in Resend later.</div>
-                </div>
-              </div>
-            </Card>
-
-            <div style={{display:"flex",gap:10}}>
-              <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}} color="#6366F1">Save settings</Btn>
-              <Btn outline onClick={()=>setSForm({company:"",contactName:"",fromEmail:"",resendKey:"",openRouterKey:"",...settings})}>Reset</Btn>
-            </div>
-          </div>
-        )}
-
-      </div>
-
-      </>);
-      })()}
-
-      {/* == TEMPLATE MODAL == */}
-      {templateModal&&(()=>{
-        const tradeOrder = ["Plumbing","HVAC","Electrical","Mechanical","Ventilation","Gas","General"];
-        const grouped = tradeOrder.reduce((acc,tr)=>{
-          const matching = templates.filter(t=>t.trade===tr);
-          if(matching.length>0) acc[tr]=matching;
-          return acc;
-        },{});
-        // Any trade not in our order
-        templates.filter(t=>!tradeOrder.includes(t.trade)).forEach(t=>{
-          if(!grouped[t.trade]) grouped[t.trade]=[];
-          grouped[t.trade].push(t);
-        });
-        const currentTrade = trade||"Plumbing";
-        return(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"24px 28px",maxWidth:560,width:"100%",maxHeight:"85vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-              <div>
-                <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Request templates</div>
-                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Material list templates - grouped by trade</div>
-              </div>
-              <button onClick={()=>setTemplateModal(false)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"var(--text-muted)"}}>x</button>
-            </div>
-
-            {/* Save current as template */}
-            {parsed&&(
-              <div style={{background:"var(--green-mint)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20}}>
-                <div style={{fontSize:12,fontWeight:600,color:"var(--green-deep)",marginBottom:8}}>💾 Save current list - {currentTrade}</div>
-                <div style={{display:"flex",gap:10}}>
-                  <input value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)}
-                    placeholder={`Name e.g. "Standard ${currentTrade} pack"`}
-                    style={{flex:1,padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-input)",color:"var(--text-primary)"}}
-                    onKeyDown={e=>e.key==="Enter"&&handleSaveTemplate()}
-                  />
-                  <Btn onClick={handleSaveTemplate} disabled={!newTemplateName.trim()} color="#16A34A">Save</Btn>
-                </div>
-                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:8}}>Will be saved under: <strong>{currentTrade}</strong> · {parsed.items.length} items</div>
-              </div>
-            )}
-
-            {/* Grouped templates */}
-            {templates.length===0?(
-              <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
-                <div style={{fontSize:36,marginBottom:12}}>📋</div>
-                <div style={{fontSize:15,fontWeight:600,color:"var(--text-secondary)"}}>No templates yet</div>
-                <div style={{fontSize:12,marginTop:6,lineHeight:1.6}}>Create a material request, then tap "Save as template" in Step 2 to save it here for quick reuse</div>
-              </div>
-            ):(
-              <div>
-                {/* Current trade first if exists */}
-                {Object.keys(grouped).sort((a,b)=>a===currentTrade?-1:b===currentTrade?1:0).map(tradeName=>(
-                  <div key={tradeName} style={{marginBottom:16}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                      <span style={{fontSize:11,fontWeight:700,color:tradeName===currentTrade?"var(--green-dark)":"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.1em"}}>
-                        {tradeName===currentTrade?"* ":""}{tradeName}
-                      </span>
-                      <span style={{fontSize:10,color:"var(--text-muted)",background:"var(--bg-subtle2)",padding:"1px 7px",borderRadius:99}}>{grouped[tradeName].length}</span>
-                    </div>
-                    {grouped[tradeName].map(t=>(
-                      <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:tradeName===currentTrade?"var(--green-mint)":"var(--bg-subtle)",borderRadius:"var(--radius-md)",marginBottom:6,border:`1px solid ${tradeName===currentTrade?"var(--green-dark)":"var(--border)"}`}}>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
-                            <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</div>
-                            {t.usageCount>0&&<span style={{fontSize:9,color:"var(--text-muted)",background:"var(--bg-subtle2)",padding:"1px 6px",borderRadius:99,flexShrink:0}}>used {t.usageCount}×</span>}
-                          </div>
-                          <div style={{fontSize:11,color:"var(--text-secondary)"}}>{t.items.length} items{t.lastUsed?` · last used ${t.lastUsed}`:` · saved ${t.created}`}</div>
-                          <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.items.slice(0,3).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join(", ")}{t.items.length>3?"...":""}</div>
-                        </div>
-                        <div style={{display:"flex",gap:6,flexShrink:0}}>
-                          <button onClick={()=>handleLoadTemplate(t)} style={{fontSize:12,color:"white",background:"var(--green-dark)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:600}}>Load</button>
-                          <button onClick={()=>saveTemplates(templates.filter(x=>x.id!==t.id))} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer"}}>x</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        );
-      })()}
-
-      {/* == APPROVE CONFIRMATION MODAL == */}
+      {/* Modals */}
       {approveConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
             <div style={{textAlign:"center",marginBottom:20}}>
-              <div style={{fontSize:40,marginBottom:12}}>📋</div>
+              <div style={{fontSize:36,marginBottom:12}}>📋</div>
               <div style={{fontSize:18,fontWeight:700,color:"var(--text-primary)",marginBottom:6}}>Approve this quote?</div>
-              <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.6}}>This will generate the PO, create an order, and auto-save all other quotes to the library.</div>
+              <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.6}}>This will generate the PO, create an order, and save all other quotes to the library.</div>
             </div>
             <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                <div>
-                  <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>SUPPLIER</div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{approveConfirm?.supplierName||"-"}</div>
-                </div>
-                <div>
-                  <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>ESTIMATED TOTAL</div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--green-dark)"}}>{approveConfirm?.estimatedTotal||approveConfirm?.subtotal||"-"}</div>
-                </div>
-                <div>
-                  <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>COMPLETENESS</div>
-                  <div style={{fontSize:14,fontWeight:600,color:approveConfirm?.completeness>=80?"var(--green-dark)":"var(--amber)"}}>{approveConfirm?.completeness||0}%</div>
-                </div>
-                <div>
-                  <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>OTHER QUOTES</div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-secondary)"}}>{allAnalyses.length-1} > auto-saved to library</div>
-                </div>
+                <div><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>SUPPLIER</div><div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{approveConfirm.supplierName||"—"}</div></div>
+                <div><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>ESTIMATED TOTAL</div><div style={{fontSize:14,fontWeight:600,color:"var(--green-dark)"}}>{approveConfirm.estimatedTotal||approveConfirm.subtotal||"—"}</div></div>
+                <div><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>COMPLETENESS</div><div style={{fontSize:14,fontWeight:600,color:approveConfirm.completeness>=80?"var(--green-dark)":"var(--amber)"}}>{approveConfirm.completeness||0}%</div></div>
+                <div><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>OTHER QUOTES</div><div style={{fontSize:14,fontWeight:600,color:"var(--text-secondary)"}}>{allAnalyses.length-1} saved to library</div></div>
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>
@@ -3812,72 +3294,56 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         </div>
       )}
 
-      {/* == APPROVE SUCCESS MODAL == */}
       {approveSuccess&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"36px 40px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--green-dark)",textAlign:"center",animation:"fadeIn 0.3s ease"}}>
-            <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>v</div>
+            <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>✅</div>
             <div style={{fontSize:22,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.5px",marginBottom:6}}>PO Approved</div>
             <div style={{fontSize:15,fontWeight:600,color:"var(--green-dark)",marginBottom:16,fontFamily:"'JetBrains Mono',monospace"}}>{approveSuccess.poNum}</div>
             <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20,textAlign:"left"}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                <span style={{fontSize:12,color:"var(--text-secondary)"}}>Supplier</span>
-                <span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{approveSuccess.supplier}</span>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                <span style={{fontSize:12,color:"var(--text-secondary)"}}>Job reference</span>
-                <span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{approveSuccess.jobRef}</span>
-              </div>
-              {approveSuccess.estimatedTotal&&<div style={{display:"flex",justifyContent:"space-between"}}>
-                <span style={{fontSize:12,color:"var(--text-secondary)"}}>Estimated total</span>
-                <span style={{fontSize:12,fontWeight:600,color:"var(--green-dark)"}}>{approveSuccess.estimatedTotal}</span>
-              </div>}
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Supplier</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{approveSuccess.supplier}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Job reference</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{approveSuccess.jobRef}</span></div>
+              {approveSuccess.estimatedTotal&&<div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Total</span><span style={{fontSize:12,fontWeight:600,color:"var(--green-dark)"}}>{approveSuccess.estimatedTotal}</span></div>}
             </div>
-            <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:20}}>Other quotes have been saved to the Quote Library. An order has been created in Orders ready to dispatch to the supplier.</div>
+            <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:20}}>Other quotes saved to library. Order created in Orders page.</div>
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-              <button onClick={()=>{setApproveSuccess(null);setView("orders");}} style={{background:"linear-gradient(135deg,var(--green),var(--green-dark))",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 12px rgba(34,197,94,0.3)"}}>
-                View in Orders >
-              </button>
-              <button onClick={()=>setApproveSuccess(null)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                Stay here
-              </button>
+              <button onClick={()=>{setApproveSuccess(null);setView("orders");}} style={{background:"linear-gradient(135deg,var(--green),var(--green-dark))",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>View in Orders</button>
+              <button onClick={()=>setApproveSuccess(null)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Stay here</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* == DELETE CONFIRM MODAL == */}
       {deleteConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:400,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
             <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>🗑️</div>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center"}}>Delete this request?</div>
-            <div style={{fontSize:13,color:"#6B7280",marginBottom:24,textAlign:"center"}}>This cannot be undone. The request and all its activity will be permanently removed.</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Delete this request?</div>
+            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>This cannot be undone. The request, quotes, and all associated data will be permanently removed.</div>
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
               <Btn outline onClick={()=>setDeleteConfirm(null)}>Cancel</Btn>
-              <Btn color="#DC2626" onClick={()=>handleDelete(deleteConfirm)}>Yes, delete it</Btn>
+              <Btn color="#DC2626" onClick={()=>{setRequests(p=>p.filter(r=>r.id!==deleteConfirm.id));if(activeReq?.id===deleteConfirm.id){setActiveReq(null);setAllAnalyses([]);}setDeleteConfirm(null);showToast("Request deleted");}}>Delete</Btn>
             </div>
           </div>
         </div>
       )}
 
-      {/* == EDIT MODAL == */}
       {editModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:540,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:20}}>Edit request - {editModal.id}</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:20,color:"var(--text-primary)"}}>Edit request - {editModal.id}</div>
             <div style={{display:"grid",gap:14}}>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Job reference</label>
-                <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Job Reference</label>
+                <input value={editForm.jobRef||""} onChange={e=>setEditForm(p=>({...p,jobRef:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
               </div>
               <div>
-                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Site / location</label>
-                <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:10,fontSize:13,outline:"none",transition:"border-color 0.15s",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}/>
+                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Site</label>
+                <input value={editForm.site||""} onChange={e=>setEditForm(p=>({...p,site:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
               </div>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Status</label>
-                <select value={editForm.status||"draft"} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,background:"var(--bg-card-solid)",outline:"none"}}>
+                <select value={editForm.status||"draft"} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}>
                   <option value="draft">Draft</option>
                   <option value="pending">Pending quotes</option>
                   <option value="received">Quotes received</option>
@@ -3886,7 +3352,7 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
               </div>
               <div>
                 <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Notes</label>
-                <textarea value={editForm.notes||""} onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))} placeholder="Add any notes about this request..." style={{width:"100%",height:80,padding:"9px 12px",border:"1px solid var(--border-solid)",borderRadius:8,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+                <textarea value={editForm.notes||""} onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))} placeholder="Add any notes about this request..." style={{width:"100%",height:80,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}></textarea>
               </div>
             </div>
             <div style={{display:"flex",gap:10,marginTop:20,justifyContent:"flex-end"}}>
@@ -3897,32 +3363,119 @@ ${settings.contactName||settings.company||"The Procurement Team"}`, settings.res
         </div>
       )}
 
-      {/* == ACTIVITY LOG MODAL == */}
       {activityModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:560,width:"100%",maxHeight:"80vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
               <div>
-                <div style={{fontSize:16,fontWeight:600}}>{activityModal.id} - Activity log</div>
-                <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>{activityModal.jobRef} · {activityModal.site}</div>
+                <div style={{fontSize:16,fontWeight:600,color:"var(--text-primary)"}}>{activityModal.id} - Activity log</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{activityModal.jobRef} · {activityModal.site}</div>
               </div>
-              <button onClick={()=>setActivityModal(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9CA3AF"}}>x</button>
+              <button onClick={()=>setActivityModal(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"var(--text-muted)"}}>x</button>
             </div>
             {(!activityModal.activity||activityModal.activity.length===0)?(
-              <div style={{textAlign:"center",padding:"40px 0",color:"#9CA3AF",fontSize:13}}>No activity recorded yet</div>
+              <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)",fontSize:13}}>No activity logged yet</div>
             ):(
               <div>
                 {[...(activityModal.activity||[])].reverse().map((entry,i)=>(
-                  <div key={i} style={{display:"flex",gap:14,padding:"12px 0",borderBottom:"1px solid #F3F4F6"}}>
-                    <div style={{width:8,height:8,borderRadius:"50%",background:"#3B82F6",marginTop:5,flexShrink:0}}/>
+                  <div key={i} style={{display:"flex",gap:14,padding:"12px 0",borderBottom:"1px solid var(--border)"}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:"var(--green-dark)",marginTop:5,flexShrink:0}}/>
                     <div style={{flex:1}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                         <span style={{fontSize:13,fontWeight:500,color:"var(--text-primary)"}}>{entry.action}</span>
-                        <span style={{fontSize:11,color:"#9CA3AF",whiteSpace:"nowrap",marginLeft:12}}>{new Date(entry.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
+                        <span style={{fontSize:11,color:"var(--text-muted)",whiteSpace:"nowrap",marginLeft:12}}>{new Date(entry.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
                       </div>
-                      {entry.detail&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:3}}>{entry.detail}</div>}
-                      <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>by {entry.user}</div>
+                      {entry.detail&&<div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{entry.detail}</div>}
+                      <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>by {entry.user||"System"}</div>
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showShortcuts&&(
+        <div onClick={()=>setShowShortcuts(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:480,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)"}}>Keyboard shortcuts</div>
+              <kbd style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:5,padding:"2px 8px",fontSize:11,color:"var(--text-secondary)",cursor:"pointer"}} onClick={()=>setShowShortcuts(false)}>Esc</kbd>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+              {[
+                ["N","New request"],["Q","Quote analysis"],["O","Orders"],
+                ["D","Dashboard"],["S","Settings"],["H","Help"],
+                ["?","Toggle shortcuts"],["Esc","Close modals"],
+              ].map(([k,l])=>(
+                <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)"}}>
+                  <span style={{fontSize:13,color:"var(--text-secondary)"}}>{l}</span>
+                  <kbd style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:5,padding:"2px 10px",fontSize:12,fontFamily:"monospace",fontWeight:700,color:"var(--text-primary)",boxShadow:"0 1px 0 var(--border)"}}>{k}</kbd>
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:16,padding:"10px 12px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)"}}>
+              <div style={{fontSize:11,color:"var(--text-muted)",textAlign:"center"}}>Press <strong>?</strong> or <strong>/</strong> at any time to show this panel</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {templateModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"24px 28px",maxWidth:560,width:"100%",maxHeight:"85vh",overflow:"auto",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div>
+                <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Request templates</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Material list templates grouped by trade</div>
+              </div>
+              <button onClick={()=>setTemplateModal(false)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"var(--text-muted)"}}>x</button>
+            </div>
+            {parsed&&(
+              <div style={{background:"var(--green-mint)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20}}>
+                <div style={{fontSize:12,fontWeight:600,color:"var(--green-deep)",marginBottom:8}}>Save current list - {templateCurrentTrade}</div>
+                <div style={{display:"flex",gap:10}}>
+                  <input value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)}
+                    placeholder={`Name e.g. Standard ${templateCurrentTrade} pack`}
+                    style={{flex:1,padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}
+                    onKeyDown={e=>e.key==="Enter"&&handleSaveTemplate()}
+                  />
+                  <Btn onClick={handleSaveTemplate} disabled={!newTemplateName.trim()} color="#16A34A">Save</Btn>
+                </div>
+              </div>
+            )}
+            {templates.length===0?(
+              <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
+                <div style={{fontSize:36,marginBottom:12}}>list</div>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-secondary)"}}>No templates yet</div>
+                <div style={{fontSize:12,marginTop:6,lineHeight:1.6}}>Create a request then save it as a template from Step 2</div>
+              </div>
+            ):(
+              <div>
+                {Object.keys(templateGrouped).sort((a,b)=>a===templateCurrentTrade?-1:b===templateCurrentTrade?1:0).map(tradeName=>(
+                  <div key={tradeName} style={{marginBottom:16}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                      <span style={{fontSize:11,fontWeight:700,color:tradeName===templateCurrentTrade?"var(--green-dark)":"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.1em"}}>
+                        {tradeName===templateCurrentTrade?"* ":""}{tradeName}
+                      </span>
+                      <span style={{fontSize:10,color:"var(--text-muted)",background:"var(--bg-subtle2)",padding:"1px 7px",borderRadius:99}}>{templateGrouped[tradeName].length}</span>
+                    </div>
+                    {templateGrouped[tradeName].map(t=>(
+                      <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:tradeName===templateCurrentTrade?"var(--green-mint)":"var(--bg-subtle)",borderRadius:"var(--radius-md)",marginBottom:6,border:"1px solid",borderColor:tradeName===templateCurrentTrade?"var(--green-dark)":"var(--border)"}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+                            <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</div>
+                            {t.usageCount>0&&<span style={{fontSize:9,color:"var(--text-muted)",background:"var(--bg-subtle2)",padding:"1px 6px",borderRadius:99,flexShrink:0}}>used {t.usageCount}x</span>}
+                          </div>
+                          <div style={{fontSize:11,color:"var(--text-secondary)"}}>{t.items.length} items{t.lastUsed?` · last used ${t.lastUsed}`:` · saved ${t.created}`}</div>
+                        </div>
+                        <div style={{display:"flex",gap:6,flexShrink:0}}>
+                          <button onClick={()=>handleLoadTemplate(t)} style={{fontSize:12,color:"white",background:"var(--green-dark)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:600}}>Load</button>
+                          <button onClick={()=>saveTemplates(templates.filter(x=>x.id!==t.id))} style={{fontSize:12,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer"}}>x</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
