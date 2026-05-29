@@ -780,6 +780,7 @@ export default function App() {
   const [deliveryDate,   setDeliveryDate]   = useState("");
   const [altAddress,     setAltAddress]     = useState("");
   const [requestNotes,   setRequestNotes]   = useState("");
+  const [requestBudget,  setRequestBudget]  = useState("");
 
   // Help AI chat
   const [helpMessages, setHelpMessages] = useState([]);
@@ -1027,7 +1028,7 @@ export default function App() {
       const newId = `RFQ-${Date.now().toString().slice(-6)}`;
       const r = {
         id: newId,
-        jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes,
+        jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
         status:"pending",
         created: new Date().toISOString().split("T")[0],
         items: parsed.items,
@@ -1046,7 +1047,7 @@ export default function App() {
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
         setRfqEmail(""); setEmailRes(null); setSelSup([]);
-        setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline(""); setRequestNotes("");
+        setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
       }, 1800);
       setEmailRes(results); // show brief success UI
@@ -1364,12 +1365,28 @@ ${settings.company||""}`;
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [quoteViewMode, setQuoteViewMode] = useState("cards");
   const [marginPct, setMarginPct] = useState(0);
+  const [reqFilterStatus, setReqFilterStatus] = useState("all");
+  const [reqFilterTrade, setReqFilterTrade] = useState("all");
+  const [reqSearch, setReqSearch] = useState("");
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; localStorage.setItem("piq_dark",n?"1":"0"); return n; });
 
   // -- Persist to localStorage --
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
+
+  // Budget tracking: jobs with a budget set, vs actual approved spend
+  const budgetJobs = requests
+    .filter(r => r.budget && parseFloat(r.budget) > 0)
+    .map(r => {
+      const jobOrders = orders.filter(o => o.jobRef === r.jobRef);
+      const actual = jobOrders.reduce((sum,o) => {
+        const v = parseFloat(String(o.estimatedTotal||"").replace(/[^0-9.]/g,""));
+        return sum + (isNaN(v)?0:v);
+      }, 0);
+      const budget = parseFloat(r.budget);
+      return { id:r.id, jobRef:r.jobRef, budget, actual, pct: budget>0?Math.round(actual/budget*100):0 };
+    });
 
   // Expiring quotes (within 5 days or already expired)
   const expiringQuotes = quoteLibrary.filter(q => {
@@ -1589,6 +1606,30 @@ Rules:
       setLoadMsg("");
       showToast("Could not read document: " + err.message, "warn");
     }
+  };
+
+  // CSV export helper
+  const downloadCSV = (filename, rows) => {
+    if (!rows.length) { showToast("Nothing to export","warn"); return; }
+    const headers = Object.keys(rows[0]);
+    const escape = (v) => {
+      const s = (v==null?"":String(v)).replace(/"/g,'""');
+      return /[",\n]/.test(s) ? `"${s}"` : s;
+    };
+    const csv = [
+      headers.join(","),
+      ...rows.map(r => headers.map(h => escape(r[h])).join(","))
+    ].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${rows.length} row${rows.length!==1?"s":""}`);
   };
 
   // -- Render --
@@ -1827,6 +1868,34 @@ Rules:
                       <span key={q.id} style={{fontSize:11,padding:"3px 10px",borderRadius:99,background:daysLeft<=0?"var(--red-light)":daysLeft<=2?"var(--amber-light)":"#FEF3C7",color:daysLeft<=0?"var(--red)":daysLeft<=2?"var(--amber)":"#92400E",fontWeight:600}}>
                         {q.supplierName} · {q.jobRef} · {daysLeft<=0?"Expired":`${daysLeft}d left`}
                       </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Budget tracking */}
+            {budgetJobs.length>0&&(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 22px",marginBottom:20,boxShadow:"var(--shadow-sm)"}}>
+                <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:14}}>Budget tracking</div>
+                <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                  {budgetJobs.map(b=>{
+                    const over = b.actual>b.budget;
+                    const barColor = over?"var(--red)":b.pct>=85?"var(--amber)":"var(--green-dark)";
+                    return(
+                      <div key={b.id}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:5}}>
+                          <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{b.jobRef}</span>
+                          <span style={{fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:over?"var(--red)":"var(--text-secondary)"}}>
+                            £{b.actual.toFixed(2)} / £{b.budget.toFixed(2)}
+                            {over&&<span style={{marginLeft:8,fontWeight:700,color:"var(--red)"}}>over by £{(b.actual-b.budget).toFixed(2)}</span>}
+                          </span>
+                        </div>
+                        <div style={{height:8,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${Math.min(100,b.pct)}%`,background:barColor,borderRadius:99,transition:"width 0.4s"}}/>
+                        </div>
+                        <div style={{fontSize:10,color:"var(--text-tertiary)",marginTop:3}}>{b.pct}% of budget used{b.actual===0?" · no orders approved yet":""}</div>
+                      </div>
                     );
                   })}
                 </div>
@@ -2077,10 +2146,20 @@ Rules:
                   </button>
                 </div>
 
-                {/* Request notes */}
-                <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:12}}>
-                  <div style={{fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:8}}>Request notes (optional)</div>
-                  <textarea value={requestNotes} onChange={e=>setRequestNotes(e.target.value)} placeholder="Any special instructions, access notes, or additional context for suppliers..." style={{width:"100%",height:60,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"none",fontFamily:"inherit",lineHeight:1.6}}></textarea>
+                {/* Request notes + budget */}
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"2fr 1fr",gap:12,marginBottom:12}}>
+                  <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:8}}>Request notes (optional)</div>
+                    <textarea value={requestNotes} onChange={e=>setRequestNotes(e.target.value)} placeholder="Any special instructions, access notes, or additional context for suppliers..." style={{width:"100%",height:60,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"none",fontFamily:"inherit",lineHeight:1.6}}></textarea>
+                  </div>
+                  <div style={{background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"var(--green-deep)",marginBottom:8}}>Budget (optional)</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:16,fontWeight:700,color:"var(--green-deep)"}}>£</span>
+                      <input type="number" min="0" value={requestBudget} onChange={e=>setRequestBudget(e.target.value)} placeholder="0.00" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",fontFamily:"monospace"}}/>
+                    </div>
+                    <div style={{fontSize:10,color:"var(--green-dark)",marginTop:6,lineHeight:1.4}}>Track actual spend against this on the dashboard</div>
+                  </div>
                 </div>
 
                 {/* Deadline + Delivery */}
@@ -2597,7 +2676,17 @@ Rules:
                 <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Orders</h1>
                 <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{orders.length} total orders</p>
               </div>
-              <div style={{display:"flex",gap:8}}>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                {orders.length>0&&(
+                  <button onClick={()=>downloadCSV(`orders-${new Date().toISOString().split("T")[0]}.csv`, orders.map(o=>({
+                    PO: o.poNumber, Status: o.status, Supplier: o.supplier||"", Job: o.jobRef||"", Site: o.site||"",
+                    EstimatedTotal: o.estimatedTotal||"", PODate: o.poDate||"",
+                    ExpectedDelivery: o.expectedDelivery?new Date(o.expectedDelivery).toLocaleDateString("en-GB"):"",
+                    Items: (o.items||[]).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join("; ")
+                  })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:500}}>
+                    ⬇ Export
+                  </button>
+                )}
                 {[
                   {id:"all",      label:"All",       count:orders.length},
                   {id:"active",   label:"Active",    count:orders.filter(o=>o.status!=="delivered").length},
@@ -2843,8 +2932,38 @@ Rules:
                 <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>All requests</h1>
                 <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{requests.length} total requests</p>
               </div>
-              <Btn onClick={()=>{setView("new");resetNewRequest();}} color="#16A34A">+ New request</Btn>
+              <div style={{display:"flex",gap:8}}>
+                {requests.length>0&&(
+                  <button onClick={()=>downloadCSV(`requests-${new Date().toISOString().split("T")[0]}.csv`, requests.map(r=>({
+                    ID:r.id, JobRef:r.jobRef||"", Site:r.site||"", Trade:r.trade||"", Status:r.status||"",
+                    Created:r.created||"", Items:(r.items||[]).length, Suppliers:(r.sentTo||[]).length,
+                    QuotesIn:(r.sentTo||[]).filter(s=>s.saved).length, Notes:r.notes||""
+                  })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",fontWeight:500}}>⬇ Export</button>
+                )}
+                <Btn onClick={()=>{setView("new");resetNewRequest();}} color="#16A34A">+ New request</Btn>
+              </div>
             </div>
+
+            {/* Filter bar */}
+            {requests.length>0&&(
+              <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+                <input value={reqSearch} onChange={e=>setReqSearch(e.target.value)} placeholder="Search job ref or site..." style={{flex:"1 1 200px",minWidth:160,padding:"9px 14px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                <select value={reqFilterStatus} onChange={e=>setReqFilterStatus(e.target.value)} style={{padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",cursor:"pointer"}}>
+                  <option value="all">All statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="pending">Pending quotes</option>
+                  <option value="received">Quotes received</option>
+                  <option value="approved">Approved</option>
+                </select>
+                <select value={reqFilterTrade} onChange={e=>setReqFilterTrade(e.target.value)} style={{padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",cursor:"pointer"}}>
+                  <option value="all">All trades</option>
+                  {TRADES.map(t=><option key={t} value={t}>{t}</option>)}
+                </select>
+                {(reqFilterStatus!=="all"||reqFilterTrade!=="all"||reqSearch)&&(
+                  <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqSearch("");}} style={{fontSize:12,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer"}}>Clear</button>
+                )}
+              </div>
+            )}
             <Card>
               {requests.length===0?(
                 <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
@@ -2856,7 +2975,15 @@ Rules:
                   <div style={{display:"grid",gridTemplateColumns:"80px 1fr 120px 100px 80px 140px",gap:8,padding:"10px 16px",background:"var(--bg-subtle)",fontSize:11,fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em",borderRadius:"var(--radius-sm) var(--radius-sm) 0 0"}}>
                     <span>ID</span><span>Job ref</span><span>Trade</span><span>Status</span><span>Quotes</span><span>Actions</span>
                   </div>
-                  {requests.map((r,idx)=>{
+                  {requests.filter(r=>{
+                    if(reqFilterStatus!=="all"&&r.status!==reqFilterStatus) return false;
+                    if(reqFilterTrade!=="all"&&r.trade!==reqFilterTrade) return false;
+                    if(reqSearch){
+                      const q=reqSearch.toLowerCase();
+                      if(!((r.jobRef||"").toLowerCase().includes(q)||(r.site||"").toLowerCase().includes(q)||(r.id||"").toLowerCase().includes(q))) return false;
+                    }
+                    return true;
+                  }).map((r,idx)=>{
                     const sc = STATUS[r.status]||STATUS.draft;
                     const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
                     const quotesTotal = (r.sentTo||[]).length;
@@ -2888,8 +3015,22 @@ Rules:
 
         {view==="library"&&(
           <div style={{maxWidth:1000,animation:"fadeIn 0.25s ease"}}>
-            <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",marginBottom:4,color:"var(--text-primary)"}}>Quote library</h1>
-            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>{quoteLibrary.length} quotes saved · Supplier price history</p>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:24,flexWrap:"wrap",gap:12}}>
+              <div>
+                <h1 style={{fontSize:28,fontWeight:700,letterSpacing:"-0.8px",margin:0,color:"var(--text-primary)"}}>Quote library</h1>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{quoteLibrary.length} quotes saved · Supplier price history</p>
+              </div>
+              {quoteLibrary.length>0&&(
+                <button onClick={()=>downloadCSV(`quote-library-${new Date().toISOString().split("T")[0]}.csv`, quoteLibrary.map(q=>({
+                  Date: q.savedAt?new Date(q.savedAt).toLocaleDateString("en-GB"):"",
+                  Supplier: q.supplierName, Job: q.jobRef||"", Site: q.site||"", Trade: q.trade||"",
+                  Completeness: (q.completeness||0)+"%", EstimatedTotal: q.totalEstimate||"",
+                  Carriage: q.carriageCharge||"", Expiry: q.expiryDate?new Date(q.expiryDate).toLocaleDateString("en-GB"):""
+                })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 16px",cursor:"pointer",fontWeight:500}}>
+                  ⬇ Export CSV
+                </button>
+              )}
+            </div>
             {supplierScoreCards.length>0&&(
               <div style={{marginBottom:24}}>
                 <div style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Supplier scorecards</div>
