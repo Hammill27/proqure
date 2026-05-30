@@ -1882,12 +1882,26 @@ Rules:
   // -- Render --
   return (
     <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}}>
+      {/* Ambient background layer - subtle brand shape + soft orbs */}
+      <div className="app-bg-layer">
+        <div className="orb orb-green" style={{width:560,height:560,top:-180,right:-120}}/>
+        <div className="orb orb-indigo" style={{width:480,height:480,bottom:-160,left:-100}}/>
+        <div className="orb orb-green" style={{width:400,height:400,top:"45%",left:"55%"}}/>
+      </div>
+      {/* Large translucent ProQuote mark, bottom-right */}
+      <svg className="app-bg-mark" width="640" height="640" viewBox="0 0 20 20" fill="none" style={{bottom:-140,right:-120}} preserveAspectRatio="xMidYMid meet">
+        <rect x="3" y="3" width="3" height="14" rx="1.5" fill="var(--green-dark)"/>
+        <rect x="6" y="3" width="8" height="3" rx="1.5" fill="var(--green-dark)"/>
+        <rect x="14" y="3" width="3" height="8" rx="1.5" fill="var(--green-dark)"/>
+        <rect x="6" y="10" width="8" height="3" rx="1.5" fill="var(--green)"/>
+        <circle cx="16.5" cy="15.5" r="2" fill="var(--green-dark)"/>
+      </svg>
       <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
       <style>{`
       /* -- LIGHT THEME (default) -- */
       :root {
         --bg-page:        #FAFAF8;
-        --bg-card:        #FFFFFF;
+        --bg-card:        rgba(255,255,255,0.82);
         --bg-card-solid:  #FFFFFF;
         --bg-input:       #FFFFFF;
         --bg-subtle:      #F6F6F3;
@@ -1927,7 +1941,7 @@ Rules:
       /* -- DARK THEME -- */
       [data-theme="dark"] {
         --bg-page:        #16161A;
-        --bg-card:        #1C1C21;
+        --bg-card:        rgba(28,28,33,0.82);
         --bg-card-solid:  #1C1C21;
         --bg-input:       #232328;
         --bg-subtle:      #232328;
@@ -1967,6 +1981,15 @@ Rules:
       [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder { color:var(--text-muted)!important; }
       *{box-sizing:border-box;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
       body{letter-spacing:-0.011em}
+      .app-bg-layer{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+      .app-bg-layer .orb{position:absolute;border-radius:50%;filter:blur(60px)}
+      .app-bg-mark{position:fixed;pointer-events:none;z-index:0}
+      [data-theme="light"] .app-bg-mark{opacity:0.035}
+      [data-theme="dark"] .app-bg-mark{opacity:0.05}
+      [data-theme="light"] .orb-green{background:radial-gradient(circle,rgba(30,158,99,0.10),transparent 70%)}
+      [data-theme="dark"] .orb-green{background:radial-gradient(circle,rgba(61,214,140,0.08),transparent 70%)}
+      [data-theme="light"] .orb-indigo{background:radial-gradient(circle,rgba(91,91,214,0.07),transparent 70%)}
+      [data-theme="dark"] .orb-indigo{background:radial-gradient(circle,rgba(139,139,240,0.06),transparent 70%)}
       h1,h2,h3{letter-spacing:-0.022em}
       @keyframes spin{to{transform:rotate(360deg)}}
       @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -2070,7 +2093,7 @@ Rules:
       )}
 
       {/* Main content */}
-      <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",minHeight:"100vh",animation:"fadeIn 0.2s ease"}}>
+      <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",minHeight:"100vh",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1}}>
 
         {view==="dashboard"&&(
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:1000}}>
