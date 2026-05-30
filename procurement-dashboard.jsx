@@ -553,21 +553,43 @@ async function readFileForExtraction(file) {
 // --- Email via Vercel serverless function (no CORS) --------------------------
 // Build a branded HTML email from a plain-text body + optional logo
 function buildEmailHtml(bodyText, settings) {
+  const esc = (s) => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const company = esc(settings.company||"");
   const logo = settings.logoBase64
-    ? `<img src="${settings.logoBase64}" alt="${settings.company||"Company"}" style="max-height:56px;max-width:200px;display:block;margin-bottom:16px"/>`
-    : `<div style="font-size:20px;font-weight:700;color:#15824F;margin-bottom:16px">${settings.company||"ProQuote"}</div>`;
-  const safeBody = (bodyText||"")
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-    .replace(/\n/g,"<br/>");
-  const footer = settings.poNotes ? `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #EAE9E3;font-size:12px;color:#908F86">${settings.poNotes.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</div>` : "";
-  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#FAFAF8">
-    <div style="max-width:600px;margin:0 auto;padding:32px 24px;font-family:'Helvetica Neue',Arial,sans-serif">
-      <div style="background:#FFFFFF;border:1px solid #EAE9E3;border-radius:16px;padding:28px 32px">
-        ${logo}
-        <div style="font-size:14px;line-height:1.7;color:#1A1A17">${safeBody}</div>
-        ${footer}
+    ? `<img src="${settings.logoBase64}" alt="${company||"Company"}" style="max-height:46px;max-width:180px;display:block"/>`
+    : `<div style="font-size:21px;font-weight:800;color:#FFFFFF;letter-spacing:-0.02em">${company||"ProQuote"}</div>`;
+  const safeBody = esc(bodyText).replace(/\n/g,"<br/>");
+  const terms = settings.poNotes ? `<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3;font-size:12px;line-height:1.6;color:#908F86">${esc(settings.poNotes)}</div>` : "";
+  // Contact line from settings
+  const contactBits = [];
+  if (settings.contactName) contactBits.push(esc(settings.contactName));
+  if (settings.fromEmail) contactBits.push(esc(settings.fromEmail));
+  if (settings.phone) contactBits.push(esc(settings.phone));
+  const contact = contactBits.length ? `<div style="font-size:12px;color:#5C5B54;line-height:1.7">${contactBits.join(" &nbsp;&middot;&nbsp; ")}</div>` : "";
+  // ProQuote logo mark (small, inline SVG as data — using simple shapes)
+  const pqMark = `<span style="display:inline-block;width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#1E9E63,#15824F);vertical-align:middle;margin-right:6px"></span>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+  <body style="margin:0;padding:0;background:#F4F4F1;font-family:'Helvetica Neue',Arial,sans-serif">
+    <div style="max-width:600px;margin:0 auto;padding:28px 18px">
+      <div style="background:#FFFFFF;border:1px solid #E8E7E1;border-radius:18px;overflow:hidden;box-shadow:0 4px 16px rgba(26,26,23,0.06)">
+        <!-- Branded header band -->
+        <div style="background:linear-gradient(135deg,#16211b,#101013);padding:24px 32px;display:flex;align-items:center">
+          ${logo}
+        </div>
+        <!-- Body -->
+        <div style="padding:30px 32px">
+          <div style="font-size:14px;line-height:1.75;color:#1A1A17">${safeBody}</div>
+          ${terms}
+          ${contact?`<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3">${contact}</div>`:""}
+        </div>
       </div>
-      <div style="text-align:center;margin-top:16px;font-size:11px;color:#C4C3BA">Sent via ProQuote${settings.company?` on behalf of ${settings.company}`:""}</div>
+      <!-- Powered by ProQuote footer -->
+      <div style="text-align:center;margin-top:18px;padding:0 12px">
+        <div style="display:inline-block;background:#FFFFFF;border:1px solid #E8E7E1;border-radius:99px;padding:7px 16px">
+          <span style="font-size:11px;color:#908F86;vertical-align:middle">${pqMark}Sent with <strong style="color:#15824F;font-weight:700">ProQuote</strong> &mdash; AI procurement for trades</span>
+        </div>
+        <div style="font-size:10px;color:#C4C3BA;margin-top:10px">This quote request was prepared and sent using ProQuote${company?` on behalf of ${company}`:""}.</div>
+      </div>
     </div>
   </body></html>`;
 }
@@ -838,6 +860,8 @@ export default function App() {
   const [requests, setRequests] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_requests")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
+  const [expandedSet, setExpandedSet] = useState(null);
+  const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
 
   // Wizard state
   const [step,     setStep]     = useState(1);
@@ -1232,6 +1256,22 @@ export default function App() {
     setAllAnalyses(results);
     setApprovedQuoteId(null);
     if (results.length>0) setExpandedQuote(results[0]._id);
+    // Save/update this analysis as a persistent quote set
+    if (results.length>0) {
+      const setObj = {
+        id: `QS-${activeReq.id}`,
+        reqId: activeReq.id,
+        jobRef: activeReq.jobRef||"",
+        trade: activeReq.trade||"",
+        site: activeReq.site||"",
+        items: activeReq.items||[],
+        analyses: results,
+        createdAt: new Date().toISOString(),
+        status: "analysed",
+        approvedId: null
+      };
+      setSavedQuoteSets(prev => [setObj, ...prev.filter(s=>s.id!==setObj.id)]);
+    }
     logActivity("Quotes analysed",`${results.length} supplier quote${results.length!==1?"s":""} analysed for ${activeReq.jobRef}`,{entity:"quote",reqId:activeReq.id,jobRef:activeReq.jobRef});
     if (results.length>0) {
       const entry = { ts:new Date().toISOString(), action:"AI analysis run", detail:`${results.length} quote${results.length!==1?"s":""} analysed`, user:settings.contactName||"You" };
@@ -1279,6 +1319,9 @@ export default function App() {
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
     setActiveReq(prev=>({...prev,status:"approved",documents:[...(prev.documents||[]),doc]}));
     setApprovedQuoteId(qa?._id||null);
+    setSavedQuoteSets(prev => prev.map(s => s.reqId===activeReq.id ? {...s, status:"approved", approvedId:qa?._id||null, analyses:allAnalyses.length?allAnalyses:s.analyses} : s));
+    // Clear the active in-progress view so the page shows the saved list
+    setTimeout(()=>{ setActiveReq(null); setAllAnalyses([]); setExpandedQuote(null); }, 1200);
     logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});
 
     // Remove other quotes from the analysis view
@@ -1355,6 +1398,7 @@ LIBRARY: every non-approved quote auto-saves here with a 30-day expiry (configur
 
 SUPPLIERS: manage supplier accounts; each shows RFQ count, response rate, average completeness and PO win count.
 
+SAVED QUOTES: the Quotes page keeps every analysis you run as a saved collapsible card (like the Orders page). After you approve a quote and the order is created, that analysis moves into the saved list automatically; you can re-open any past analysis in full at any time, and it survives a page refresh. When pasting a supplier quote into a box, it turns green and shows 'Quote entered'.
 ACTIVITY LOG: the dashboard shows a Recent activity feed logging every action across the app - RFQs sent, quotes analysed, POs approved, orders sent/confirmed/delivered, confirmations uploaded, suppliers added, library changes. Each request also keeps its own activity history (open it from All Requests). DASHBOARD CHARTS: a Spend by trade bar chart and budget-vs-actual progress bars appear automatically once you have orders/budgets. SUPPLIER QUICK-ADD: on the request wizard supplier step you can add a new supplier inline with '+ Add a supplier' without leaving the page. LIBRARY: you can remove a quote from the library with the bin icon on its row.
 OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D dashboard, S settings, H help, ? shows the shortcut list); company branding (logo upload, default PO terms, quote validity days) in Settings - the logo appears on HTML emails; budget tracking on the dashboard (actual vs budget per job); quote expiry warnings on the dashboard; CSV export on library/orders/requests; All Requests has search and status/trade filters; click the ProQuote logo to return to the dashboard.
 
@@ -1490,6 +1534,7 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
+  useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
 
   // Spend by trade (from approved orders)
   const spendByTrade = (() => {
@@ -1609,6 +1654,8 @@ ${settings.company||""}`;
       {q:"How does the markup calculator work?", a:"Enter a markup percentage in the analysis results and ProQuote shows each supplier's cost alongside the marked-up sell price - useful for quoting the end client. Set it back to 0 for pure cost."},
       {q:"Can I export or print a comparison?", a:"Yes. The Print button in the analysis results opens a print-friendly layout - use your browser's Save as PDF to share it."},
       {q:"How are quotes collapsed?", a:"Each supplier result is a collapsible card. Tap the header to expand the full matched-items table and analysis; tap again to collapse. The first card opens automatically after analysis."},
+      {q:"Are my past quote analyses saved?", a:"Yes. Every analysis you run is saved on the Quotes page as a collapsible card, just like orders. After you approve a quote, that analysis moves into the saved list automatically. You can re-open any past analysis in full at any time, and they survive a page refresh."},
+      {q:"How do I know a quote has been entered?", a:"When you paste a supplier's quote into their box, it turns green and shows a Quote entered badge, so you can see at a glance which suppliers you have quotes from."},
     ]},
     {cat:"Orders", qs:[
       {q:"How do I send a PO to a supplier?", a:"In the Orders page, find the order and tap Send order. An email is sent to the supplier with the full PO details."},
@@ -2612,6 +2659,7 @@ Rules:
             {/* Main area */}
             <div style={{flex:1,minWidth:0}}>
               {!activeReq?(
+                <>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
                   <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16}}>Select a request to start analysing quotes</div>
                   {requests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
@@ -2628,6 +2676,74 @@ Rules:
                     </div>
                   )}
                 </div>
+
+                {savedQuoteSets.length>0&&(
+                  <div style={{marginTop:20}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Saved quote analyses</div>
+                    {savedQuoteSets.map(qs=>{
+                      const isOpen = expandedSet===qs.id;
+                      const approved = qs.analyses.find(a=>a._id===qs.approvedId);
+                      const best = approved || [...qs.analyses].sort((a,b)=>(b.completeness||0)-(a.completeness||0))[0];
+                      return(
+                        <div key={qs.id} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:isOpen?"var(--shadow-md)":"var(--shadow-sm)",transition:"box-shadow 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
+                          <div onClick={()=>setExpandedSet(isOpen?null:qs.id)} style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isOpen?"var(--green-mint)":"var(--bg-card-solid)"}}>
+                            <div style={{width:40,height:40,borderRadius:11,background:qs.status==="approved"?"linear-gradient(135deg,#1E9E63,#15824F)":"var(--bg-subtle2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              <Icon name={qs.status==="approved"?"check_circle":"search"} size={20} color={qs.status==="approved"?"white":"var(--text-secondary)"}/>
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+                                <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{qs.jobRef||qs.reqId}</span>
+                                {qs.status==="approved"
+                                  ?<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Approved</span>
+                                  :<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>Analysed</span>}
+                              </div>
+                              <div style={{fontSize:11,color:"var(--text-secondary)"}}>{qs.trade} &middot; {qs.analyses.length} quote{qs.analyses.length!==1?"s":""}{best?` &middot; best: ${best.supplierName}`:""}</div>
+                            </div>
+                            <div style={{textAlign:"right",flexShrink:0}}>
+                              {best&&<div style={{fontSize:13,fontWeight:800,color:"var(--green-dark)"}}>{best.estimatedTotal||""}</div>}
+                              <div style={{fontSize:10,color:"var(--text-muted)"}}>{new Date(qs.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</div>
+                            </div>
+                            <Icon name={isOpen?"check":"arrow_right"} size={16} color="var(--text-tertiary)" style={{transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.2s"}}/>
+                          </div>
+                          {isOpen&&(
+                            <div style={{padding:"4px 18px 18px",borderTop:"1px solid var(--border)",animation:"cardExpand 0.25s ease"}}>
+                              {qs.analyses.map((qa,qi)=>{
+                                const isApproved = qa._id===qs.approvedId;
+                                const score = qa.completeness||0;
+                                const ringColor = score>=80?"#15824F":score>=50?"#C77D2E":"#D14343";
+                                return(
+                                  <div key={qa._id||qi} style={{marginTop:12,padding:"14px 16px",background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:isApproved?"1px solid var(--green-dark)":"1px solid var(--border)"}}>
+                                    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:qa.verdict?8:0}}>
+                                      <div style={{width:38,height:38,borderRadius:"50%",flexShrink:0,background:`conic-gradient(${ringColor} ${score*3.6}deg,var(--bg-subtle2) 0)`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                        <div style={{width:28,height:28,borderRadius:"50%",background:"var(--bg-card-solid)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:ringColor}}>{score}%</div>
+                                      </div>
+                                      <div style={{flex:1,minWidth:0}}>
+                                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                          <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
+                                          {isApproved&&<span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Approved</span>}
+                                        </div>
+                                        {qa.verdict&&<div style={{fontSize:11,color:"var(--text-secondary)",marginTop:1}}>{qa.verdict}</div>}
+                                      </div>
+                                      <div style={{fontSize:14,fontWeight:800,color:"var(--green-dark)",flexShrink:0}}>{qa.estimatedTotal||""}</div>
+                                    </div>
+                                    {qa.missing&&qa.missing.length>0&&(
+                                      <div style={{fontSize:11,color:"var(--amber)",marginTop:6}}>Missing: {qa.missing.slice(0,4).map(m=>typeof m==="string"?m:m.description).join(", ")}</div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              <div style={{display:"flex",gap:8,marginTop:14}}>
+                                <button onClick={()=>{const req=requests.find(r=>r.id===qs.reqId); if(req){setActiveReq(req);setAllAnalyses(qs.analyses);setApprovedQuoteId(qs.approvedId);setExpandedQuote(qs.analyses[0]?._id);} else {showToast("Original request no longer available","warn");}}} style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Re-open full analysis</button>
+                                <button onClick={()=>{ if(confirm("Remove this saved analysis?")){ setSavedQuoteSets(prev=>prev.filter(s=>s.id!==qs.id)); showToast("Saved analysis removed"); } }} style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",background:"transparent",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Remove</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                </>
               ):(
                 <div>
                   {/* Request header */}
@@ -2665,7 +2781,7 @@ Rules:
                                 <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{sup.name}</div>
                                 <div style={{fontSize:11,color:"var(--text-tertiary)"}}>{sup.email}</div>
                               </div>
-                              {sup.saved&&<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Entered</span>}
+                              {(sup.saved||(sup.quote&&sup.quote.trim()))&&<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)",display:"inline-flex",alignItems:"center",gap:4}}><Icon name="check" size={10} color="var(--green-deep)" strokeWidth={3}/>Quote entered</span>}
                             </div>
                             <textarea
                               value={sup.quote||""}
@@ -3637,6 +3753,7 @@ Rules:
                     {label:"Company name",k:"company",ph:"e.g. Initial Mechanical"},
                     {label:"Contact name",k:"contactName",ph:"e.g. Andy Hammill"},
                     {label:"From email",k:"fromEmail",ph:"e.g. quotes@company.co.uk"},
+                    {label:"Phone",k:"phone",ph:"e.g. 0115 123 4567"},
                     {label:"Site address",k:"siteAddress",ph:"e.g. 52 Stretton Street"},
                   ].map(f=>(
                     <div key={f.k}>
