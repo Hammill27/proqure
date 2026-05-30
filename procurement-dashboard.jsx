@@ -1908,7 +1908,7 @@ Rules:
 
   // -- Render --
   return (
-    <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif",background:"var(--bg-page)",minHeight:"100vh",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}}>
+    <div data-theme={darkMode?"dark":"light"} style={{fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif",background:"var(--bg-page)",color:"var(--text-primary)",transition:"background 0.3s,color 0.2s"}} className="app-shell">
       {/* Ambient background layer - subtle brand shape + soft orbs */}
       <div className="app-bg-layer">
         <div className="orb orb-green" style={{width:560,height:560,top:-180,right:-120}}/>
@@ -2008,6 +2008,8 @@ Rules:
       [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder { color:var(--text-muted)!important; }
       *{box-sizing:border-box;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
       html,body{margin:0;padding:0;background:var(--bg-page);min-height:100%}
+      .app-shell{min-height:100vh;min-height:100dvh}
+      .main-content{min-height:100vh;min-height:100dvh}
       body{letter-spacing:-0.011em}
       .app-bg-layer{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
       .app-bg-layer .orb{position:absolute;border-radius:50%;filter:blur(60px)}
@@ -2122,7 +2124,7 @@ Rules:
       )}
 
       {/* Main content */}
-      <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",minHeight:"100vh",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1}}>
+      <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1}} className="main-content">
 
         {view==="dashboard"&&(
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:1000}}>
@@ -3665,7 +3667,7 @@ Rules:
                 {/* Chat header */}
                 <div style={{display:"flex",alignItems:"center",gap:12,padding:"16px 18px",borderBottom:"1px solid var(--border)",background:"linear-gradient(135deg,#1E9E63,#15824F)"}}>
                   <div style={{position:"relative",flexShrink:0}}>
-                    <div style={{width:40,height:40,borderRadius:"50%",background:"rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}}>
+                    <div style={{width:40,height:40,borderRadius:"50%",background:"rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)"}}>
                       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><circle cx="8.5" cy="14.5" r="1.5" fill="white"/><circle cx="15.5" cy="14.5" r="1.5" fill="white"/></svg>
                     </div>
                     {settings.openRouterKey&&<div style={{position:"absolute",bottom:0,right:0,width:11,height:11,borderRadius:"50%",background:"#4ADE80",border:"2px solid #15824F"}}/>}
