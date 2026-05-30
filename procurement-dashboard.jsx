@@ -1445,7 +1445,9 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 
 SETUP: AI features need a free OpenRouter API key (openrouter.ai). Email sending needs a Resend API key and verified domain (resend.com). Both go in Settings. Data is stored in the browser; cloud sync is on the roadmap.
 
-If asked about something ProQuote does not do, say so clearly and mention if it is on the roadmap. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
+GETTING STARTED: brand-new users see a Welcome card on the dashboard with three quick steps (create a request, send to suppliers, analyse & approve) and a button to begin; it disappears once they have any activity. The app works on any device - on a phone it switches to a mobile layout with a bottom tab bar, and you can use the camera to scan documents on site. It has a polished dark and light mode, keyboard shortcuts, smooth animations, and is built to feel calm and professional throughout.
+
+If asked about something ProQuote does not do, say so clearly and mention if it is on the roadmap. The current roadmap (not yet built): cloud backend for cross-device sync and multi-user team accounts; team roles and permissions; an inbound email inbox that auto-captures supplier replies; automatic deadline and expiry reminders; company-wide spend reporting; and accounting integrations (Xero/Sage). If asked when these arrive, say they are planned for future updates. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
     const history = [...helpMessages,userMsg].slice(-10).map(m=>({role:m.role,content:m.content}));
     try {
       const raw = await callAI(sys, question, history);
@@ -1680,8 +1682,11 @@ ${settings.company||""}`;
       {q:"What is ProQuote?", a:"ProQuote is an AI-powered procurement platform for trades contractors. It automates the full workflow from creating a material request on site through to sending a PO to your supplier."},
       {q:"What trades are supported?", a:"Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas - with General as a catch-all."},
       {q:"Does it work on mobile?", a:"Yes. ProQuote is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar and voice input."},
+      {q:"I am brand new - where do I start?", a:"When you first open ProQuote with no data, the dashboard shows a Welcome card with three quick steps: create a request, send it to suppliers, then analyse and approve the quotes. Tap 'Create your first request' to begin. The card disappears once you have any activity."},
+      {q:"Which browsers and phones are supported?", a:"All modern browsers - Chrome, Safari, Firefox and Edge - on both desktop and mobile, including iPhone and Android. The layout adapts automatically to your screen, and on phones you can use the camera to scan documents on site."},
+      {q:"Does it respect accessibility settings?", a:"Yes. The app supports a dark and light mode, has clear keyboard focus indicators, and honours your device's reduced-motion setting so animations are minimised if you prefer."},
       {q:"Do I need to install anything?", a:"No. ProQuote runs entirely in a browser - Chrome, Safari, Edge. No app download needed."},
-      {q:"Where is my data stored?", a:"All data is stored in your browser and persists across sessions. Cloud backup is coming soon."},
+      {q:"Where is my data stored?", a:"All data is currently stored securely in your browser and persists across sessions. A cloud backend - giving cross-device sync, team accounts and automatic backup - is the next major item on the roadmap."},
     ]},
     {cat:"Creating requests", qs:[
       {q:"How does voice input work?", a:"Tap the microphone button on the new request page and speak your list naturally. The app transcribes in real time and the AI structures it into a clean itemised list."},
@@ -1731,6 +1736,7 @@ ${settings.company||""}`;
       {q:"Why are emails not sending?", a:"Email sending requires a Resend API key and a verified domain. Go to resend.com, create a free account, verify your domain, and add the key in Settings."},
       {q:"My data disappeared after refreshing.", a:"Data is stored in your browser. Clearing browser data will remove it. Full cloud sync is on the roadmap."},
       {q:"Can I export my data?", a:"Yes. The Library, Orders and All Requests pages each have a CSV export button, so you can back up or share your data anytime."},
+      {q:"What features are coming next?", a:"The biggest upcoming step is a cloud backend, which unlocks cross-device access, multi-user team accounts with roles, and automatic backup. After that: an inbound email inbox that auto-captures supplier replies, automatic deadline and expiry reminders, company-wide spend reporting, and accounting integrations like Xero and Sage."},
     ]},
   ];
 
