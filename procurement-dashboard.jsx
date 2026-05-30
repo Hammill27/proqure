@@ -789,6 +789,28 @@ const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
 );
 
+// Gently counts a number up from 0 on mount (respects reduced-motion)
+const CountUp = ({ value, duration=650 }) => {
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    const target = Number(value) || 0;
+    if (target === 0) { setDisplay(0); return; }
+    const reduce = typeof window!=="undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { setDisplay(target); return; }
+    let raf, start;
+    const tick = (t) => {
+      if (!start) start = t;
+      const p = Math.min((t - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setDisplay(Math.round(eased * target));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value, duration]);
+  return <>{display}</>;
+};
+
 // --- Icon system: clean line icons (replaces emojis) -------------------------
 const ICON_PATHS = {
   clipboard: '<path d="M9 2h6a1 1 0 011 1v1h1a2 2 0 012 2v13a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2h1V3a1 1 0 011-1z"/>',
@@ -2035,6 +2057,13 @@ Rules:
       ::-webkit-scrollbar-thumb{background:var(--bg-subtle2);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
       ::-webkit-scrollbar-thumb:hover{background:var(--text-muted);background-clip:padding-box}
       ::selection{background:var(--green-light);color:var(--green-deep)}
+      html{scroll-behavior:smooth}
+      .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+      *:focus{outline:none}
+      *:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:4px}
+      @media (prefers-reduced-motion: reduce){
+        *,*::before,*::after{animation-duration:0.001ms!important;animation-iteration-count:1!important;transition-duration:0.001ms!important;scroll-behavior:auto!important}
+      }
       input,textarea,select{font-family:'Plus Jakarta Sans','Helvetica Neue',sans-serif!important}
       input:focus,textarea:focus,select:focus{border-color:var(--green-dark)!important;box-shadow:0 0 0 3px var(--green-light)!important}
       input,textarea,select{transition:border-color 0.15s,box-shadow 0.15s}
@@ -2265,7 +2294,7 @@ Rules:
                       <div key={s.trade}>
                         <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                           <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{s.trade}</span>
-                          <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>£{s.total.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                          <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}} className="num">£{s.total.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
                         </div>
                         <div style={{height:10,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
                           <div style={{height:"100%",width:`${pct}%`,background:col,borderRadius:99,transition:"width 0.5s cubic-bezier(0.16,1,0.3,1)"}}/>
@@ -2292,7 +2321,7 @@ Rules:
                     <div style={{display:"flex"}}><Icon name={s.icon} size={20} color="white"/></div>
                     <div style={{fontSize:9,fontWeight:700,color:s.value>0?s.color:"var(--text-muted)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{s.value>0?"active":"empty"}</div>
                   </div>
-                  <div style={{fontSize:isMobile?26:36,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:4}}>{s.value}</div>
+                  <div style={{fontSize:isMobile?26:36,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:4}} className="num"><CountUp value={s.value}/></div>
                   <div style={{fontSize:11,color:"var(--text-secondary)",fontWeight:500}}>{s.label}</div>
                   <div style={{position:"absolute",bottom:0,left:0,right:0,height:2,background:s.value>0?s.grad:"transparent",borderRadius:"0 0 var(--radius-md) var(--radius-md)"}}/>
                 </button>
@@ -2802,7 +2831,7 @@ Rules:
                               <div style={{fontSize:12,color:"var(--text-secondary)"}}>{qs.trade} &middot; {qs.analyses.length} quote{qs.analyses.length!==1?"s":""}{best?` &middot; best: ${best.supplierName} (${best.completeness||0}%)`:""}</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
-                              {best&&best.estimatedTotal&&<div style={{fontSize:14,fontWeight:800,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}}>{best.estimatedTotal}</div>}
+                              {best&&best.estimatedTotal&&<div style={{fontSize:14,fontWeight:800,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}} className="num">{best.estimatedTotal}</div>}
                               <div style={{fontSize:10,color:"var(--text-muted)"}}>{new Date(qs.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"})}</div>
                             </div>
                             <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0,fontSize:12,fontWeight:600,color:"var(--green-dark)"}}>
