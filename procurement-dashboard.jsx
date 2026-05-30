@@ -2703,7 +2703,7 @@ Rules:
                               {best&&<div style={{fontSize:13,fontWeight:800,color:"var(--green-dark)"}}>{best.estimatedTotal||""}</div>}
                               <div style={{fontSize:10,color:"var(--text-muted)"}}>{new Date(qs.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</div>
                             </div>
-                            <Icon name={isOpen?"check":"arrow_right"} size={16} color="var(--text-tertiary)" style={{transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.2s"}}/>
+                            <Icon name="arrow_right" size={16} color="var(--text-tertiary)" style={{transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.2s",flexShrink:0}}/>
                           </div>
                           {isOpen&&(
                             <div style={{padding:"4px 18px 18px",borderTop:"1px solid var(--border)",animation:"cardExpand 0.25s ease"}}>
@@ -2732,9 +2732,11 @@ Rules:
                                   </div>
                                 );
                               })}
-                              <div style={{display:"flex",gap:8,marginTop:14}}>
-                                <button onClick={()=>{const req=requests.find(r=>r.id===qs.reqId); if(req){setActiveReq(req);setAllAnalyses(qs.analyses);setApprovedQuoteId(qs.approvedId);setExpandedQuote(qs.analyses[0]?._id);} else {showToast("Original request no longer available","warn");}}} style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Re-open full analysis</button>
-                                <button onClick={()=>{ if(confirm("Remove this saved analysis?")){ setSavedQuoteSets(prev=>prev.filter(s=>s.id!==qs.id)); showToast("Saved analysis removed"); } }} style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",background:"transparent",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Remove</button>
+                              <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"flex-end"}}>
+                                {qs.status!=="approved"&&(
+                                  <button onClick={()=>{const req=requests.find(r=>r.id===qs.reqId); if(req){setActiveReq(req);setAllAnalyses(qs.analyses);setApprovedQuoteId(qs.approvedId);setExpandedQuote(qs.analyses[0]?._id);window.scrollTo({top:0,behavior:"smooth"});} else {showToast("This request has been completed or removed","warn");}}} style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Continue working on this</button>
+                                )}
+                                <button onClick={()=>{ if(confirm("Remove this saved analysis? The order and library records are kept.")){ setSavedQuoteSets(prev=>prev.filter(s=>s.id!==qs.id)); if(expandedSet===qs.id)setExpandedSet(null); showToast("Saved analysis removed"); } }} style={{fontSize:12,fontWeight:600,color:"var(--text-tertiary)",background:"transparent",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Remove from list</button>
                               </div>
                             </div>
                           )}
@@ -2746,6 +2748,10 @@ Rules:
                 </>
               ):(
                 <div>
+                  {/* Back to saved list */}
+                  <button onClick={()=>{setActiveReq(null);setAllAnalyses([]);setExpandedQuote(null);}} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"transparent",border:"none",cursor:"pointer",padding:"4px 0",marginBottom:12}}>
+                    <Icon name="arrow_right" size={15} style={{transform:"rotate(180deg)"}}/> Back to all quotes
+                  </button>
                   {/* Request header */}
                   <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 22px",marginBottom:16,boxShadow:"var(--shadow-sm)"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
