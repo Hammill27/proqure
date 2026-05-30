@@ -816,6 +816,9 @@ const ICON_PATHS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7 1.1V21a2 2 0 01-4 0v-.1A1.6 1.6 0 007.3 19l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00-1.1-2.7H3a2 2 0 010-4h.1A1.6 1.6 0 004.8 7.3l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9.4a1.6 1.6 0 001-1.5V3a2 2 0 014 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9.4a1.6 1.6 0 001.5 1H21a2 2 0 010 4h-.1a1.6 1.6 0 00-1.5 1z"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
   clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  truck: '<path d="M1 3h13v10H1z"/><path d="M14 6h4l3 3v4h-7z"/><circle cx="6" cy="17" r="2"/><circle cx="17" cy="17" r="2"/>',
+  store: '<path d="M3 9l1.5-5h15L21 9M4 9v10a1 1 0 001 1h14a1 1 0 001-1V9M3 9h18"/>',
+  question: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 0c0 1.7-2.5 2-2.5 4"/><line x1="12" y1="17" x2="12" y2="17.01"/>',
   file_check: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 13"/>',
 };
 const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) => {
@@ -1292,6 +1295,13 @@ export default function App() {
 
   async function handleApprovePO(qa) {
     const analysis = qa || quoteAnalysis;
+    // Guard: prevent approving a second quote for a request that already has an approved PO
+    const existingApproved = activeReq && (activeReq.status==="approved" || orders.some(o=>o.reqId===activeReq.id));
+    if (existingApproved) {
+      showToast("This request already has an approved PO. Undo it first to choose a different supplier.","warn");
+      setApproveConfirm(null);
+      return;
+    }
     const sup = suppliers.find(s=>s.name===analysis?.supplierName) || suppliers[0];
     const poNum = `PO-${Date.now().toString().slice(-6)}`;
     const dateStr = new Date().toLocaleDateString("en-GB");
@@ -1363,6 +1373,9 @@ export default function App() {
     // Remove from orders
     setOrders(p=>p.filter(o=>o.reqId!==activeReq.id||o.status==="sent"||o.status==="acknowledged"));
     setActiveReq(prev=>({...prev,status:"received"}));
+    // Revert the saved quote set back to "analysed" so it no longer shows as approved
+    setSavedQuoteSets(prev=>prev.map(s=>s.reqId===activeReq.id?{...s,status:"analysed",approvedId:null}:s));
+    logActivity("Approval undone",`PO approval reversed for ${activeReq.jobRef||activeReq.id}`,{entity:"quote",reqId:activeReq.id});
     showToast("Approval undone - you can re-approve a different quote");
   }
 
@@ -2588,6 +2601,7 @@ Rules:
                     {[{val:"direct",label:"To site",icon:"truck"},{val:"alternative",label:"Alt. address",icon:"building"},{val:"collect",label:"Collect",icon:"store"},{val:"tbc",label:"TBC",icon:"question"}].map(opt=>(
                       <label key={opt.val} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"10px 8px",borderRadius:"var(--radius-sm)",border:`1.5px solid ${deliveryMethod===opt.val?"var(--green-dark)":"var(--border)"}`,background:deliveryMethod===opt.val?"var(--green-mint)":"var(--bg-card-solid)",cursor:"pointer",textAlign:"center"}}>
                         <input type="radio" name="dm" value={opt.val} checked={deliveryMethod===opt.val} onChange={()=>setDeliveryMethod(opt.val)} style={{accentColor:"var(--green-dark)"}}/>
+                        <Icon name={opt.icon} size={18} color={deliveryMethod===opt.val?"var(--green-dark)":"var(--text-tertiary)"}/>
                         <span style={{fontSize:11,fontWeight:deliveryMethod===opt.val?600:400,color:"var(--text-primary)"}}>{opt.label}</span>
                       </label>
                     ))}
