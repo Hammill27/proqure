@@ -1528,6 +1528,13 @@ ${settings.company||""}`;
   const [reqSearch, setReqSearch] = useState("");
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; localStorage.setItem("piq_dark",n?"1":"0"); return n; });
+  // Keep the page (html/body) background in sync with the theme so no white edges show
+  useEffect(() => {
+    const pageBg = darkMode ? "#16161A" : "#FAFAF8";
+    document.documentElement.style.background = pageBg;
+    document.body.style.background = pageBg;
+    document.body.style.margin = "0";
+  }, [darkMode]);
 
   // -- Persist to localStorage --
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
@@ -1980,6 +1987,7 @@ Rules:
       }
       [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder { color:var(--text-muted)!important; }
       *{box-sizing:border-box;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+      html,body{margin:0;padding:0;background:var(--bg-page);min-height:100%}
       body{letter-spacing:-0.011em}
       .app-bg-layer{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
       .app-bg-layer .orb{position:absolute;border-radius:50%;filter:blur(60px)}
