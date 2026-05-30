@@ -860,7 +860,6 @@ export default function App() {
   const [requests, setRequests] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_requests")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
-  const [expandedSet, setExpandedSet] = useState(null);
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
 
   // Wizard state
@@ -2681,65 +2680,45 @@ Rules:
                   <div style={{marginTop:20}}>
                     <div style={{fontSize:13,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Saved quote analyses</div>
                     {savedQuoteSets.map(qs=>{
-                      const isOpen = expandedSet===qs.id;
                       const approved = qs.analyses.find(a=>a._id===qs.approvedId);
                       const best = approved || [...qs.analyses].sort((a,b)=>(b.completeness||0)-(a.completeness||0))[0];
+                      const openFull = ()=>{
+                        const req = requests.find(r=>r.id===qs.reqId) || {
+                          id:qs.reqId, jobRef:qs.jobRef, trade:qs.trade, site:qs.site||"",
+                          items:qs.items||[], sentTo:[], status:qs.status==="approved"?"approved":"received"
+                        };
+                        setActiveReq(req);
+                        setAllAnalyses(qs.analyses);
+                        setApprovedQuoteId(qs.approvedId);
+                        setExpandedQuote(qs.analyses[0]?._id||null);
+                        setQuoteViewMode("cards");
+                        window.scrollTo({top:0,behavior:"smooth"});
+                      };
                       return(
-                        <div key={qs.id} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:isOpen?"var(--shadow-md)":"var(--shadow-sm)",transition:"box-shadow 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
-                          <div onClick={()=>setExpandedSet(isOpen?null:qs.id)} style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isOpen?"var(--green-mint)":"var(--bg-card-solid)"}}>
-                            <div style={{width:40,height:40,borderRadius:11,background:qs.status==="approved"?"linear-gradient(135deg,#1E9E63,#15824F)":"var(--bg-subtle2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                              <Icon name={qs.status==="approved"?"check_circle":"search"} size={20} color={qs.status==="approved"?"white":"var(--text-secondary)"}/>
+                        <div key={qs.id} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:"var(--shadow-sm)",transition:"box-shadow 0.2s,transform 0.2s"}}
+                          onMouseEnter={e=>{e.currentTarget.style.boxShadow="var(--shadow-md)";e.currentTarget.style.transform="translateY(-1px)";}}
+                          onMouseLeave={e=>{e.currentTarget.style.boxShadow="var(--shadow-sm)";e.currentTarget.style.transform="translateY(0)";}}>
+                          <div onClick={openFull} style={{padding:"15px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer"}}>
+                            <div style={{width:42,height:42,borderRadius:12,background:qs.status==="approved"?"linear-gradient(135deg,#1E9E63,#15824F)":"var(--bg-subtle2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              <Icon name={qs.status==="approved"?"check_circle":"search"} size={21} color={qs.status==="approved"?"white":"var(--text-secondary)"}/>
                             </div>
                             <div style={{flex:1,minWidth:0}}>
-                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
-                                <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{qs.jobRef||qs.reqId}</span>
+                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
+                                <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{qs.jobRef||qs.reqId}</span>
                                 {qs.status==="approved"
                                   ?<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Approved</span>
                                   :<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>Analysed</span>}
                               </div>
-                              <div style={{fontSize:11,color:"var(--text-secondary)"}}>{qs.trade} &middot; {qs.analyses.length} quote{qs.analyses.length!==1?"s":""}{best?` &middot; best: ${best.supplierName}`:""}</div>
+                              <div style={{fontSize:12,color:"var(--text-secondary)"}}>{qs.trade} &middot; {qs.analyses.length} quote{qs.analyses.length!==1?"s":""}{best?` &middot; best: ${best.supplierName} (${best.completeness||0}%)`:""}</div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
-                              {best&&<div style={{fontSize:13,fontWeight:800,color:"var(--green-dark)"}}>{best.estimatedTotal||""}</div>}
-                              <div style={{fontSize:10,color:"var(--text-muted)"}}>{new Date(qs.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</div>
+                              {best&&best.estimatedTotal&&<div style={{fontSize:14,fontWeight:800,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}}>{best.estimatedTotal}</div>}
+                              <div style={{fontSize:10,color:"var(--text-muted)"}}>{new Date(qs.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"})}</div>
                             </div>
-                            <Icon name="arrow_right" size={16} color="var(--text-tertiary)" style={{transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.2s",flexShrink:0}}/>
+                            <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0,fontSize:12,fontWeight:600,color:"var(--green-dark)"}}>
+                              View<Icon name="arrow_right" size={15} color="var(--green-dark)"/>
+                            </div>
                           </div>
-                          {isOpen&&(
-                            <div style={{padding:"4px 18px 18px",borderTop:"1px solid var(--border)",animation:"cardExpand 0.25s ease"}}>
-                              {qs.analyses.map((qa,qi)=>{
-                                const isApproved = qa._id===qs.approvedId;
-                                const score = qa.completeness||0;
-                                const ringColor = score>=80?"#15824F":score>=50?"#C77D2E":"#D14343";
-                                return(
-                                  <div key={qa._id||qi} style={{marginTop:12,padding:"14px 16px",background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:isApproved?"1px solid var(--green-dark)":"1px solid var(--border)"}}>
-                                    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:qa.verdict?8:0}}>
-                                      <div style={{width:38,height:38,borderRadius:"50%",flexShrink:0,background:`conic-gradient(${ringColor} ${score*3.6}deg,var(--bg-subtle2) 0)`,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                        <div style={{width:28,height:28,borderRadius:"50%",background:"var(--bg-card-solid)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:ringColor}}>{score}%</div>
-                                      </div>
-                                      <div style={{flex:1,minWidth:0}}>
-                                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                                          <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
-                                          {isApproved&&<span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Approved</span>}
-                                        </div>
-                                        {qa.verdict&&<div style={{fontSize:11,color:"var(--text-secondary)",marginTop:1}}>{qa.verdict}</div>}
-                                      </div>
-                                      <div style={{fontSize:14,fontWeight:800,color:"var(--green-dark)",flexShrink:0}}>{qa.estimatedTotal||""}</div>
-                                    </div>
-                                    {qa.missing&&qa.missing.length>0&&(
-                                      <div style={{fontSize:11,color:"var(--amber)",marginTop:6}}>Missing: {qa.missing.slice(0,4).map(m=>typeof m==="string"?m:m.description).join(", ")}</div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                              <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"flex-end"}}>
-                                {qs.status!=="approved"&&(
-                                  <button onClick={()=>{const req=requests.find(r=>r.id===qs.reqId); if(req){setActiveReq(req);setAllAnalyses(qs.analyses);setApprovedQuoteId(qs.approvedId);setExpandedQuote(qs.analyses[0]?._id);window.scrollTo({top:0,behavior:"smooth"});} else {showToast("This request has been completed or removed","warn");}}} style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Continue working on this</button>
-                                )}
-                                <button onClick={()=>{ if(confirm("Remove this saved analysis? The order and library records are kept.")){ setSavedQuoteSets(prev=>prev.filter(s=>s.id!==qs.id)); if(expandedSet===qs.id)setExpandedSet(null); showToast("Saved analysis removed"); } }} style={{fontSize:12,fontWeight:600,color:"var(--text-tertiary)",background:"transparent",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer"}}>Remove from list</button>
-                              </div>
-                            </div>
-                          )}
                         </div>
                       );
                     })}
@@ -3435,7 +3414,20 @@ Rules:
                         <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
                         <span style={{fontSize:12,color:"var(--text-secondary)"}}>{quotesIn}/{quotesTotal}</span>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                          <button onClick={()=>{setActiveReq(r);setView("quotes");}} style={{fontSize:11,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View</button>
+                          <button onClick={()=>{
+                            const savedSet = savedQuoteSets.find(s=>s.reqId===r.id);
+                            if(savedSet){
+                              setActiveReq(r);
+                              setAllAnalyses(savedSet.analyses);
+                              setApprovedQuoteId(savedSet.approvedId);
+                              setExpandedQuote(savedSet.analyses[0]?._id||null);
+                              setQuoteViewMode("cards");
+                            } else {
+                              setActiveReq(r);
+                              setAllAnalyses([]);
+                            }
+                            setView("quotes");
+                          }} style={{fontSize:11,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View</button>
                           <button onClick={()=>handleDuplicate(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
                           <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
                           <button onClick={()=>setActivityModal(r)} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
