@@ -551,7 +551,28 @@ async function readFileForExtraction(file) {
 }
 
 // --- Email via Vercel serverless function (no CORS) --------------------------
-async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail) {
+// Build a branded HTML email from a plain-text body + optional logo
+function buildEmailHtml(bodyText, settings) {
+  const logo = settings.logoBase64
+    ? `<img src="${settings.logoBase64}" alt="${settings.company||"Company"}" style="max-height:56px;max-width:200px;display:block;margin-bottom:16px"/>`
+    : `<div style="font-size:20px;font-weight:700;color:#15824F;margin-bottom:16px">${settings.company||"ProQuote"}</div>`;
+  const safeBody = (bodyText||"")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/\n/g,"<br/>");
+  const footer = settings.poNotes ? `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #EAE9E3;font-size:12px;color:#908F86">${settings.poNotes.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</div>` : "";
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#FAFAF8">
+    <div style="max-width:600px;margin:0 auto;padding:32px 24px;font-family:'Helvetica Neue',Arial,sans-serif">
+      <div style="background:#FFFFFF;border:1px solid #EAE9E3;border-radius:16px;padding:28px 32px">
+        ${logo}
+        <div style="font-size:14px;line-height:1.7;color:#1A1A17">${safeBody}</div>
+        ${footer}
+      </div>
+      <div style="text-align:center;margin-top:16px;font-size:11px;color:#C4C3BA">Sent via ProQuote${settings.company?` on behalf of ${settings.company}`:""}</div>
+    </div>
+  </body></html>`;
+}
+
+async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settings={}) {
   const results = [];
   for (const s of suppliers) {
     try {
@@ -562,7 +583,8 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail) {
           from: fromEmail||"andy@initialmechanical.co.uk",
           to:   [s.email],
           subject,
-          text: body
+          text: body,
+          html: buildEmailHtml(body, settings)
         })
       });
       const d = await res.json();
@@ -747,6 +769,19 @@ export default function App() {
   const [suppliers, setSuppliers] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_suppliers")||"null")||DEFAULT_SUPPLIERS; } catch { return DEFAULT_SUPPLIERS; }
   });
+  // Global activity logger — records everything across the app
+  const logActivity = (action, detail, meta={}) => {
+    const entry = {
+      id: `ACT-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
+      ts: new Date().toISOString(),
+      action, detail,
+      user: settings.contactName || "You",
+      ...meta
+    };
+    setActivityLog(prev => [entry, ...prev].slice(0,500));
+    return entry;
+  };
+
   const saveSettings = (patch) => {
     const next = {...settings,...patch}; setSettings(next);
     try {
@@ -765,6 +800,7 @@ export default function App() {
   // Requests
   const [requests, setRequests] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_requests")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
+  const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
 
   // Wizard state
   const [step,     setStep]     = useState(1);
@@ -865,6 +901,7 @@ export default function App() {
         activity:[...(o.activity||[]),entry]
       }:o));
       showToast(`Confirmation attached - order marked as Confirmed`);
+      logActivity("Confirmation uploaded",`${doc.label} attached - order confirmed`,{entity:"order"});
     };
     reader.readAsDataURL(file);
   }
@@ -913,20 +950,16 @@ export default function App() {
 
   // Supplier form
   const [newSup, setNewSup] = useState({name:"",email:"",categories:""});
+  const [quickSup, setQuickSup] = useState({name:"",email:""});
+  const [showQuickSup, setShowQuickSup] = useState(false);
 
   // Voice
-  const [autoParseAfterVoice, setAutoParseAfterVoice] = useState(false);
   const { listening, supported:voiceOk, start:micStart, stop:micStop } = useSpeechRecognition({
     onTranscript: t => setInterim(t),
     onFinal:      t => {
-      setRawInput(p => {
-        const updated = (p + t).trim();
-        // Auto-parse when engineer stops speaking (if key is set)
-        if (settings.openRouterKey && updated.length > 10) {
-          setAutoParseAfterVoice(true);
-        }
-        return updated + " ";
-      });
+      // Just append the transcribed text to the box - let the user review and edit.
+      // They tap "Parse with AI" themselves when ready.
+      setRawInput(p => (p + t).trim() + " ");
       setInterim("");
     }
   });
@@ -940,15 +973,18 @@ export default function App() {
     approved: requests.filter(r=>r.status==="approved").length,
   };
 
-  const filteredSup = suppliers.filter(s=>s.categories.some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
+  const filteredSup = suppliers.filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
 
-  function logActivity(reqId, action, detail="") {
+  function logToRequest(reqId, action, detail="") {
     const entry = { ts: new Date().toISOString(), action, detail, user: settings.contactName||"You" };
     setRequests(p=>p.map(r=>r.id===reqId ? {...r, activity:[...(r.activity||[]), entry]} : r));
+    // Also record in the global activity log
+    const reqObj = requests.find(r=>r.id===reqId);
+    logActivity(action, detail, { reqId, jobRef: reqObj?.jobRef||"", entity:"request" });
   }
 
   function handleDelete(id) {
-    logActivity(id, "Deleted", "Request permanently deleted");
+    logToRequest(id, "Deleted", "Request permanently deleted");
     setRequests(p=>p.filter(r=>r.id!==id));
     if (activeReq?.id===id) setActiveReq(null);
     setDeleteConfirm(null);
@@ -960,7 +996,7 @@ export default function App() {
     const changes = [];
     if (editForm.jobRef!==r.jobRef) changes.push(`Job ref: ${r.jobRef} > ${editForm.jobRef}`);
     if (editForm.site!==r.site)     changes.push(`Site: ${r.site} > ${editForm.site}`);
-    if (editForm.status!==r.status) changes.push(`Status: ${STATUS[r.status].label} > ${STATUS[editForm.status].label}`);
+    if (editForm.status!==r.status) changes.push(`Status: ${(STATUS[r.status]||{label:r.status}).label} > ${(STATUS[editForm.status]||{label:editForm.status}).label}`);
     if (editForm.notes!==r.notes)   changes.push(`Notes updated`);
     const entry = { ts: new Date().toISOString(), action:"Edited", detail: changes.join(" · ")||"No changes", user: settings.contactName||"You" };
     setRequests(p=>p.map(r=>r.id===editModal.id
@@ -980,6 +1016,11 @@ export default function App() {
     setLoading(true); setLoadMsg("Parsing your material list...");
     try {
       const data = await parseMaterialList(rawInput);
+      if (!data || !data.items || data.items.length===0) {
+        showToast("Couldn't read a clear list from that. Try rephrasing, or edit the text and parse again.","warn");
+        setLoading(false);
+        return;
+      }
       setParsed(data);
       if (data?.jobRef && !jobRef) setJobRef(data.jobRef);
       // Duplicate detection
@@ -989,7 +1030,7 @@ export default function App() {
       }
       // Auto-select all suppliers matching the current trade
       const matchingIds = suppliers
-        .filter(s=>s.categories.some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()))
+        .filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()))
         .map(s=>s.id);
       setSelSup(matchingIds);
       setStep(2);
@@ -1000,13 +1041,6 @@ export default function App() {
   }
 
 
-  // Auto-parse after voice or scan — fires when listening stops or scan sets flag
-  useEffect(() => {
-    if (!listening && autoParseAfterVoice && rawInput.trim().length > 10 && !loading) {
-      setAutoParseAfterVoice(false);
-      setTimeout(() => handleParse(), 400);
-    }
-  }, [listening, autoParseAfterVoice, rawInput, loading]);
   async function handleGenRFQ() {
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Generating RFQ email...");
@@ -1023,7 +1057,7 @@ export default function App() {
     setLoading(true); setLoadMsg("Sending to suppliers...");
     const toSend = suppliers.filter(s=>selSup.includes(s.id));
     const subject = `Request for Quotation - ${jobRef||parsed?.jobRef||"TBC"}`;
-    const results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev");
+    const results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev", settings);
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
     if (ok > 0) {
@@ -1045,6 +1079,7 @@ export default function App() {
       setRequests(p=>[r,...p]);
       // Show success state briefly then redirect and reset
       showToast(`v ${ok} RFQ${ok!==1?"s":""} sent - ${newId} saved`);
+      logActivity("RFQ sent",`${newId} (${jobRef||"job"}) sent to ${ok} supplier${ok!==1?"s":""}`,{entity:"request",reqId:newId,jobRef});
       setTimeout(()=>{
         // Full reset - ready for next request
         setStep(1);
@@ -1068,7 +1103,7 @@ export default function App() {
     setDeliveryDate(r.deliveryDate||"");
     setAltAddress(r.altAddress||"");
     // Rebuild raw input from items
-    const raw = r.items.map(i=>`${i.quantity} ${i.unit} of ${i.description}${i.notes?` (${i.notes})`:""}`).join(", ");
+    const raw = (r.items||[]).map(i=>`${i.quantity} ${i.unit} of ${i.description}${i.notes?` (${i.notes})`:""}`).join(", ");
     setRawInput(raw);
     setParsed({ items: r.items.map(i=>({...i})), jobRef:r.jobRef+" (copy)", urgency:"standard" });
     setStep(2);
@@ -1089,7 +1124,7 @@ export default function App() {
 
   function handleLoadTemplate(t) {
     setTrade(t.trade||"Plumbing");
-    setParsed({ items:t.items.map(i=>({...i})), jobRef:"", urgency:"standard" });
+    setParsed({ items:(t.items||[]).map(i=>({...i})), jobRef:"", urgency:"standard" });
     setRawInput(t.items.map(i=>`${i.quantity} ${i.unit} of ${i.description}`).join(", "));
     // Increment usage count
     saveTemplates(templates.map(tp=>tp.id===t.id?{...tp,usageCount:(tp.usageCount||0)+1,lastUsed:new Date().toISOString().split("T")[0]}:tp));
@@ -1102,7 +1137,7 @@ export default function App() {
     setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
     setRfqEmail(""); setEmailRes(null); setSelSup([]);
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
-    setInterim(""); setScanning(false); setAutoParseAfterVoice(false);
+    setInterim(""); setScanning(false);
     setLoading(false); setLoadMsg("");
     setAllAnalyses([]); setExpandedQuote(null);
   }
@@ -1143,7 +1178,7 @@ export default function App() {
 
   async function handleAnalyseAll() {
     if (!activeReq) return;
-    const toAnalyse = (activeReq.sentTo||[]).filter(s=>s.saved&&s.quote?.trim());
+    const toAnalyse = (activeReq.sentTo||[]).filter(s=>s.quote&&s.quote.trim());
     if (!toAnalyse.length) return;
     if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
@@ -1159,6 +1194,8 @@ export default function App() {
     }
     setAllAnalyses(results);
     setApprovedQuoteId(null);
+    if (results.length>0) setExpandedQuote(results[0]._id);
+    logActivity("Quotes analysed",`${results.length} supplier quote${results.length!==1?"s":""} analysed for ${activeReq.jobRef}`,{entity:"quote",reqId:activeReq.id,jobRef:activeReq.jobRef});
     if (results.length>0) {
       const entry = { ts:new Date().toISOString(), action:"AI analysis run", detail:`${results.length} quote${results.length!==1?"s":""} analysed`, user:settings.contactName||"You" };
       setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"received",activity:[...(r.activity||[]),entry]}:r));
@@ -1205,6 +1242,7 @@ export default function App() {
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
     setActiveReq(prev=>({...prev,status:"approved",documents:[...(prev.documents||[]),doc]}));
     setApprovedQuoteId(qa?._id||null);
+    logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});
 
     // Remove other quotes from the analysis view
     setAllAnalyses([qa]);
@@ -1214,6 +1252,7 @@ export default function App() {
       jobRef:activeReq?.jobRef||"TBC", site:activeReq?.site||"", trade:activeReq?.trade||"",
       supplier:sup?.name||"", supplierEmail:sup?.email||"",
       items:activeReq?.items||[], analysis, poNumber:poNum, poDate:dateStr,
+      estimatedTotal: analysis?.estimatedTotal || analysis?.subtotal || "",
       status:"pending-send", type:"generated", label:`PO ${poNum}`,
       deliveryMethod:activeReq?.deliveryMethod||"", deliveryDate:activeReq?.deliveryDate||"",
       notes:"",
@@ -1249,7 +1288,42 @@ export default function App() {
     setHelpMessages(p=>[...p,userMsg]);
     setHelpInput("");
     setHelpLoading(true);
-    const sys = `You are the ProQuote AI assistant. ProQuote is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use the platform. Be concise, friendly, and accurate. Key features: voice material requests, AI parsing of lists, RFQ email generation, supplier management, AI quote analysis and comparison, purchase order generation, orders tracking with status timeline (Ready>Sent>Confirmed>Delivered), quote library with supplier scorecards, request templates by trade, dark/light theme, mobile app with bottom nav. If asked about something not in ProQuote, say so clearly. Answer in 2-4 sentences unless a longer explanation is genuinely needed.`;
+    const sys = `You are the ProQuote AI assistant. ProQuote is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use every part of the platform. Be concise, friendly, and accurate.
+
+COMPLETE FEATURE REFERENCE (you can explain how to do all of these):
+
+CREATING A REQUEST (New request page, 3 steps):
+- Three ways to add materials: (1) Voice - tap the mic and speak your list, it transcribes live then you review and tap Parse with AI; (2) Type the list in plain English and tap Parse with AI; (3) Scan a document - photograph a scope of works, delivery note or handwritten list, or upload a PDF/image; vision AI extracts the items. (4) Import a materials spreadsheet - upload a CSV with description/quantity/unit columns and it imports instantly with no AI needed.
+- After parsing, every item is editable (description, quantity, unit, category). Add/remove rows freely.
+- Step 2: set an optional response deadline, choose delivery method, add request notes, set an optional budget for the job, and pick which suppliers to send to (filtered by trade). You can also load a saved template.
+- Duplicate detection warns if a similar request for the same job already exists.
+- Step 3: review the auto-generated RFQ email and send it to all selected suppliers at once.
+
+QUOTE ANALYSIS:
+- Pick a request from the left, paste each supplier's quote into their box, or drag/drop a PDF/Excel file to auto-extract.
+- Tap Analyse all quotes. The AI runs a 3-stage analysis (extract, match to your request, synthesise) plus a JavaScript maths-validation layer that recalculates every total.
+- Each supplier gets a completeness score (shown in a circular ring), a verdict, estimated total, matched items, missing items, warnings and positives. Cards are collapsible - tap to expand.
+- Two views via the Cards/Compare toggle: Cards (one expandable card per supplier) and Compare (side-by-side table, one row per item, lowest price badged automatically).
+- Markup calculator: enter a markup % to see cost vs sell price for each supplier.
+- Print/Export button opens a print-friendly view (use Save as PDF).
+- Approve a quote to generate a PO; all other quotes auto-save to the library. Undo is available.
+
+ORDERS (status timeline: Ready to send > Sent > Confirmed > Delivered):
+- Cards are collapsible - tap any order to expand it.
+- Send the PO email to the supplier (needs a Resend key). Add a note and expected delivery date first.
+- When Sent: either tap Mark as confirmed / Mark as delivered manually, OR upload the supplier's confirmation document. Both options work.
+- Filter by All / Active / Delivered. Export orders to CSV.
+
+LIBRARY: every non-approved quote auto-saves here with a 30-day expiry (configurable). Shows supplier scorecards (avg completeness), price history, expiry badges. Export to CSV.
+
+SUPPLIERS: manage supplier accounts; each shows RFQ count, response rate, average completeness and PO win count.
+
+ACTIVITY LOG: the dashboard shows a Recent activity feed logging every action across the app - RFQs sent, quotes analysed, POs approved, orders sent/confirmed/delivered, confirmations uploaded, suppliers added, library changes. Each request also keeps its own activity history (open it from All Requests). DASHBOARD CHARTS: a Spend by trade bar chart and budget-vs-actual progress bars appear automatically once you have orders/budgets. SUPPLIER QUICK-ADD: on the request wizard supplier step you can add a new supplier inline with '+ Add a supplier' without leaving the page. LIBRARY: you can remove a quote from the library with the bin icon on its row.
+OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D dashboard, S settings, H help, ? shows the shortcut list); company branding (logo upload, default PO terms, quote validity days) in Settings - the logo appears on HTML emails; budget tracking on the dashboard (actual vs budget per job); quote expiry warnings on the dashboard; CSV export on library/orders/requests; All Requests has search and status/trade filters; click the ProQuote logo to return to the dashboard.
+
+SETUP: AI features need a free OpenRouter API key (openrouter.ai). Email sending needs a Resend API key and verified domain (resend.com). Both go in Settings. Data is stored in the browser; cloud sync is on the roadmap.
+
+If asked about something ProQuote does not do, say so clearly and mention if it is on the roadmap. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
     const history = [...helpMessages,userMsg].slice(-10).map(m=>({role:m.role,content:m.content}));
     try {
       const raw = await callAI(sys, question, history);
@@ -1268,6 +1342,7 @@ export default function App() {
     setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),entry]}:r));
     setActiveReq(prev=>({...prev,documents:[...(prev.documents||[]),doc]}));
     showToast(`Draft saved for ${sup.name}`);
+    logActivity("Draft PO saved",`Draft for ${sup.name} - ${activeReq?.jobRef||""}`,{entity:"quote",jobRef:activeReq?.jobRef});
   }
 
   function handleUploadDocument(file) {
@@ -1327,8 +1402,7 @@ export default function App() {
     const note = orderNote[order.id]||"";
     const subject = `Purchase Order ${order.poNumber} - ${order.jobRef}`;
     const deliveryLabels = { direct:"Delivery direct to site", alternative:"Delivery to alternative address", collect:"Collection from branch", tbc:"Delivery method to be confirmed" };
-    const logoLine = settings.logoBase64 ? `** ${settings.company||"ProQuote"} **\n` : "";
-    const body = `${logoLine}Dear ${order.supplier},
+    const body = `Dear ${order.supplier},
 
 Please find attached Purchase Order ${order.poNumber} for job reference ${order.jobRef}.
 
@@ -1349,13 +1423,14 @@ ${settings.company||""}`;
       const res = await fetch("/api/send-email", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ from:settings.fromEmail||"onboarding@resend.dev", to:[order.supplierEmail], subject, text:body })
+        body: JSON.stringify({ from:settings.fromEmail||"onboarding@resend.dev", to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) })
       });
       const d = await res.json();
       if (res.ok && d.success) {
         const entry = { ts:new Date().toISOString(), action:"Order sent to supplier", detail:`Sent to ${order.supplierEmail}`, user:settings.contactName||"You" };
         setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"sent",sentAt:new Date().toISOString(),activity:[...(o.activity||[]),entry]}:o));
         showToast(`Order sent to ${order.supplier}`);
+        logActivity("Order sent",`${order.poNumber} emailed to ${order.supplier}`,{entity:"order",jobRef:order.jobRef});
       } else {
         showToast(`Send failed: ${d.error||"Unknown error"}`,"warn");
       }
@@ -1377,6 +1452,18 @@ ${settings.company||""}`;
   // -- Persist to localStorage --
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
+  useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
+
+  // Spend by trade (from approved orders)
+  const spendByTrade = (() => {
+    const map = {};
+    orders.forEach(o => {
+      const v = parseFloat(String(o.analysis?.estimatedTotal||o.estimatedTotal||"").replace(/[^0-9.]/g,""));
+      if (!isNaN(v) && v>0) { const t=o.trade||"Other"; map[t]=(map[t]||0)+v; }
+    });
+    return Object.entries(map).map(([trade,total])=>({trade,total})).sort((a,b)=>b.total-a.total);
+  })();
+  const maxTradeSpend = spendByTrade.length ? Math.max(...spendByTrade.map(s=>s.total)) : 0;
 
   // Budget tracking: jobs with a budget set, vs actual approved spend
   const budgetJobs = requests
@@ -1384,7 +1471,7 @@ ${settings.company||""}`;
     .map(r => {
       const jobOrders = orders.filter(o => o.jobRef === r.jobRef);
       const actual = jobOrders.reduce((sum,o) => {
-        const v = parseFloat(String(o.estimatedTotal||"").replace(/[^0-9.]/g,""));
+        const v = parseFloat(String(o.estimatedTotal||o.analysis?.estimatedTotal||"").replace(/[^0-9.]/g,""));
         return sum + (isNaN(v)?0:v);
       }, 0);
       const budget = parseFloat(r.budget);
@@ -1471,22 +1558,47 @@ ${settings.company||""}`;
       {q:"Can I edit the parsed list?", a:"Yes. Every field is editable - description, quantity, unit, category, and notes. You can also add or remove items before sending."},
       {q:"What are templates?", a:"Templates save common material lists for instant reuse. They are grouped by trade so you can find them quickly."},
       {q:"Can I set a response deadline?", a:"Yes. In Step 2 there is a response deadline date picker. The date appears in the RFQ email and as a countdown on the dashboard."},
+      {q:"How do I scan a document or photo?", a:"On Step 1, tap 'Take a photo or upload a document'. On mobile this opens your camera. Photograph a scope of works, delivery note or handwritten list - the vision AI reads it and extracts the items. PDFs and images both work. Review the extracted list, then tap Parse with AI."},
+      {q:"Can I import a spreadsheet?", a:"Yes. On Step 1 use 'Import a materials spreadsheet'. Upload a CSV with description, quantity and unit columns and it imports instantly - no AI needed, no waiting. It auto-detects your column headers."},
+      {q:"Can I set a budget for a job?", a:"Yes. On Step 2 there is an optional Budget field. Once set, the dashboard shows a progress bar of actual approved spend against your budget, turning amber near the limit and red if you go over."},
+      {q:"What are request notes?", a:"An optional field on Step 2 for access instructions or special requirements. Notes are stored with the request and shown in the All Requests list."},
     ]},
     {cat:"Quotes & analysis", qs:[
       {q:"How do I enter a supplier quote?", a:"In Quote Analysis, each supplier has their own box. Paste their email response or upload their PDF/Excel file. The AI reads documents automatically."},
       {q:"What does the AI check?", a:"The AI checks every item for price, stock availability, quantity accuracy, carriage charges, lead times, discounts, and alternatives. It produces a completeness score and recommends the best supplier."},
       {q:"What happens to other quotes when I approve one?", a:"All other quotes are automatically saved to the Quote Library in the background."},
       {q:"Can I undo an approval?", a:"Yes. The approved quote card shows an Undo button that reverses everything."},
+      {q:"What is the Compare view?", a:"In the analysis results, the Cards/Compare toggle switches to a side-by-side table - one row per requested item, one column per supplier, so you can scan who is cheapest on each line. The lowest total is badged automatically. You can approve straight from the table."},
+      {q:"How does the markup calculator work?", a:"Enter a markup percentage in the analysis results and ProQuote shows each supplier's cost alongside the marked-up sell price - useful for quoting the end client. Set it back to 0 for pure cost."},
+      {q:"Can I export or print a comparison?", a:"Yes. The Print button in the analysis results opens a print-friendly layout - use your browser's Save as PDF to share it."},
+      {q:"How are quotes collapsed?", a:"Each supplier result is a collapsible card. Tap the header to expand the full matched-items table and analysis; tap again to collapse. The first card opens automatically after analysis."},
     ]},
     {cat:"Orders", qs:[
       {q:"How do I send a PO to a supplier?", a:"In the Orders page, find the order and tap Send order. An email is sent to the supplier with the full PO details."},
       {q:"How do I attach a supplier confirmation?", a:"When an order is Sent, the right panel shows an upload area. Upload the confirmation PDF and the order moves to Confirmed automatically."},
       {q:"Do completed orders disappear?", a:"No. All orders stay permanently. Use the All / Active / Delivered filter to manage what you see."},
+      {q:"Can I mark an order complete without a document?", a:"Yes. When an order is Sent, you can tap Mark as confirmed or Mark as delivered directly, or upload the supplier's confirmation document - whichever suits. Both options are available."},
+      {q:"Can I export my orders?", a:"Yes. The Orders page has an Export button that downloads all orders as a CSV, including PO numbers, suppliers, totals, delivery dates and item lists."},
+      {q:"Are order cards collapsible?", a:"Yes. Tap any order row to expand its full detail - status timeline, items and actions. Tap again to collapse."},
+    ]},
+    {cat:"Library, branding & shortcuts", qs:[
+      {q:"What is the Quote Library?", a:"Every quote that is not approved is automatically saved to the Library when you generate a PO. It builds a price history per supplier, shows supplier scorecards (average completeness), and flags quotes that are expiring. Export it all to CSV."},
+      {q:"Do quotes expire?", a:"Yes. Saved quotes expire after 30 days by default (configurable in Settings). The dashboard warns you when quotes are within 5 days of expiry, and the library shows a colour-coded expiry badge on each."},
+      {q:"How do I add my company logo?", a:"In Settings, under Company branding, upload your logo. It is automatically resized and appears at the top of the branded HTML emails sent to suppliers. You can also set default PO terms and the quote validity period there."},
+      {q:"Do emails include my branding?", a:"Yes. RFQ and purchase order emails are sent as branded HTML with your logo (or company name) at the top, your message in a clean card, and your PO terms in the footer."},
+      {q:"What keyboard shortcuts are there?", a:"Press N for new request, Q for quotes, O for orders, D for dashboard, S for settings, H for help, and ? to show the full shortcuts panel. Esc closes any open dialog."},
+      {q:"How do I get back to the dashboard quickly?", a:"Click the ProQuote logo at the top of the sidebar, press D, or use the dashboard tab."},
+      {q:"Can I search and filter my requests?", a:"Yes. The All Requests page has a search box plus status and trade filters, so you can quickly find any job. The filtered list can be exported to CSV."},
+      {q:"Where can I see everything that has happened?", a:"The dashboard has a Recent activity feed that logs every action across the app - RFQs sent, quotes analysed, POs approved, orders sent, confirmed and delivered, confirmations uploaded, suppliers added and library changes. Each individual request also keeps its own activity history, which you can open from the All Requests page."},
+      {q:"What charts does the dashboard show?", a:"Once you have approved orders, a Spend by trade bar chart appears. If you set budgets on jobs, budget-vs-actual progress bars show too, turning amber near the limit and red if you go over."},
+      {q:"Can I add a supplier while creating a request?", a:"Yes. On the supplier step of the request wizard, tap '+ Add a supplier' to add one inline - it is saved and auto-selected without leaving the page."},
+      {q:"Can I remove a quote from the library?", a:"Yes. Each row in the Quote Library has a bin icon to remove that quote. The removal is logged in the activity feed."},
     ]},
     {cat:"Settings & troubleshooting", qs:[
       {q:"Why is the AI not working?", a:"You need a free OpenRouter API key. Go to openrouter.ai, sign up, copy your key, and paste it in Settings."},
       {q:"Why are emails not sending?", a:"Email sending requires a Resend API key and a verified domain. Go to resend.com, create a free account, verify your domain, and add the key in Settings."},
-      {q:"My data disappeared after refreshing.", a:"Data is stored in your browser. Clearing browser data will remove it. Full cloud sync is coming soon."},
+      {q:"My data disappeared after refreshing.", a:"Data is stored in your browser. Clearing browser data will remove it. Full cloud sync is on the roadmap."},
+      {q:"Can I export my data?", a:"Yes. The Library, Orders and All Requests pages each have a CSV export button, so you can back up or share your data anytime."},
     ]},
   ];
 
@@ -1511,6 +1623,56 @@ ${settings.company||""}`;
       showToast(`Could not read ${file.name}: ${err.message}`,"warn");
     }
     setFileExtracting(prev=>({...prev,[si]:false}));
+  };
+
+  // Bulk CSV/spreadsheet import — parses a materials list directly into items (no AI needed)
+  const importMaterialsCSV = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) { showToast("That file looks empty","warn"); return; }
+      // Detect header row — look for description/qty/quantity/unit keywords
+      const first = lines[0].toLowerCase();
+      const hasHeader = /desc|item|material|qty|quantity|unit/.test(first);
+      // Split a CSV line respecting simple quoted values
+      const splitLine = (line) => {
+        const out = []; let cur = ""; let inQ = false;
+        for (const ch of line) {
+          if (ch === '"') inQ = !inQ;
+          else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
+          else cur += ch;
+        }
+        out.push(cur);
+        return out.map(s => s.trim().replace(/^"|"$/g, ""));
+      };
+      // Map header positions if present
+      let descIdx = 0, qtyIdx = 1, unitIdx = 2;
+      if (hasHeader) {
+        const cols = splitLine(first);
+        cols.forEach((col, i) => {
+          if (/desc|item|material/.test(col)) descIdx = i;
+          else if (/qty|quantity|amount/.test(col)) qtyIdx = i;
+          else if (/unit|measure/.test(col)) unitIdx = i;
+        });
+      }
+      const dataLines = hasHeader ? lines.slice(1) : lines;
+      const items = dataLines.map(line => {
+        const cols = splitLine(line);
+        return {
+          description: cols[descIdx] || cols[0] || "",
+          quantity: cols[qtyIdx] || "1",
+          unit: cols[unitIdx] || "no",
+          category: ""
+        };
+      }).filter(it => it.description);
+      if (!items.length) { showToast("Couldn't find any items in that file","warn"); return; }
+      setParsed({ jobRef: jobRef||"", trade, items });
+      setStep(2);
+      showToast(`Imported ${items.length} item${items.length!==1?"s":""} from spreadsheet`);
+    } catch(err) {
+      showToast("Could not read that file: " + err.message, "warn");
+    }
   };
 
   // Document scan handler
@@ -1540,8 +1702,8 @@ ${settings.company||""}`;
         const text = await file.text();
         setRawInput(text);
         setScanning(false);
-        showToast("Document loaded — parsing now...");
-        setTimeout(() => handleParse(), 300);
+        setLoading(false);
+        showToast("Document loaded. Review, then tap Parse with AI");
         return;
       }
 
@@ -1599,9 +1761,8 @@ Rules:
       setRawInput(extracted.trim());
       setScanning(false);
       setLoading(false);
-      showToast(`Document scanned - ${extracted.trim().split("\n").filter(Boolean).length} items found`);
-      // Auto-parse after scan
-      setTimeout(() => handleParse(), 400);
+      const itemCount = extracted.trim().split("\n").filter(Boolean).length;
+      showToast(`Document scanned - ${itemCount} item${itemCount!==1?"s":""} found. Review, then Parse with AI`);
 
     } catch(err) {
       setScanning(false);
@@ -1730,6 +1891,7 @@ Rules:
       @keyframes cardExpand{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
       @keyframes scaleIn{from{opacity:0;transform:scale(0.97)}to{opacity:1;transform:scale(1)}}
       @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+      @keyframes typingDot{0%,60%,100%{opacity:0.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
       .stagger-in{animation:slideUp 0.5s cubic-bezier(0.16,1,0.3,1) backwards}
       ::-webkit-scrollbar{width:8px;height:8px}
       ::-webkit-scrollbar-track{background:transparent}
@@ -1767,11 +1929,11 @@ Rules:
       {/* Desktop sidebar */}
       {!isMobile&&(
         <div style={{position:"fixed",top:0,left:0,bottom:0,width:240,background:"var(--sidebar-bg)",display:"flex",flexDirection:"column",zIndex:100,borderRight:"1px solid var(--sidebar-border)"}}>
-          <div style={{padding:"20px 20px 16px",borderBottom:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:32,height:32,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <div onClick={()=>setView("dashboard")} style={{padding:"20px 20px 16px",borderBottom:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} title="Back to dashboard">
+            <div style={{width:32,height:32,background:"linear-gradient(135deg,#1E9E63,#15824F)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
             </div>
-            <span style={{fontSize:16,fontWeight:800,color:"white",fontFamily:"inherit"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></span>
+            <span style={{fontSize:16,fontWeight:800,color:"white",fontFamily:"inherit"}}>Pro<span style={{color:"#1E9E63"}}>Quote</span></span>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"12px 12px"}}>
             <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
@@ -1812,14 +1974,14 @@ Rules:
       {isMobile&&(
         <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"var(--topbar-bg)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,borderBottom:"1px solid var(--sidebar-border)"}}>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:28,height:28,background:"linear-gradient(135deg,#22C55E,#16A34A)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{width:28,height:28,background:"linear-gradient(135deg,#1E9E63,#15824F)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
               <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
             </div>
-            <span style={{fontSize:15,fontWeight:800,color:"white"}}>Pro<span style={{color:"#22C55E"}}>Quote</span></span>
+            <span style={{fontSize:15,fontWeight:800,color:"white"}}>Pro<span style={{color:"#1E9E63"}}>Quote</span></span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <button onClick={toggleDark} style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"white",fontSize:13}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{darkMode?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>:<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}</svg></button>
-            <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"#22C55E":"#F59E0B"}}/>
+            <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"var(--green)":"var(--amber)"}}/>
           </div>
         </div>
       )}
@@ -1842,7 +2004,7 @@ Rules:
                     {requests.length===0?"Welcome to ProQuote - create your first material request to get started":`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.`}
                   </p>
                 </div>
-                <button onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",flexShrink:0}}>
+                <button onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",flexShrink:0}}>
                   + New request
                 </button>
               </div>
@@ -1918,13 +2080,38 @@ Rules:
               </div>
             )}
 
+            {/* Spend by trade chart */}
+            {spendByTrade.length>0&&(
+              <div className="stagger-in" style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"20px 24px",marginBottom:20,boxShadow:"var(--shadow-sm)",animationDelay:"0.15s"}}>
+                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:16}}>Spend by trade</div>
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  {spendByTrade.map(s=>{
+                    const pct = maxTradeSpend>0?Math.round(s.total/maxTradeSpend*100):0;
+                    const tradeColors={Plumbing:"#5B5BD6",HVAC:"#1E9E63",Electrical:"#C77D2E",Mechanical:"#7E6DD6",Ventilation:"#2BB873",Gas:"#D14343",Other:"#908F86"};
+                    const col=tradeColors[s.trade]||"#5B5BD6";
+                    return(
+                      <div key={s.trade}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                          <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{s.trade}</span>
+                          <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>£{s.total.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                        </div>
+                        <div style={{height:10,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${pct}%`,background:col,borderRadius:99,transition:"width 0.5s cubic-bezier(0.16,1,0.3,1)"}}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Stat cards */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
               {[
-                {label:"Total requests",  value:stats.total,    color:"#6366F1", grad:"linear-gradient(135deg,#6366F1,#4338CA)", icon:"📋", nav:()=>setView("requests")},
-                {label:"Awaiting quotes", value:stats.pending,  color:"#F59E0B", grad:"linear-gradient(135deg,#F59E0B,#D97706)", icon:"⏱️", nav:()=>setView("quotes")},
-                {label:"Quotes received", value:stats.received, color:"#8B5CF6", grad:"linear-gradient(135deg,#8B5CF6,#7C3AED)", icon:"📬", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
-                {label:"Approved POs",    value:stats.approved, color:"#22C55E", grad:"linear-gradient(135deg,#22C55E,#16A34A)", icon:"✅", nav:()=>setView("orders")},
+                {label:"Total requests",  value:stats.total,    color:"#5B5BD6", grad:"linear-gradient(135deg,#5B5BD6,#4A4AB8)", icon:"📋", nav:()=>setView("requests")},
+                {label:"Awaiting quotes", value:stats.pending,  color:"#C77D2E", grad:"linear-gradient(135deg,#C77D2E,#A8661F)", icon:"⏱️", nav:()=>setView("quotes")},
+                {label:"Quotes received", value:stats.received, color:"#7E6DD6", grad:"linear-gradient(135deg,#7E6DD6,#6B4FC4)", icon:"📬", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
+                {label:"Approved POs",    value:stats.approved, color:"#1E9E63", grad:"linear-gradient(135deg,#1E9E63,#15824F)", icon:"✅", nav:()=>setView("orders")},
               ].map((s,si)=>(
                 <button key={s.label} onClick={s.nav} className="stagger-in" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"16px 18px":"20px 24px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s",animationDelay:`${si*0.05}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 2px 4px rgba(26,26,23,0.04), 0 12px 28px ${s.color}1f`;e.currentTarget.style.transform="translateY(-3px)";}}
@@ -1943,10 +2130,10 @@ Rules:
             {/* Quick actions */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:isMobile?8:12,marginBottom:isMobile?18:24}}>
               {[
-                {label:"New request",  sub:"Voice or type",         icon:"🎤", action:()=>{setView("new");resetNewRequest();}, accent:"#6366F1"},
-                {label:"Analyse",      sub:"Compare quotes",        icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#8B5CF6"},
-                {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#22C55E"},
-                {label:"Suppliers",    sub:"Manage accounts",       icon:"🏢", action:()=>setView("suppliers"), accent:"#F59E0B"},
+                {label:"New request",  sub:"Voice or type",         icon:"🎤", action:()=>{setView("new");resetNewRequest();}, accent:"#5B5BD6"},
+                {label:"Analyse",      sub:"Compare quotes",        icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#7E6DD6"},
+                {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#1E9E63"},
+                {label:"Suppliers",    sub:"Manage accounts",       icon:"🏢", action:()=>setView("suppliers"), accent:"#C77D2E"},
               ].map((q,qi)=>(
                 <button key={q.label} onClick={q.action} className="stagger-in" style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"14px 16px":"18px 22px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:104,animationDelay:`${0.2+qi*0.04}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
@@ -1996,12 +2183,42 @@ Rules:
               </div>
             )}
 
+            {/* Recent activity feed */}
+            {activityLog.length>0&&(
+              <div className="stagger-in" style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",boxShadow:"var(--shadow-sm)",marginTop:20,animationDelay:"0.4s"}}>
+                <div style={{padding:"18px 24px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>Recent activity</div>
+                  <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{activityLog.length} event{activityLog.length!==1?"s":""}</span>
+                </div>
+                <div style={{maxHeight:340,overflowY:"auto"}}>
+                  {activityLog.slice(0,40).map((a,i)=>{
+                    const iconMap = {
+                      "RFQ sent":"📨","Quotes analysed":"🔍","PO approved & generated":"✅","Order sent":"📦","Order confirmed":"✓","Order delivered":"🏁","Confirmation uploaded":"📎","Draft PO saved":"📝","Deleted":"🗑️","Edited":"✏️","Approval undone":"↩️","Document attached":"📎","Supplier confirmation attached":"📎"};
+                    const icon = iconMap[a.action]||"•";
+                    const when = new Date(a.ts);
+                    const mins = Math.floor((Date.now()-when.getTime())/60000);
+                    const timeLabel = mins<1?"just now":mins<60?`${mins}m ago`:mins<1440?`${Math.floor(mins/60)}h ago`:when.toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+                    return(
+                      <div key={a.id||i} style={{display:"flex",gap:12,padding:"12px 24px",borderBottom:i<activityLog.slice(0,40).length-1?"1px solid var(--border)":"none",alignItems:"flex-start"}}>
+                        <div style={{width:30,height:30,borderRadius:8,background:"var(--bg-subtle)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>{icon}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{a.action}</div>
+                          <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis"}}>{a.detail}</div>
+                        </div>
+                        <div style={{fontSize:11,color:"var(--text-muted)",flexShrink:0,whiteSpace:"nowrap"}}>{timeLabel}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {requests.length===0&&(
               <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
                 <div style={{fontSize:36,marginBottom:16}}>🚀</div>
                 <div style={{fontSize:16,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>Ready to get started</div>
                 <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Create your first material request to start procuring with AI</div>
-                <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-md)",padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Create first request</button>
+                <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-md)",padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Create first request</button>
               </div>
             )}
           </div>
@@ -2051,7 +2268,7 @@ Rules:
                       ?<svg width="28" height="28" viewBox="0 0 24 24" fill="var(--red)" stroke="var(--red)" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                       :<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
                   <div style={{fontSize:14,fontWeight:600,color:listening?"var(--red)":"var(--green-deep)"}}>{listening?"Listening - tap to stop":"Tap to speak your material list"}</div>
-                  <div style={{fontSize:12,color:listening?"var(--red)":"var(--green-dark)",marginTop:4}}>{listening?"Speak clearly - AI will parse automatically when you stop":"Or type your list below"}</div>
+                  <div style={{fontSize:12,color:listening?"var(--red)":"var(--green-dark)",marginTop:4}}>{listening?"Speak now - your words appear below. Review, then tap Parse with AI":"Or type your list below"}</div>
                   {listening&&interim&&(
                     <div style={{fontSize:13,color:"var(--text-primary)",marginTop:10,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,fontStyle:"italic",border:"1px solid var(--border)"}}>"{interim}"</div>
                   )}
@@ -2064,7 +2281,7 @@ Rules:
                   <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Or scan a document</div>
                   <label style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",background:scanning?"var(--indigo-light)":"var(--bg-subtle)",border:scanning?"2px solid var(--indigo)":"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:scanning?"not-allowed":"pointer",transition:"all 0.2s"}}>
                     <input type="file" accept="image/*,.pdf,capture=camera" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
-                    <div style={{width:40,height:40,borderRadius:12,background:scanning?"var(--indigo)":"linear-gradient(135deg,#6366F1,#4338CA)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 4px 12px rgba(99,102,241,0.3)"}}>
+                    <div style={{width:40,height:40,borderRadius:12,background:scanning?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 4px 12px rgba(99,102,241,0.3)"}}>
                       {scanning
                         ?<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke="white"/></svg>
                         :<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -2081,11 +2298,26 @@ Rules:
                       </div>
                     )}
                   </label>
+
+                  {/* Bulk spreadsheet import */}
+                  <label style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",marginTop:10,background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
+                    <input type="file" accept=".csv,.txt,.tsv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])importMaterialsCSV(e.target.files[0]);e.target.value="";}}/>
+                    <div style={{width:40,height:40,borderRadius:12,background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 4px 12px rgba(30,158,99,0.25)"}}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+                    </div>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:2}}>Import a materials spreadsheet</div>
+                      <div style={{fontSize:11,color:"var(--text-tertiary)"}}>CSV with columns: description, quantity, unit · imports instantly, no AI needed</div>
+                    </div>
+                    <div style={{marginLeft:"auto",flexShrink:0}}>
+                      <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-dark)"}}>CSV</span>
+                    </div>
+                  </label>
                 </div>
 
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Load template</button>
-                  <Btn onClick={handleParse} disabled={!rawInput.trim()||loading||scanning} color="#16A34A">
+                  <Btn onClick={handleParse} disabled={!rawInput.trim()||loading||scanning} color="#15824F">
                     {loading||scanning?loadMsg||"Processing...":"Parse with AI"}
                   </Btn>
                 </div>
@@ -2225,15 +2457,38 @@ Rules:
                         <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{s.email}</span>
                       </label>
                     ))}
-                    {filteredSup.length===0&&<div style={{fontSize:13,color:"var(--text-tertiary)"}}>No {trade} suppliers - add them in Suppliers</div>}
+                    {filteredSup.length===0&&<div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:8}}>No {trade} suppliers yet - add one below</div>}
                   </div>
+                  {/* Quick-add supplier inline */}
+                  {showQuickSup?(
+                    <div style={{marginTop:12,padding:"14px 16px",background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)"}}>
+                      <div style={{fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:10}}>Add a new supplier</div>
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                        <input value={quickSup.name} onChange={e=>setQuickSup(p=>({...p,name:e.target.value}))} placeholder="Supplier name" style={{flex:"1 1 140px",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                        <input value={quickSup.email} onChange={e=>setQuickSup(p=>({...p,email:e.target.value}))} placeholder="quotes@supplier.co.uk" style={{flex:"1 1 180px",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                        <Btn onClick={()=>{
+                          if(!quickSup.name.trim()||!quickSup.email.trim()){showToast("Enter a name and email","warn");return;}
+                          const ns={id:`SUP-${Date.now()}`,name:quickSup.name.trim(),email:quickSup.email.trim(),categories:[trade]};
+                          const updated=[...suppliers,ns];
+                          saveSuppliers(updated);
+                          setSelSup(p=>[...p,ns.id]);
+                          logActivity("Supplier added",`${ns.name} added from request wizard`,{entity:"supplier"});
+                          setQuickSup({name:"",email:""});setShowQuickSup(false);
+                          showToast(`${ns.name} added and selected`);
+                        }} color="#15824F">Add</Btn>
+                        <Btn outline onClick={()=>{setShowQuickSup(false);setQuickSup({name:"",email:""});}}>Cancel</Btn>
+                      </div>
+                    </div>
+                  ):(
+                    <button onClick={()=>setShowQuickSup(true)} style={{marginTop:10,fontSize:13,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:600}}>+ Add a supplier</button>
+                  )}
                 </div>
 
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
                   <Btn outline onClick={()=>setStep(1)}>Back</Btn>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                     <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Save as template</button>
-                    <Btn onClick={handleGenRFQ} disabled={loading||selSup.length===0} color="#16A34A">
+                    <Btn onClick={handleGenRFQ} disabled={loading||selSup.length===0} color="#15824F">
                       {loading?loadMsg:"Generate RFQ email"}
                     </Btn>
                   </div>
@@ -2271,7 +2526,7 @@ Rules:
                       <Btn outline onClick={()=>setStep(2)}>Back</Btn>
                       <div style={{display:"flex",gap:10}}>
                         {settings.resendKey?(
-                          <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#16A34A">
+                          <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#15824F">
                             {loading?loadMsg:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""}`}
                           </Btn>
                         ):(
@@ -2323,7 +2578,7 @@ Rules:
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
                   <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16}}>Select a request to start analysing quotes</div>
                   {requests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
-                    <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
+                    <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
                   )}
                   {isMobile&&requests.filter(r=>r.status==="pending"||r.status==="received").length>0&&(
                     <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:400,margin:"0 auto"}}>
@@ -2368,7 +2623,7 @@ Rules:
                         {(activeReq.sentTo||[]).map((sup,si)=>(
                           <div key={sup.id||si} style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"16px 20px",boxShadow:"var(--shadow-sm)"}}>
                             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-                              <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,var(--indigo),#4338CA)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:14,flexShrink:0}}>{(sup.name||"?")[0]}</div>
+                              <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,var(--indigo),#4A4AB8)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:14,flexShrink:0}}>{(sup.name||"?")[0]}</div>
                               <div style={{flex:1}}>
                                 <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{sup.name}</div>
                                 <div style={{fontSize:11,color:"var(--text-tertiary)"}}>{sup.email}</div>
@@ -2378,8 +2633,9 @@ Rules:
                             <textarea
                               value={sup.quote||""}
                               onChange={e=>{
-                                setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value}:s)}:r));
-                                setActiveReq(p=>({...p,sentTo:p.sentTo.map((s,i)=>i===si?{...s,quote:e.target.value}:s)}));
+                                const val=e.target.value;
+                                setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:r.sentTo.map((s,i)=>i===si?{...s,quote:val,saved:!!val.trim()}:s)}:r));
+                                setActiveReq(p=>({...p,sentTo:p.sentTo.map((s,i)=>i===si?{...s,quote:val,saved:!!val.trim()}:s)}));
                               }}
                               placeholder={`Paste ${sup.name||"supplier"}'s quote here...`}
                               style={{width:"100%",height:90,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,marginBottom:8}}
@@ -2401,7 +2657,7 @@ Rules:
                         ))}
                       </div>
                       <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                        <Btn onClick={handleAnalyseAll} disabled={loading||!(activeReq.sentTo||[]).some(s=>s.quote?.trim())||!settings.openRouterKey} color="#16A34A">
+                        <Btn onClick={handleAnalyseAll} disabled={loading||!(activeReq.sentTo||[]).some(s=>s.quote&&s.quote.trim())||!settings.openRouterKey} color="#15824F">
                           {loading?<span>Analysing... {loadMsg}</span>:"Analyse all quotes"}
                         </Btn>
                         {!settings.openRouterKey&&<span style={{fontSize:12,color:"var(--amber)"}}>Add OpenRouter key in Settings to enable AI</span>}
@@ -2566,11 +2822,11 @@ Rules:
                                         <span style={{fontSize:13,fontWeight:700,color:"var(--green-dark)"}}>✅ PO Approved</span>
                                       </div>
                                       <Btn outline onClick={handleUndoApproval}>Undo</Btn>
-                                      <Btn onClick={()=>setView("orders")} color="#16A34A">View in Orders</Btn>
+                                      <Btn onClick={()=>setView("orders")} color="#15824F">View in Orders</Btn>
                                     </>
                                   ):(
                                     <>
-                                      <Btn onClick={()=>setApproveConfirm(qa)} color="#16A34A">Approve & generate PO</Btn>
+                                      <Btn onClick={()=>setApproveConfirm(qa)} color="#15824F">Approve & generate PO</Btn>
                                       <Btn outline onClick={()=>handleSaveDraftQuote(qa)}>Save to library</Btn>
                                     </>
                                   )}
@@ -2698,7 +2954,7 @@ Rules:
                 {orders.length>0&&(
                   <button onClick={()=>downloadCSV(`orders-${new Date().toISOString().split("T")[0]}.csv`, orders.map(o=>({
                     PO: o.poNumber, Status: o.status, Supplier: o.supplier||"", Job: o.jobRef||"", Site: o.site||"",
-                    EstimatedTotal: o.estimatedTotal||"", PODate: o.poDate||"",
+                    EstimatedTotal: o.estimatedTotal||o.analysis?.estimatedTotal||"", PODate: o.poDate||"",
                     ExpectedDelivery: o.expectedDelivery?new Date(o.expectedDelivery).toLocaleDateString("en-GB"):"",
                     Items: (o.items||[]).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join("; ")
                   })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:500}}>
@@ -2751,7 +3007,7 @@ Rules:
                       {/* Clickable header row */}
                       <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)}
                         style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isExpanded?"var(--green-mint)":"var(--bg-card-solid)",transition:"background 0.2s"}}>
-                        <div style={{width:38,height:38,borderRadius:10,background:order.status==="pending-send"?"linear-gradient(135deg,#22C55E,#16A34A)":order.status==="sent"?"linear-gradient(135deg,#6366F1,#4F46E5)":order.status==="confirmed"?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#4B5563,#374151)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                        <div style={{width:38,height:38,borderRadius:10,background:order.status==="pending-send"?"linear-gradient(135deg,#1E9E63,#15824F)":order.status==="sent"?"linear-gradient(135deg,#5B5BD6,#4A4AB8)":order.status==="confirmed"?"linear-gradient(135deg,#15824F,#047857)":"linear-gradient(135deg,#4B5563,#374151)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
                           {order.status==="pending-send"?"📦":order.status==="sent"?"✈️":order.status==="confirmed"?"✅":"🏁"}
                         </div>
                         <div style={{flex:1,minWidth:0}}>
@@ -2824,7 +3080,7 @@ Rules:
                                     <input type="date" value={expectedDelivery[order.id]||""} onChange={e=>setExpectedDelivery(p=>({...p,[order.id]:e.target.value}))} style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                                   </div>
                                   {settings.resendKey?(
-                                    <Btn onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id} color="#16A34A">
+                                    <Btn onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id} color="#15824F">
                                       {sendingOrder===order.id?<><Spinner/> Sending...</>:"Send order to supplier"}
                                     </Btn>
                                   ):(
@@ -2835,10 +3091,14 @@ Rules:
 
                               {order.status==="sent"&&(
                                 <div>
-                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>Upload the supplier confirmation to move this order to Confirmed.</div>
+                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>Mark this order as confirmed manually, or upload the supplier's confirmation document.</div>
+                                  <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                                    <Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",confirmedAt:new Date().toISOString()}:o));logActivity("Order confirmed",`${order.poNumber} (${order.supplier}) marked as confirmed`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as confirmed</Btn>
+                                    <Btn outline onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o));logActivity("Order delivered",`${order.poNumber} (${order.supplier}) marked as delivered`,{entity:"order",jobRef:order.jobRef});}}>Mark as delivered</Btn>
+                                  </div>
                                   <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer",marginBottom:10}}>
-                                    <input type="file" accept=".pdf,.jpg,.png,.doc,.docx" style={{display:"none"}} onChange={e=>handleOrderConfirmationUpload(order,e.target.files[0])}/>
-                                    <span style={{fontSize:13,color:"var(--text-secondary)"}}>Upload confirmation document</span>
+                                    <input type="file" accept=".pdf,.jpg,.png,.doc,.docx" style={{display:"none"}} onChange={e=>handleOrderConfirmationUpload(e.target.files[0],order.id)}/>
+                                    <span style={{fontSize:13,color:"var(--text-secondary)"}}>Or upload confirmation document</span>
                                     <span style={{fontSize:12,color:"var(--text-muted)"}}>PDF, Word, or image</span>
                                   </label>
                                   <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Expected delivery: {order.expectedDelivery?new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):"Not set"}</div>
@@ -2847,9 +3107,9 @@ Rules:
 
                               {order.status==="confirmed"&&(
                                 <div>
-                                  {order.confirmationDoc&&<div style={{fontSize:12,color:"var(--green-dark)",marginBottom:10}}>Confirmation received: {order.confirmationDoc}</div>}
+                                  {order.confirmationDoc&&<div style={{fontSize:12,color:"var(--green-dark)",marginBottom:10}}>Confirmation received: {order.confirmationDoc.label||"document"}</div>}
                                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12}}>Expected delivery: {order.expectedDelivery?new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):"Not set"}</div>
-                                  <Btn onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o))} color="#059669">Mark as delivered</Btn>
+                                  <Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o));logActivity("Order delivered",`${order.poNumber} (${order.supplier}) marked as delivered`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as delivered</Btn>
                                 </div>
                               )}
 
@@ -2890,7 +3150,7 @@ Rules:
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:3}}>{s.name}</div>
                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:8}}>{s.email}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
-                    {s.categories.map(cat=><Badge key={cat} bg="var(--green-light)" text="var(--green-deep)">{cat}</Badge>)}
+                    {(s.categories||[]).map(cat=><Badge key={cat} bg="var(--green-light)" text="var(--green-deep)">{cat}</Badge>)}
                   </div>
                   <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:4}}>
                   {requests.filter(r=>r.sentTo?.some(st=>st.id===s.id)).length>0&&(
@@ -2937,7 +3197,7 @@ Rules:
                   if(!newSup.name?.trim()||!newSup.email?.trim()){showToast("Name and email required","warn");return;}
                   const ns={id:Date.now(),name:newSup.name.trim(),email:newSup.email.trim(),categories:(newSup.categories||"General").split(",").map(s=>s.trim()).filter(Boolean)};
                   setSuppliers(p=>[...p,ns]);setNewSup({name:"",email:"",categories:""});showToast(`${ns.name} added`);
-                }} color="#16A34A">Add</Btn>
+                }} color="#15824F">Add</Btn>
               </div>
             </Card>
           </div>
@@ -2958,7 +3218,7 @@ Rules:
                     QuotesIn:(r.sentTo||[]).filter(s=>s.saved).length, Notes:r.notes||""
                   })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",fontWeight:500}}>⬇ Export</button>
                 )}
-                <Btn onClick={()=>{setView("new");resetNewRequest();}} color="#16A34A">+ New request</Btn>
+                <Btn onClick={()=>{setView("new");resetNewRequest();}} color="#15824F">+ New request</Btn>
               </div>
             </div>
 
@@ -3081,7 +3341,7 @@ Rules:
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                     <thead>
                       <tr style={{background:"var(--bg-subtle)"}}>
-                        {["Date","Supplier","Job","Trade","Completeness","Est. Total","Carriage","Expiry"].map(h=>(
+                        {["Date","Supplier","Job","Trade","Completeness","Est. Total","Carriage","Expiry",""].map(h=>(
                           <th key={h} style={{padding:"9px 12px",textAlign:"left",fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</th>
                         ))}
                       </tr>
@@ -3110,6 +3370,15 @@ Rules:
                               </span>
                             )}
                           </td>
+                          <td style={{padding:"9px 12px",textAlign:"right"}}>
+                            <button onClick={()=>{
+                              setQuoteLibrary(prev=>{const n=prev.filter(x=>x.id!==q.id);try{localStorage.setItem("piq_quote_library",JSON.stringify(n))}catch{};return n;});
+                              logActivity("Library quote removed",`${q.supplierName} - ${q.jobRef||""} removed from library`,{entity:"quote"});
+                              showToast("Quote removed from library");
+                            }} title="Remove from library" style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",padding:4,borderRadius:6,display:"inline-flex"}}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -3131,32 +3400,75 @@ Rules:
               </div>
             </div>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:20,marginBottom:28}}>
-              <Card>
-                <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:4}}>AI Assistant</div>
-                <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12}}>{settings.openRouterKey?"Online - ask me anything about ProQuote":"Add your OpenRouter key in Settings to use the AI assistant"}</div>
-                <div style={{maxHeight:260,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,marginBottom:12}}>
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+                {/* Chat header */}
+                <div style={{display:"flex",alignItems:"center",gap:12,padding:"16px 18px",borderBottom:"1px solid var(--border)",background:"linear-gradient(135deg,#1E9E63,#15824F)"}}>
+                  <div style={{position:"relative",flexShrink:0}}>
+                    <div style={{width:40,height:40,borderRadius:"50%",background:"rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}}>
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><circle cx="8.5" cy="14.5" r="1.5" fill="white"/><circle cx="15.5" cy="14.5" r="1.5" fill="white"/></svg>
+                    </div>
+                    {settings.openRouterKey&&<div style={{position:"absolute",bottom:0,right:0,width:11,height:11,borderRadius:"50%",background:"#4ADE80",border:"2px solid #15824F"}}/>}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:15,fontWeight:700,color:"white"}}>ProQuote Assistant</div>
+                    <div style={{fontSize:12,color:"rgba(255,255,255,0.85)",display:"flex",alignItems:"center",gap:5}}>
+                      {settings.openRouterKey?<><span style={{width:6,height:6,borderRadius:"50%",background:"#4ADE80",display:"inline-block"}}/>Online · ready to help</>:"Add OpenRouter key to chat"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Messages */}
+                <div style={{flex:1,minHeight:300,maxHeight:380,overflowY:"auto",display:"flex",flexDirection:"column",gap:12,padding:"18px"}}>
                   {helpMessages.length===0&&(
-                    <div style={{textAlign:"center",padding:"20px 0",color:"var(--text-tertiary)",fontSize:13}}>Try: "How do I send an RFQ?" or "Where are my saved quotes?"</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:14,paddingTop:8}}>
+                      <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                        <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14}}>👋</div>
+                        <div style={{background:"var(--bg-subtle)",borderRadius:"4px 14px 14px 14px",padding:"12px 16px",fontSize:13,lineHeight:1.6,color:"var(--text-primary)",maxWidth:"85%"}}>
+                          Hi! I'm your ProQuote assistant. Ask me anything about creating requests, analysing quotes, managing orders, or any feature in the app.
+                        </div>
+                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8,paddingLeft:40}}>
+                        {["How do I send an RFQ?","How does quote analysis work?","Where are my saved quotes?","How do I import a spreadsheet?"].map(q=>(
+                          <button key={q} onClick={()=>handleHelpChat(q)} disabled={!settings.openRouterKey} style={{fontSize:12,padding:"7px 13px",borderRadius:99,border:"1px solid var(--green-light)",background:"var(--green-mint)",color:"var(--green-deep)",cursor:settings.openRouterKey?"pointer":"not-allowed",fontWeight:500}}>{q}</button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                   {helpMessages.map((m,i)=>(
-                    <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
-                      <div style={{maxWidth:"85%",padding:"10px 14px",borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",background:m.role==="user"?"linear-gradient(135deg,#22C55E,#16A34A)":"var(--bg-subtle)",color:m.role==="user"?"white":"var(--text-primary)",fontSize:13,lineHeight:1.6}}>
+                    <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",flexDirection:m.role==="user"?"row-reverse":"row"}}>
+                      <div style={{width:30,height:30,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,background:m.role==="user"?"var(--bg-subtle2)":"linear-gradient(135deg,#1E9E63,#15824F)",color:m.role==="user"?"var(--text-secondary)":"white",fontWeight:700}}>
+                        {m.role==="user"?(settings.contactName?settings.contactName[0].toUpperCase():"Y"):"AI"}
+                      </div>
+                      <div style={{maxWidth:"82%",padding:"11px 15px",borderRadius:m.role==="user"?"14px 4px 14px 14px":"4px 14px 14px 14px",background:m.role==="user"?"linear-gradient(135deg,#1E9E63,#15824F)":"var(--bg-subtle)",color:m.role==="user"?"white":"var(--text-primary)",fontSize:13,lineHeight:1.65,whiteSpace:"pre-wrap"}}>
                         {m.content}
                       </div>
                     </div>
                   ))}
-                  {helpLoading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"var(--bg-subtle)",borderRadius:"14px 14px 14px 4px",padding:"10px 14px",fontSize:13,color:"var(--text-secondary)"}}>Thinking...</div></div>}
+                  {helpLoading&&(
+                    <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                      <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,fontWeight:700,color:"white"}}>AI</div>
+                      <div style={{background:"var(--bg-subtle)",borderRadius:"4px 14px 14px 14px",padding:"14px 16px",display:"flex",gap:4,alignItems:"center"}}>
+                        <span style={{width:7,height:7,borderRadius:"50%",background:"var(--text-tertiary)",animation:"typingDot 1.2s infinite 0s"}}/>
+                        <span style={{width:7,height:7,borderRadius:"50%",background:"var(--text-tertiary)",animation:"typingDot 1.2s infinite 0.2s"}}/>
+                        <span style={{width:7,height:7,borderRadius:"50%",background:"var(--text-tertiary)",animation:"typingDot 1.2s infinite 0.4s"}}/>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div style={{display:"flex",gap:8}}>
+
+                {/* Input */}
+                <div style={{display:"flex",gap:8,padding:"14px 16px",borderTop:"1px solid var(--border)",background:"var(--bg-subtle)"}}>
                   <input value={helpInput} onChange={e=>setHelpInput(e.target.value)}
                     onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&handleHelpChat(helpInput)}
-                    placeholder={settings.openRouterKey?"Ask me anything...":"Add OpenRouter key in Settings"}
+                    placeholder={settings.openRouterKey?"Type your question...":"Add OpenRouter key in Settings"}
                     disabled={!settings.openRouterKey}
-                    style={{flex:1,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}
+                    style={{flex:1,padding:"11px 15px",border:"1px solid var(--border)",borderRadius:99,fontSize:13,outline:"none",background:"var(--bg-card-solid)"}}
                   />
-                  <Btn onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey} color="#16A34A">Send</Btn>
+                  <button onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey} style={{width:42,height:42,borderRadius:"50%",border:"none",background:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"var(--bg-subtle2)":"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",cursor:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  </button>
                 </div>
-              </Card>
+              </div>
               <div style={{display:"flex",flexDirection:"column",gap:12}}>
                 <Card>
                   <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Quick actions</div>
@@ -3226,7 +3538,7 @@ Rules:
                 <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Thank you for getting in touch. We will respond as soon as possible.</div>
                 <div style={{display:"flex",gap:10,justifyContent:"center"}}>
                   <button onClick={()=>setContactSent(false)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Send another</button>
-                  <button onClick={()=>setView("dashboard")} style={{background:"linear-gradient(135deg,#22C55E,#16A34A)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Back to dashboard</button>
+                  <button onClick={()=>setView("dashboard")} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Back to dashboard</button>
                 </div>
               </Card>
             ):(
@@ -3268,7 +3580,7 @@ Rules:
                     setContactForm(p=>({...p,description:""}));
                   }}
                   disabled={!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim()}
-                  style={{background:"linear-gradient(135deg,#6366F1,#4338CA)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:"pointer",opacity:(!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
+                  style={{background:"linear-gradient(135deg,#5B5BD6,#4A4AB8)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:"pointer",opacity:(!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
                   Submit request
                 </button>
               </Card>
@@ -3363,7 +3675,7 @@ Rules:
                 {sForm.resendKey?<div style={{fontSize:11,color:"var(--green-dark)"}}>Key entered</div>:<div style={{fontSize:11,color:"var(--amber)"}}>No key - email sending disabled</div>}
               </Card>
               <div style={{display:"flex",gap:10}}>
-                <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}} color="#6366F1">Save settings</Btn>
+                <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}} color="#5B5BD6">Save settings</Btn>
                 <Btn outline onClick={()=>setSForm({...settings})}>Reset</Btn>
               </div>
             </div>
@@ -3447,7 +3759,7 @@ Rules:
             </div>
             <div style={{display:"flex",gap:10}}>
               <Btn outline onClick={()=>setApproveConfirm(null)}>Cancel</Btn>
-              <Btn color="#16A34A" onClick={()=>handleApprovePO(approveConfirm)}>Confirm approval</Btn>
+              <Btn color="#15824F" onClick={()=>handleApprovePO(approveConfirm)}>Confirm approval</Btn>
             </div>
           </div>
         </div>
@@ -3481,7 +3793,7 @@ Rules:
             <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>This cannot be undone. The request, quotes, and all associated data will be permanently removed.</div>
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
               <Btn outline onClick={()=>setDeleteConfirm(null)}>Cancel</Btn>
-              <Btn color="#DC2626" onClick={()=>{setRequests(p=>p.filter(r=>r.id!==deleteConfirm.id));if(activeReq?.id===deleteConfirm.id){setActiveReq(null);setAllAnalyses([]);}setDeleteConfirm(null);showToast("Request deleted");}}>Delete</Btn>
+              <Btn color="#D14343" onClick={()=>{setRequests(p=>p.filter(r=>r.id!==deleteConfirm.id));if(activeReq?.id===deleteConfirm.id){setActiveReq(null);setAllAnalyses([]);}setDeleteConfirm(null);showToast("Request deleted");}}>Delete</Btn>
             </div>
           </div>
         </div>
@@ -3600,7 +3912,7 @@ Rules:
                     style={{flex:1,padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}
                     onKeyDown={e=>e.key==="Enter"&&handleSaveTemplate()}
                   />
-                  <Btn onClick={handleSaveTemplate} disabled={!newTemplateName.trim()} color="#16A34A">Save</Btn>
+                  <Btn onClick={handleSaveTemplate} disabled={!newTemplateName.trim()} color="#15824F">Save</Btn>
                 </div>
               </div>
             )}
