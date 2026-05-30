@@ -760,6 +760,43 @@ const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
 );
 
+// --- Icon system: clean line icons (replaces emojis) -------------------------
+const ICON_PATHS = {
+  clipboard: '<path d="M9 2h6a1 1 0 011 1v1h1a2 2 0 012 2v13a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2h1V3a1 1 0 011-1z"/>',
+  inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a1 1 0 01-1 1H3a1 1 0 01-1-1v-6z"/>',
+  check_circle: '<circle cx="12" cy="12" r="9"/><polyline points="8.5 12 11 14.5 16 9"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0M12 17v4"/>',
+  search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>',
+  package: '<path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3.3 7L12 12l8.7-5M12 12v10"/>',
+  building: '<rect x="4" y="3" width="16" height="18" rx="1"/><line x1="9" y1="7" x2="9" y2="7.01"/><line x1="15" y1="7" x2="15" y2="7.01"/><line x1="9" y1="11" x2="9" y2="11.01"/><line x1="15" y1="11" x2="15" y2="11.01"/><line x1="9" y1="15" x2="15" y2="15"/>',
+  paperclip: '<path d="M21 11l-8.5 8.5a5 5 0 01-7-7L14 4a3.3 3.3 0 014.7 4.7l-8.5 8.5a1.7 1.7 0 01-2.4-2.4l7.8-7.8"/>',
+  send: '<line x1="21" y1="3" x2="10" y2="14"/><polygon points="21 3 14 21 10 14 3 10 21 3"/>',
+  flag: '<path d="M5 21V4a1 1 0 011-1h12l-2.5 4L18 11H6"/>',
+  trash: '<polyline points="3 6 21 6"/><path d="M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M6 6l1 14a1 1 0 001 1h8a1 1 0 001-1l1-14"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/>',
+  undo: '<path d="M3 7v6h6"/><path d="M3 13a9 9 0 109-9 9 9 0 00-6.4 2.6L3 13"/>',
+  rocket: '<path d="M5 13c-2 1-3 5-3 5s4-1 5-3M9 11a8 8 0 015-7 8 8 0 012 8 12 12 0 01-4 4l-4 1-2-2z"/><circle cx="14.5" cy="9.5" r="1.5"/>',
+  printer: '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+  arrow_right: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+  download: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  plane: '<path d="M17.8 19.2L16 11l3.5-3.5a2.1 2.1 0 00-3-3L13 8 4.8 6.2a.5.5 0 00-.5.8L8 11l-3 3H3l1.5 2.5L7 18l1-1 3-3 3.5 3.7a.5.5 0 00.8-.5z"/>',
+  wave: '<path d="M18 11V6a2 2 0 00-4 0M14 10V4a2 2 0 00-4 0v2M10 10.5V6a2 2 0 00-4 0v8a8 8 0 008 8h2a8 8 0 008-8 2 2 0 00-4 0"/>',
+  books: '<path d="M4 19V5a1 1 0 011-1h3a1 1 0 011 1v14M9 19V7a1 1 0 011-1h3a1 1 0 011 1v12"/><path d="M14 19l2.5-13 4 1L18 19"/><line x1="3" y1="20" x2="21" y2="20"/>',
+  help_circle: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 0c0 1.5-2.5 2-2.5 3.5"/><line x1="12" y1="17" x2="12" y2="17.01"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3 7 12 13 21 7"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7 1.1V21a2 2 0 01-4 0v-.1A1.6 1.6 0 007.3 19l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00-1.1-2.7H3a2 2 0 010-4h.1A1.6 1.6 0 004.8 7.3l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9.4a1.6 1.6 0 001-1.5V3a2 2 0 014 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9.4a1.6 1.6 0 001.5 1H21a2 2 0 010 4h-.1a1.6 1.6 0 00-1.5 1z"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  file_check: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 13"/>',
+};
+const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) => {
+  const path = ICON_PATHS[name];
+  if (!path) return null;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={style} dangerouslySetInnerHTML={{__html:path}}/>
+  );
+};
+
 // --- App ----------------------------------------------------------------------
 export default function App() {
   // Settings persisted to localStorage
@@ -2108,16 +2145,16 @@ Rules:
             {/* Stat cards */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
               {[
-                {label:"Total requests",  value:stats.total,    color:"#5B5BD6", grad:"linear-gradient(135deg,#5B5BD6,#4A4AB8)", icon:"📋", nav:()=>setView("requests")},
-                {label:"Awaiting quotes", value:stats.pending,  color:"#C77D2E", grad:"linear-gradient(135deg,#C77D2E,#A8661F)", icon:"⏱️", nav:()=>setView("quotes")},
-                {label:"Quotes received", value:stats.received, color:"#7E6DD6", grad:"linear-gradient(135deg,#7E6DD6,#6B4FC4)", icon:"📬", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
-                {label:"Approved POs",    value:stats.approved, color:"#1E9E63", grad:"linear-gradient(135deg,#1E9E63,#15824F)", icon:"✅", nav:()=>setView("orders")},
+                {label:"Total requests",  value:stats.total,    color:"#5B5BD6", grad:"linear-gradient(135deg,#5B5BD6,#4A4AB8)", icon:"clipboard", nav:()=>setView("requests")},
+                {label:"Awaiting quotes", value:stats.pending,  color:"#C77D2E", grad:"linear-gradient(135deg,#C77D2E,#A8661F)", icon:"clock", nav:()=>setView("quotes")},
+                {label:"Quotes received", value:stats.received, color:"#7E6DD6", grad:"linear-gradient(135deg,#7E6DD6,#6B4FC4)", icon:"inbox", nav:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}},
+                {label:"Approved POs",    value:stats.approved, color:"#1E9E63", grad:"linear-gradient(135deg,#1E9E63,#15824F)", icon:"check_circle", nav:()=>setView("orders")},
               ].map((s,si)=>(
                 <button key={s.label} onClick={s.nav} className="stagger-in" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"16px 18px":"20px 24px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s",animationDelay:`${si*0.05}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 2px 4px rgba(26,26,23,0.04), 0 12px 28px ${s.color}1f`;e.currentTarget.style.transform="translateY(-3px)";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";e.currentTarget.style.transform="translateY(0)";}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                    <div style={{fontSize:18}}>{s.icon}</div>
+                    <div style={{display:"flex"}}><Icon name={s.icon} size={20} color="white"/></div>
                     <div style={{fontSize:9,fontWeight:700,color:s.value>0?s.color:"var(--text-muted)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{s.value>0?"active":"empty"}</div>
                   </div>
                   <div style={{fontSize:isMobile?26:36,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:4}}>{s.value}</div>
@@ -2130,16 +2167,16 @@ Rules:
             {/* Quick actions */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:isMobile?8:12,marginBottom:isMobile?18:24}}>
               {[
-                {label:"New request",  sub:"Voice or type",         icon:"🎤", action:()=>{setView("new");resetNewRequest();}, accent:"#5B5BD6"},
-                {label:"Analyse",      sub:"Compare quotes",        icon:"🔍", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#7E6DD6"},
-                {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"📦", action:()=>setView("orders"), accent:"#1E9E63"},
-                {label:"Suppliers",    sub:"Manage accounts",       icon:"🏢", action:()=>setView("suppliers"), accent:"#C77D2E"},
+                {label:"New request",  sub:"Voice or type",         icon:"mic", action:()=>{setView("new");resetNewRequest();}, accent:"#5B5BD6"},
+                {label:"Analyse",      sub:"Compare quotes",        icon:"search", action:()=>{setView("quotes");if(requests.length&&!activeReq)setActiveReq(requests[0]);}, accent:"#7E6DD6"},
+                {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"package", action:()=>setView("orders"), accent:"#1E9E63"},
+                {label:"Suppliers",    sub:"Manage accounts",       icon:"building", action:()=>setView("suppliers"), accent:"#C77D2E"},
               ].map((q,qi)=>(
                 <button key={q.label} onClick={q.action} className="stagger-in" style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"14px 16px":"18px 22px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:104,animationDelay:`${0.2+qi*0.04}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
                   onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
                   <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:q.accent,borderRadius:"var(--radius-lg) var(--radius-lg) 0 0"}}/>
-                  <div style={{fontSize:18,marginTop:2}}>{q.icon}</div>
+                  <div style={{marginTop:2,display:"flex"}}><Icon name={q.icon} size={20} color={q.accent}/></div>
                   <div>
                     <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:2}}>{q.label}</div>
                     <div style={{fontSize:11,color:"var(--text-tertiary)",lineHeight:1.4}}>{q.sub}</div>
@@ -2193,14 +2230,14 @@ Rules:
                 <div style={{maxHeight:340,overflowY:"auto"}}>
                   {activityLog.slice(0,40).map((a,i)=>{
                     const iconMap = {
-                      "RFQ sent":"📨","Quotes analysed":"🔍","PO approved & generated":"✅","Order sent":"📦","Order confirmed":"✓","Order delivered":"🏁","Confirmation uploaded":"📎","Draft PO saved":"📝","Deleted":"🗑️","Edited":"✏️","Approval undone":"↩️","Document attached":"📎","Supplier confirmation attached":"📎"};
-                    const icon = iconMap[a.action]||"•";
+                      "RFQ sent":"send","Quotes analysed":"search","PO approved & generated":"check_circle","Order sent":"package","Order confirmed":"check","Order delivered":"flag","Confirmation uploaded":"paperclip","Draft PO saved":"edit","Deleted":"trash","Edited":"edit","Approval undone":"undo","Document attached":"paperclip","Supplier confirmation attached":"paperclip","Supplier added":"building","Library quote removed":"trash"};
+                    const iconName = iconMap[a.action]||"clipboard";
                     const when = new Date(a.ts);
                     const mins = Math.floor((Date.now()-when.getTime())/60000);
                     const timeLabel = mins<1?"just now":mins<60?`${mins}m ago`:mins<1440?`${Math.floor(mins/60)}h ago`:when.toLocaleDateString("en-GB",{day:"numeric",month:"short"});
                     return(
                       <div key={a.id||i} style={{display:"flex",gap:12,padding:"12px 24px",borderBottom:i<activityLog.slice(0,40).length-1?"1px solid var(--border)":"none",alignItems:"flex-start"}}>
-                        <div style={{width:30,height:30,borderRadius:8,background:"var(--bg-subtle)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>{icon}</div>
+                        <div style={{width:30,height:30,borderRadius:8,background:"var(--bg-subtle)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name={iconName} size={15} color="var(--text-secondary)"/></div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{a.action}</div>
                           <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis"}}>{a.detail}</div>
@@ -2215,7 +2252,7 @@ Rules:
 
             {requests.length===0&&(
               <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
-                <div style={{fontSize:36,marginBottom:16}}>🚀</div>
+                <div style={{marginBottom:16,display:"flex",justifyContent:"center"}}><Icon name="rocket" size={40} color="var(--green-dark)"/></div>
                 <div style={{fontSize:16,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>Ready to get started</div>
                 <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Create your first material request to start procuring with AI</div>
                 <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-md)",padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Create first request</button>
@@ -2685,7 +2722,7 @@ Rules:
                           <button onClick={()=>{
                             if (allAnalyses.length>0) setExpandedQuote(allAnalyses[0]._id);
                             setTimeout(()=>window.print(),300);
-                          }} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontWeight:500}}>🖨️ Print</button>
+                          }} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"none",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontWeight:500}}><Icon name="printer" size={13} style={{marginRight:5,verticalAlign:"-2px"}}/>Print</button>
                           <button onClick={()=>{setAllAnalyses([]);setExpandedQuote(null);setQuoteViewMode("cards");setMarginPct(0);}} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Re-analyse</button>
                         </div>
                       </div>
@@ -2700,7 +2737,7 @@ Rules:
                             const sell = cost*(1+marginPct/100);
                             return(
                               <span key={qa._id} style={{fontSize:12,color:"var(--text-secondary)"}}>
-                                <strong style={{color:"var(--text-primary)"}}>{qa.supplierName}:</strong> £{cost.toFixed(2)} → <strong style={{color:"var(--green-dark)"}}>£{sell.toFixed(2)}</strong> <span style={{color:"var(--text-tertiary)"}}>(+£{(sell-cost).toFixed(2)})</span>
+                                <strong style={{color:"var(--text-primary)"}}>{qa.supplierName}:</strong> £{cost.toFixed(2)} <Icon name="arrow_right" size={12} style={{verticalAlign:"-1px",margin:"0 2px"}}/> <strong style={{color:"var(--green-dark)"}}>£{sell.toFixed(2)}</strong> <span style={{color:"var(--text-tertiary)"}}>(+£{(sell-cost).toFixed(2)})</span>
                               </span>
                             );
                           })}
@@ -2819,7 +2856,7 @@ Rules:
                                   {isApproved?(
                                     <>
                                       <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-sm)",padding:"8px 14px"}}>
-                                        <span style={{fontSize:13,fontWeight:700,color:"var(--green-dark)"}}>✅ PO Approved</span>
+                                        <span style={{fontSize:13,fontWeight:700,color:"var(--green-dark)"}}><Icon name="check_circle" size={14} color="var(--green-dark)" style={{marginRight:5,verticalAlign:"-2px"}}/>PO Approved</span>
                                       </div>
                                       <Btn outline onClick={handleUndoApproval}>Undo</Btn>
                                       <Btn onClick={()=>setView("orders")} color="#15824F">View in Orders</Btn>
@@ -2958,7 +2995,7 @@ Rules:
                     ExpectedDelivery: o.expectedDelivery?new Date(o.expectedDelivery).toLocaleDateString("en-GB"):"",
                     Items: (o.items||[]).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join("; ")
                   })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:500}}>
-                    ⬇ Export
+                    <Icon name="download" size={13} style={{marginRight:5,verticalAlign:"-2px"}}/>Export
                   </button>
                 )}
                 {[
@@ -3008,7 +3045,7 @@ Rules:
                       <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)}
                         style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isExpanded?"var(--green-mint)":"var(--bg-card-solid)",transition:"background 0.2s"}}>
                         <div style={{width:38,height:38,borderRadius:10,background:order.status==="pending-send"?"linear-gradient(135deg,#1E9E63,#15824F)":order.status==="sent"?"linear-gradient(135deg,#5B5BD6,#4A4AB8)":order.status==="confirmed"?"linear-gradient(135deg,#15824F,#047857)":"linear-gradient(135deg,#4B5563,#374151)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
-                          {order.status==="pending-send"?"📦":order.status==="sent"?"✈️":order.status==="confirmed"?"✅":"🏁"}
+                          <Icon name={order.status==="pending-send"?"package":order.status==="sent"?"plane":order.status==="confirmed"?"check_circle":"flag"} size={18} color="white"/>
                         </div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
@@ -3216,7 +3253,7 @@ Rules:
                     ID:r.id, JobRef:r.jobRef||"", Site:r.site||"", Trade:r.trade||"", Status:r.status||"",
                     Created:r.created||"", Items:(r.items||[]).length, Suppliers:(r.sentTo||[]).length,
                     QuotesIn:(r.sentTo||[]).filter(s=>s.saved).length, Notes:r.notes||""
-                  })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",fontWeight:500}}>⬇ Export</button>
+                  })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",fontWeight:500}}><Icon name="download" size={13} style={{marginRight:5,verticalAlign:"-2px"}}/>Export</button>
                 )}
                 <Btn onClick={()=>{setView("new");resetNewRequest();}} color="#15824F">+ New request</Btn>
               </div>
@@ -3305,7 +3342,7 @@ Rules:
                   Completeness: (q.completeness||0)+"%", EstimatedTotal: q.totalEstimate||"",
                   Carriage: q.carriageCharge||"", Expiry: q.expiryDate?new Date(q.expiryDate).toLocaleDateString("en-GB"):""
                 })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 16px",cursor:"pointer",fontWeight:500}}>
-                  ⬇ Export CSV
+                  <Icon name="download" size={13} style={{marginRight:5,verticalAlign:"-2px"}}/>Export CSV
                 </button>
               )}
             </div>
@@ -3422,7 +3459,7 @@ Rules:
                   {helpMessages.length===0&&(
                     <div style={{display:"flex",flexDirection:"column",gap:14,paddingTop:8}}>
                       <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                        <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14}}>👋</div>
+                        <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="wave" size={16} color="white"/></div>
                         <div style={{background:"var(--bg-subtle)",borderRadius:"4px 14px 14px 14px",padding:"12px 16px",fontSize:13,lineHeight:1.6,color:"var(--text-primary)",maxWidth:"85%"}}>
                           Hi! I'm your ProQuote assistant. Ask me anything about creating requests, analysing quotes, managing orders, or any feature in the app.
                         </div>
@@ -3619,7 +3656,7 @@ Rules:
                         <img src={sForm.logoBase64} alt="Logo" style={{height:48,maxWidth:120,objectFit:"contain",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:4}}/>
                       )}
                       <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:500}}>
-                        📎 {sForm.logoBase64?"Change logo":"Upload logo"}
+                        <Icon name="paperclip" size={14} style={{marginRight:6,verticalAlign:"-2px"}}/>{sForm.logoBase64?"Change logo":"Upload logo"}
                         <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{
                           const file = e.target.files[0];
                           if (!file) return;
@@ -3718,15 +3755,15 @@ Rules:
                 <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
                 <div style={{padding:"0 8px"}}>
                   {[
-                    {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"📋"},
-                    {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"🏢"},
-                    {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"📚"},
-                    {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"❓"},
-                    {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"📧"},
-                    {id:"settings", label:"Settings",         sub:"API keys and company details",     icon:"⚙️"},
+                    {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
+                    {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building"},
+                    {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books"},
+                    {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
+                    {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"mail"},
+                    {id:"settings", label:"Settings",         sub:"API keys and company details",     icon:"settings"},
                   ].map(item=>(
                     <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
-                      <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)"}}>{item.icon}</div>
+                      <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)",display:"flex"}}><Icon name={item.icon} size={18}/></div>
                       <div style={{flex:1}}>
                         <div style={{fontSize:14,fontWeight:600,color:view===item.id?"var(--green)":"white"}}>{item.label}</div>
                         <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{item.sub}</div>
@@ -3745,7 +3782,7 @@ Rules:
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{textAlign:"center",marginBottom:20}}>
-              <div style={{fontSize:36,marginBottom:12}}>📋</div>
+              <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="clipboard" size={40} color="var(--text-tertiary)"/></div>
               <div style={{fontSize:18,fontWeight:700,color:"var(--text-primary)",marginBottom:6}}>Approve this quote?</div>
               <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.6}}>This will generate the PO, create an order, and save all other quotes to the library.</div>
             </div>
@@ -3768,7 +3805,7 @@ Rules:
       {approveSuccess&&(
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"36px 40px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--green-dark)",textAlign:"center",animation:"fadeIn 0.3s ease"}}>
-            <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}>✅</div>
+            <div style={{width:64,height:64,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(34,197,94,0.3)"}}><Icon name="check" size={32} color="white" strokeWidth={2.5}/></div>
             <div style={{fontSize:22,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.5px",marginBottom:6}}>PO Approved</div>
             <div style={{fontSize:15,fontWeight:600,color:"var(--green-dark)",marginBottom:16,fontFamily:"'JetBrains Mono',monospace"}}>{approveSuccess.poNum}</div>
             <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20,textAlign:"left"}}>
@@ -3788,7 +3825,7 @@ Rules:
       {deleteConfirm&&(
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:400,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
-            <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>🗑️</div>
+            <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="trash" size={34} color="var(--red)"/></div>
             <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Delete this request?</div>
             <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>This cannot be undone. The request, quotes, and all associated data will be permanently removed.</div>
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
