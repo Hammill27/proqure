@@ -128,6 +128,13 @@ function parsePrice(s) {
   return isNaN(n) ? null : n;
 }
 
+// Consistent UK currency formatting: 1234.5 -> "1,234.50"
+function fmtMoney(n) {
+  const v = typeof n === "number" ? n : parsePrice(String(n));
+  if (v == null || isNaN(v)) return "0.00";
+  return v.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // --- JavaScript post-processor - validates AI output -------------------------
 function validateAndFix(analysis, requestedItems) {
   if (!analysis || analysis.error) return analysis;
@@ -2005,6 +2012,7 @@ Rules:
       @keyframes cardExpand{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
       @keyframes scaleIn{from{opacity:0;transform:scale(0.97)}to{opacity:1;transform:scale(1)}}
       @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+      .skeleton{background:linear-gradient(90deg,var(--bg-subtle) 25%,var(--bg-subtle2) 50%,var(--bg-subtle) 75%);background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite;border-radius:8px}
       @keyframes typingDot{0%,60%,100%{opacity:0.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
       .stagger-in{animation:slideUp 0.5s cubic-bezier(0.16,1,0.3,1) backwards}
       ::-webkit-scrollbar{width:8px;height:8px}
@@ -2062,7 +2070,7 @@ Rules:
             ))}
           </div>
           <div style={{padding:"14px 20px",borderTop:"1px solid var(--sidebar-border)"}}>
-            <button onClick={toggleDark} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg-subtle2)",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
+            <button onClick={toggleDark} aria-label="Toggle dark mode" title="Toggle dark mode" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg-subtle2)",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   {darkMode
@@ -2094,7 +2102,7 @@ Rules:
             <span style={{fontSize:15,fontWeight:800,color:"white"}}>Pro<span style={{color:"#1E9E63"}}>Quote</span></span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <button onClick={toggleDark} style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"white",fontSize:13}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{darkMode?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>:<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}</svg></button>
+            <button onClick={toggleDark} aria-label="Toggle dark mode" title="Toggle dark mode" style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"white",fontSize:13}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{darkMode?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>:<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}</svg></button>
             <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"var(--green)":"var(--amber)"}}/>
           </div>
         </div>
@@ -2118,11 +2126,46 @@ Rules:
                     {requests.length===0?"Welcome to ProQuote - create your first material request to get started":`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.`}
                   </p>
                 </div>
-                <button onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",flexShrink:0}}>
+                <button aria-label="Voice input" title="Tap to speak your list" onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",flexShrink:0}}>
                   + New request
                 </button>
               </div>
             </div>
+
+            {/* First-run welcome - only when no activity yet */}
+            {requests.length===0&&orders.length===0&&(
+              <div className="stagger-in" style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"22px":"28px 32px",marginBottom:24,boxShadow:"var(--shadow-sm)",animationDelay:"0.1s"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+                  <div style={{width:42,height:42,borderRadius:12,background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <Icon name="wave" size={22} color="white"/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:17,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em"}}>Welcome to ProQuote</div>
+                    <div style={{fontSize:13,color:"var(--text-secondary)"}}>Three quick steps to your first purchase order.</div>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:12,marginBottom:18}}>
+                  {[
+                    {n:"1",t:"Create a request",d:"Speak, type, photograph or import your material list.",ic:"mic"},
+                    {n:"2",t:"Send to suppliers",d:"ProQuote emails a branded RFQ to your chosen suppliers.",ic:"send"},
+                    {n:"3",t:"Analyse & approve",d:"Let the AI compare the quotes, then approve the best.",ic:"check_circle"},
+                  ].map(s=>(
+                    <div key={s.n} style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px 18px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:8}}>
+                        <div style={{width:24,height:24,borderRadius:"50%",background:"var(--green-mint)",color:"var(--green-dark)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,flexShrink:0}}>{s.n}</div>
+                        <Icon name={s.ic} size={16} color="var(--green-dark)"/>
+                      </div>
+                      <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:3}}>{s.t}</div>
+                      <div style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.5}}>{s.d}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                  <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 22px",fontSize:13,fontWeight:700,cursor:"pointer",boxShadow:"0 2px 8px rgba(30,158,99,0.25)"}}>Create your first request</button>
+                  {!settings.openRouterKey&&<button onClick={()=>setView("settings")} style={{background:"transparent",color:"var(--text-secondary)",border:"1px solid var(--border-solid)",borderRadius:"var(--radius-sm)",padding:"11px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Add API keys in Settings</button>}
+                </div>
+              </div>
+            )}
 
             {/* Overdue banner */}
             {overdueRequests.length>0&&(
@@ -2179,8 +2222,8 @@ Rules:
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:5}}>
                           <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{b.jobRef}</span>
                           <span style={{fontSize:12,fontFamily:"'JetBrains Mono',monospace",color:over?"var(--red)":"var(--text-secondary)"}}>
-                            £{b.actual.toFixed(2)} / £{b.budget.toFixed(2)}
-                            {over&&<span style={{marginLeft:8,fontWeight:700,color:"var(--red)"}}>over by £{(b.actual-b.budget).toFixed(2)}</span>}
+                            £{fmtMoney(b.actual)} / £{fmtMoney(b.budget)}
+                            {over&&<span style={{marginLeft:8,fontWeight:700,color:"var(--red)"}}>over by £{fmtMoney(b.actual-b.budget)}</span>}
                           </span>
                         </div>
                         <div style={{height:8,background:"var(--bg-subtle2)",borderRadius:99,overflow:"hidden"}}>
@@ -2834,6 +2877,28 @@ Rules:
                     </div>
                   )}
 
+                  {/* Skeleton loaders while analysing */}
+                  {loading&&allAnalyses.length===0&&(
+                    <div style={{marginTop:4}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                        <Spinner/>
+                        <span style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)"}}>{loadMsg||"Analysing quotes..."}</span>
+                      </div>
+                      {[0,1].map(i=>(
+                        <div key={i} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",padding:"16px 18px",boxShadow:"var(--shadow-sm)"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:14}}>
+                            <div className="skeleton" style={{width:46,height:46,borderRadius:"50%",flexShrink:0}}/>
+                            <div style={{flex:1}}>
+                              <div className="skeleton" style={{width:"40%",height:14,marginBottom:8}}/>
+                              <div className="skeleton" style={{width:"70%",height:11}}/>
+                            </div>
+                            <div className="skeleton" style={{width:64,height:28,borderRadius:8,flexShrink:0}}/>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Results */}
                   {allAnalyses.length>0&&(
                     <div>
@@ -2869,7 +2934,7 @@ Rules:
                             const sell = cost*(1+marginPct/100);
                             return(
                               <span key={qa._id} style={{fontSize:12,color:"var(--text-secondary)"}}>
-                                <strong style={{color:"var(--text-primary)"}}>{qa.supplierName}:</strong> £{cost.toFixed(2)} <Icon name="arrow_right" size={12} style={{verticalAlign:"-1px",margin:"0 2px"}}/> <strong style={{color:"var(--green-dark)"}}>£{sell.toFixed(2)}</strong> <span style={{color:"var(--text-tertiary)"}}>(+£{(sell-cost).toFixed(2)})</span>
+                                <strong style={{color:"var(--text-primary)"}}>{qa.supplierName}:</strong> £{fmtMoney(cost)} <Icon name="arrow_right" size={12} style={{verticalAlign:"-1px",margin:"0 2px"}}/> <strong style={{color:"var(--green-dark)"}}>£{fmtMoney(sell)}</strong> <span style={{color:"var(--text-tertiary)"}}>(+£{fmtMoney(sell-cost)})</span>
                               </span>
                             );
                           })}
@@ -3557,7 +3622,7 @@ Rules:
                               setQuoteLibrary(prev=>{const n=prev.filter(x=>x.id!==q.id);try{localStorage.setItem("piq_quote_library",JSON.stringify(n))}catch{};return n;});
                               logActivity("Library quote removed",`${q.supplierName} - ${q.jobRef||""} removed from library`,{entity:"quote"});
                               showToast("Quote removed from library");
-                            }} title="Remove from library" style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",padding:4,borderRadius:6,display:"inline-flex"}}>
+                            }} title="Remove from library" aria-label="Remove from library" style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",padding:4,borderRadius:6,display:"inline-flex"}}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                             </button>
                           </td>
@@ -3646,7 +3711,7 @@ Rules:
                     disabled={!settings.openRouterKey}
                     style={{flex:1,padding:"11px 15px",border:"1px solid var(--border)",borderRadius:99,fontSize:13,outline:"none",background:"var(--bg-card-solid)"}}
                   />
-                  <button onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey} style={{width:42,height:42,borderRadius:"50%",border:"none",background:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"var(--bg-subtle2)":"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",cursor:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <button onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey} aria-label="Send message" title="Send" style={{width:42,height:42,borderRadius:"50%",border:"none",background:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"var(--bg-subtle2)":"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",cursor:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                   </button>
                 </div>
