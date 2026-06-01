@@ -1,4 +1,46 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+// --- Supabase cloud sync ------------------------------------------------------
+// Reads keys from Vercel environment variables. If they're absent, the app
+// runs exactly as before (browser-only), so nothing breaks without them.
+const SB_URL = import.meta.env.VITE_SUPABASE_URL;
+// Paste Supabase's "Publishable key" (sb_publishable_...) here. It is the modern
+// replacement for the old "anon public" key and is safe to use in the browser
+// because Row Level Security is enabled on the table.
+const SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const cloudEnabled = !!(SB_URL && SB_KEY);
+const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
+
+// The localStorage keys we mirror to the cloud
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity"];
+
+// Pull every key for this user from the cloud into localStorage (on login)
+async function cloudPull(userId) {
+  if (!supabase || !userId) return false;
+  try {
+    const { data, error } = await supabase.from("proquote_data").select("store_key,value").eq("user_id", userId);
+    if (error) { console.warn("cloudPull", error.message); return false; }
+    (data || []).forEach(row => {
+      if (SYNC_KEYS.includes(row.store_key) && row.value != null) {
+        try { localStorage.setItem(row.store_key, JSON.stringify(row.value)); } catch {}
+      }
+    });
+    return true;
+  } catch (e) { console.warn("cloudPull failed", e); return false; }
+}
+
+// Push one key's value up to the cloud (on change), debounced by caller
+async function cloudPush(userId, storeKey, valueObj) {
+  if (!supabase || !userId) return;
+  try {
+    await supabase.from("proquote_data").upsert(
+      { user_id: userId, store_key: storeKey, value: valueObj, updated_at: new Date().toISOString() },
+      { onConflict: "user_id,store_key" }
+    );
+  } catch (e) { console.warn("cloudPush failed", storeKey, e); }
+}
+
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(typeof window!=="undefined"?window.innerWidth<768:false);
@@ -852,7 +894,7 @@ const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) 
 };
 
 // --- App ----------------------------------------------------------------------
-export default function App() {
+function ProQuoteApp({ session }) {
   // Settings persisted to localStorage
   const [settings, setSettings] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
@@ -1586,6 +1628,24 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
+
+  // --- Cloud push: mirror changes up to Supabase (debounced) ----------------
+  const cloudUserId = session?.user?.id || null;
+  const pushTimers = useRef({});
+  const queueCloudPush = useCallback((key, valueObj) => {
+    if (!cloudEnabled || !cloudUserId) return;
+    clearTimeout(pushTimers.current[key]);
+    pushTimers.current[key] = setTimeout(() => { cloudPush(cloudUserId, key, valueObj); }, 800);
+  }, [cloudUserId]);
+
+  useEffect(()=>{ queueCloudPush("piq_requests", requests); }, [requests, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_orders", orders); }, [orders, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_suppliers", suppliers); }, [suppliers, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_settings", settings); }, [settings, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_quote_library", quoteLibrary); }, [quoteLibrary, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_templates", templates); }, [templates, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_quote_sets", savedQuoteSets.slice(0,100)); }, [savedQuoteSets, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
 
   // Spend by trade (from approved orders)
   const spendByTrade = (() => {
@@ -3891,6 +3951,21 @@ Rules:
           <div className="stagger-in" style={{maxWidth:720}}>
             <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Settings</h1>
             <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Configure your company details and API keys</p>
+            {session && cloudEnabled && (
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 22px",marginBottom:20,boxShadow:"var(--shadow-sm)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:14,flexWrap:"wrap"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:38,height:38,borderRadius:"50%",background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <Icon name="check_circle" size={20} color="var(--green-dark)"/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>Signed in &amp; syncing to the cloud</div>
+                    <div style={{fontSize:12,color:"var(--text-secondary)"}}>{session.user?.email}</div>
+                  </div>
+                </div>
+                <button onClick={async()=>{ try{ await supabase.auth.signOut(); }catch{} window.location.reload(); }}
+                  style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"transparent",border:"1px solid var(--border-solid)",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>Sign out</button>
+              </div>
+            )}
             <div style={{display:"grid",gap:16}}>
               <Card>
                 <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:16}}>Company details</div>
@@ -4257,4 +4332,117 @@ Rules:
 
     </div>
   );
+}
+
+// --- Auth gate + login screen ------------------------------------------------
+function LoginScreen({ onLoggedIn }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const submit = async () => {
+    if (!email.trim() || !password) { setMsg("Enter an email and password."); return; }
+    setBusy(true); setMsg("");
+    try {
+      if (mode === "signup") {
+        const { error } = await supabase.auth.signUp({ email: email.trim(), password });
+        if (error) { setMsg(error.message); setBusy(false); return; }
+        // If email confirmation is off, signUp also signs them in
+        const { data } = await supabase.auth.getSession();
+        if (data?.session) { onLoggedIn(data.session); return; }
+        setMsg("Account created. You can now sign in.");
+        setMode("signin");
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (error) { setMsg(error.message); setBusy(false); return; }
+        if (data?.session) { onLoggedIn(data.session); return; }
+      }
+    } catch (e) { setMsg("Something went wrong. Please try again."); }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{minHeight:"100vh",minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#101013,#15211b)",padding:"24px",fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif"}}>
+      <div style={{width:"100%",maxWidth:380,background:"#FFFFFF",borderRadius:20,padding:"34px 30px",boxShadow:"0 20px 60px rgba(0,0,0,0.35)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:11,marginBottom:24}}>
+          <div style={{width:42,height:42,borderRadius:12,background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
+          </div>
+          <span style={{fontSize:22,fontWeight:800,color:"#1A1A17",letterSpacing:"-0.02em"}}>Pro<span style={{color:"#15824F"}}>Quote</span></span>
+        </div>
+        <div style={{fontSize:18,fontWeight:800,color:"#1A1A17",marginBottom:4}}>{mode==="signup"?"Create your account":"Welcome back"}</div>
+        <div style={{fontSize:13,color:"#5C5B54",marginBottom:20}}>{mode==="signup"?"Set up a login to access ProQuote.":"Sign in to access your procurement dashboard."}</div>
+
+        <label style={{fontSize:11,fontWeight:600,color:"#5C5B54",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Email</label>
+        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" placeholder="you@company.co.uk"
+          style={{width:"100%",padding:"11px 13px",border:"1px solid #E2E1DA",borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
+
+        <label style={{fontSize:11,fontWeight:600,color:"#5C5B54",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Password</label>
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete={mode==="signup"?"new-password":"current-password"} placeholder="Your password"
+          onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
+          style={{width:"100%",padding:"11px 13px",border:"1px solid #E2E1DA",borderRadius:10,fontSize:14,marginBottom:18,outline:"none"}}/>
+
+        {msg && <div style={{fontSize:12.5,color:"#9A5B16",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:"9px 12px",marginBottom:14}}>{msg}</div>}
+
+        <button onClick={submit} disabled={busy}
+          style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?0.7:1,marginBottom:14}}>
+          {busy ? "Please wait..." : (mode==="signup"?"Create account":"Sign in")}
+        </button>
+
+        <div style={{textAlign:"center",fontSize:12.5,color:"#5C5B54"}}>
+          {mode==="signup" ? "Already have a login? " : "Need an account? "}
+          <button onClick={()=>{setMode(mode==="signup"?"signin":"signup");setMsg("");}}
+            style={{background:"none",border:"none",color:"#15824F",fontWeight:700,cursor:"pointer",fontSize:12.5}}>
+            {mode==="signup"?"Sign in":"Create one"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  // If cloud isn't configured, run the app exactly as before (browser-only).
+  if (!cloudEnabled) return <ProQuoteApp session={null} />;
+
+  const [session, setSession] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [ready, setReady] = useState(false);
+
+  // On mount, check for an existing session and subscribe to changes
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setSession(data?.session || null);
+      setChecking(false);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s || null);
+    });
+    return () => { active = false; sub?.subscription?.unsubscribe(); };
+  }, []);
+
+  // When a session appears, pull cloud data into localStorage before showing the app
+  useEffect(() => {
+    let active = true;
+    if (session?.user?.id) {
+      setReady(false);
+      cloudPull(session.user.id).then(() => { if (active) setReady(true); });
+    } else {
+      setReady(false);
+    }
+    return () => { active = false; };
+  }, [session]);
+
+  if (checking) {
+    return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#101013",color:"white",fontFamily:"'Plus Jakarta Sans',sans-serif",fontSize:14}}>Loading...</div>;
+  }
+  if (!session) return <LoginScreen onLoggedIn={setSession} />;
+  if (!ready) {
+    return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#101013",color:"white",fontFamily:"'Plus Jakarta Sans',sans-serif",fontSize:14}}>Syncing your data...</div>;
+  }
+  return <ProQuoteApp session={session} />;
 }
