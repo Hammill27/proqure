@@ -1046,15 +1046,22 @@ function ProQuoteApp({ session }) {
   useEffect(() => {
     if (!myEmail) return;
     setTeam(prev => {
-      const exists = prev.some(m => (m.email||"").toLowerCase() === myEmail);
-      if (exists) return prev;
-      const isFirst = prev.length === 0;
+      // Migration: the old "owner" role was merged into "manager". Rewrite any stragglers.
+      let base = prev;
+      if (prev.some(m => m.role === "owner")) {
+        base = prev.map(m => m.role === "owner" ? { ...m, role: "manager" } : m);
+      }
+      const exists = base.some(m => (m.email||"").toLowerCase() === myEmail);
+      if (exists) return base;
+      const isFirst = base.length === 0;
       const me = { email: myEmail, name: "", role: isFirst ? "manager" : "engineer", addedAt: new Date().toISOString(), active: true };
-      return [...prev, me];
+      return [...base, me];
     });
   }, [myEmail]);
   const myMember = team.find(m => (m.email||"").toLowerCase() === myEmail) || null;
-  const myRole = myMember?.role || (cloudEnabled ? "engineer" : "manager");
+  // Defensive: treat the retired "owner" role (or any unknown role) as manager / engineer sensibly.
+  const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
+  const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
   // If the user is on a view their role can't access, send them to the dashboard.
   useEffect(() => {
     const need = ({ library:2, team:3, settings:3 })[view];
