@@ -33,6 +33,7 @@ const can = {
   manageTeam:  (role) => roleRank(role) >= 3,   // manager and above
   editSettings:(role) => roleRank(role) >= 3,   // manager and above
   createRequest:(role)=> roleRank(role) >= 1,   // everyone
+  deleteItems: (role) => roleRank(role) >= 3,   // manager and above - archive/delete
 };
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
@@ -1258,11 +1259,13 @@ function ProQuoteApp({ session }) {
   const supported = voiceOk;
   const toggleListen = () => { listening ? micStop() : micStart(); };
 
+  // Active (non-archived) requests power all the normal views; archived are kept but hidden.
+  const liveRequests = requests.filter(r=>!r.archived);
   const stats = {
-    total:    requests.length,
-    pending:  requests.filter(r=>r.status==="pending").length,
-    received: requests.filter(r=>r.status==="received").length,
-    approved: requests.filter(r=>r.status==="approved").length,
+    total:    liveRequests.length,
+    pending:  liveRequests.filter(r=>r.status==="pending").length,
+    received: liveRequests.filter(r=>r.status==="received").length,
+    approved: liveRequests.filter(r=>r.status==="approved").length,
   };
 
   const filteredSup = suppliers.filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
@@ -1276,12 +1279,45 @@ function ProQuoteApp({ session }) {
   }
 
   function handleDelete(id) {
-    logToRequest(id, "Deleted", "Request permanently deleted");
-    setRequests(p=>p.filter(r=>r.id!==id));
-    setSavedQuoteSets(prev=>prev.filter(s=>s.reqId!==id));
+    if (!can.deleteItems(myRole)) { showToast("Only a Manager or Owner can archive requests.","warn"); setDeleteConfirm(null); return; }
+    const req = requests.find(r=>r.id===id);
+    logToRequest(id, "Archived", "Request archived");
+    logActivity("Request archived", `${req?.jobRef||id} archived${req?.trade?` (${req.trade})`:""}`, { entity:"request", reqId:id });
+    setRequests(p=>p.map(r=>r.id===id?{...r,archived:true,archivedAt:new Date().toISOString(),archivedBy:myEmail}:r));
+    setSavedQuoteSets(prev=>prev.map(s=>s.reqId===id?{...s,archived:true}:s));
     if (activeReq?.id===id) { setActiveReq(null); setAllAnalyses([]); }
     setDeleteConfirm(null);
-    showToast("Request deleted");
+    showToast("Request archived - find it under Archived in All requests");
+  }
+
+  function handleRestore(id) {
+    if (!can.deleteItems(myRole)) { showToast("Only a Manager or Owner can restore items.","warn"); return; }
+    const req = requests.find(r=>r.id===id);
+    logActivity("Request restored", `${req?.jobRef||id} restored from archive`, { entity:"request", reqId:id });
+    setRequests(p=>p.map(r=>r.id===id?{...r,archived:false,archivedAt:null,archivedBy:null}:r));
+    setSavedQuoteSets(prev=>prev.map(s=>s.reqId===id?{...s,archived:false}:s));
+    showToast("Request restored");
+  }
+
+  function handleResetWorkspace() {
+    if (roleRank(myRole) < 4) { showToast("Only the Owner can reset the workspace.","warn"); setResetConfirm(false); return; }
+    const stamp = new Date().toISOString();
+    setRequests(p=>p.map(r=>r.archived?r:{...r,archived:true,archivedAt:stamp,archivedBy:myEmail}));
+    setSavedQuoteSets(p=>p.map(s=>({...s,archived:true})));
+    setOrders(p=>p.map(o=>(o.status==="cancelled")?o:{...o,status:"cancelled",cancelledAt:stamp,cancelledBy:myEmail,resetArchived:true}));
+    logActivity("Workspace reset", "All requests archived and orders cancelled to start fresh - records retained", { entity:"workspace" });
+    setResetConfirm(false);
+    setActiveReq(null); setAllAnalyses([]);
+    showToast("Workspace reset - everything is archived and recoverable, nothing was deleted");
+  }
+
+  function handleCancelOrder(orderId) {
+    if (!can.deleteItems(myRole)) { showToast("Only a Manager or Owner can cancel orders.","warn"); return; }
+    const order = orders.find(o=>o.id===orderId);
+    setOrders(p=>p.map(o=>o.id===orderId?{...o,status:"cancelled",cancelledAt:new Date().toISOString(),cancelledBy:myEmail}:o));
+    logActivity("Order cancelled", `${order?.poNumber||orderId}${order?.supplier?` (${order.supplier})`:""} cancelled`, { entity:"order", jobRef:order?.jobRef });
+    setCancelOrderConfirm(null);
+    showToast("Order cancelled - the record is kept for your audit trail");
   }
 
   function handleEditSave() {
@@ -1794,6 +1830,9 @@ ${settings.company||""}`;
   const [reqFilterStatus, setReqFilterStatus] = useState("all");
   const [reqFilterTrade, setReqFilterTrade] = useState("all");
   const [reqSearch, setReqSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
+  const [resetConfirm, setResetConfirm] = useState(false);
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0");}catch{} return n; });
   // Keep the page (html/body) background in sync with the theme so no white edges show
@@ -3015,11 +3054,11 @@ Rules:
             {!isMobile&&(
               <div style={{width:220,flexShrink:0,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:"var(--shadow-sm)",position:"sticky",top:16}}>
                 <div style={{padding:"14px 16px",borderBottom:"1px solid var(--border)",fontSize:12,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Requests</div>
-                {requests.filter(r=>r.status==="pending"||r.status==="received").length===0?(
+                {liveRequests.filter(r=>r.status==="pending"||r.status==="received").length===0?(
                   <div style={{padding:"20px 16px",fontSize:12,color:"var(--text-tertiary)",textAlign:"center"}}>No active requests</div>
                 ):(
                   <div>
-                    {requests.filter(r=>r.status==="pending"||r.status==="received").map(r=>{
+                    {liveRequests.filter(r=>r.status==="pending"||r.status==="received").map(r=>{
                       const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
                       const quotesTotal = (r.sentTo||[]).length;
                       const isActive = activeReq?.id===r.id;
@@ -3043,7 +3082,7 @@ Rules:
                 <>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
                   <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16}}>Select a request to start analysing quotes</div>
-                  {requests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
+                  {liveRequests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
                     <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
                   )}
                   {isMobile&&requests.filter(r=>r.status==="pending"||r.status==="received").length>0&&(
@@ -3648,6 +3687,7 @@ Rules:
                                   <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
                                     <Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",confirmedAt:new Date().toISOString()}:o));logActivity("Order confirmed",`${order.poNumber} (${order.supplier}) marked as confirmed`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as confirmed</Btn>
                                     <Btn outline onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o));logActivity("Order delivered",`${order.poNumber} (${order.supplier}) marked as delivered`,{entity:"order",jobRef:order.jobRef});}}>Mark as delivered</Btn>
+                                    {can.deleteItems(myRole) && order.status!=="cancelled" && <Btn outline onClick={()=>setCancelOrderConfirm(order)} style={{color:"var(--red)"}}>Cancel order</Btn>}
                                   </div>
                                   <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer",marginBottom:10}}>
                                     <input type="file" accept=".pdf,.jpg,.png,.doc,.docx" style={{display:"none"}} onChange={e=>handleOrderConfirmationUpload(e.target.files[0],order.id)}/>
@@ -3698,7 +3738,7 @@ Rules:
                 <Card key={s.id}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                     <div style={{width:40,height:40,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:16,flexShrink:0}}>{s.name[0]}</div>
-                    <button onClick={()=>setSuppliers(p=>p.filter(x=>x.id!==s.id))} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
+                    <button onClick={()=>{ if(!can.deleteItems(myRole)){showToast("Only a Manager or Owner can remove suppliers.","warn");return;} logActivity("Supplier removed",`${s.name} removed from suppliers`,{entity:"supplier"}); setSuppliers(p=>p.filter(x=>x.id!==s.id)); showToast("Supplier removed"); }} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
                   </div>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:3}}>{s.name}</div>
                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:8}}>{s.email}</div>
@@ -3795,6 +3835,10 @@ Rules:
                 )}
               </div>
             )}
+            <div style={{display:"flex",gap:8,marginBottom:14}}>
+              <button onClick={()=>setShowArchived(false)} style={{fontSize:12,fontWeight:600,padding:"7px 16px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:!showArchived?"var(--green-dark)":"var(--bg-card-solid)",color:!showArchived?"white":"var(--text-secondary)"}}>Active</button>
+              <button onClick={()=>setShowArchived(true)} style={{fontSize:12,fontWeight:600,padding:"7px 16px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:showArchived?"var(--green-dark)":"var(--bg-card-solid)",color:showArchived?"white":"var(--text-secondary)"}}>Archived ({requests.filter(r=>r.archived).length})</button>
+            </div>
             <Card>
               {requests.length===0?(
                 <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
@@ -3807,6 +3851,7 @@ Rules:
                     <span>ID</span><span>Job ref</span><span>Trade</span><span>Status</span><span>Quotes</span><span>Actions</span>
                   </div>
                   {requests.filter(r=>{
+                    if(showArchived ? !r.archived : r.archived) return false;
                     if(reqFilterStatus!=="all"&&r.status!==reqFilterStatus) return false;
                     if(reqFilterTrade!=="all"&&r.trade!==reqFilterTrade) return false;
                     if(reqSearch){
@@ -3846,7 +3891,10 @@ Rules:
                           <button onClick={()=>handleDuplicate(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
                           <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
                           <button onClick={()=>setActivityModal(r)} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
-                          <button onClick={()=>setDeleteConfirm(r)} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Del</button>
+                          {can.deleteItems(myRole) && (r.archived
+                            ? <button onClick={()=>handleRestore(r.id)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Restore</button>
+                            : <button onClick={()=>setDeleteConfirm(r)} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Archive</button>
+                          )}
                         </div>
                       </div>
                     );
@@ -3938,6 +3986,7 @@ Rules:
                           </td>
                           <td style={{padding:"9px 12px",textAlign:"right"}}>
                             <button onClick={()=>{
+                              if(!can.deleteItems(myRole)){showToast("Only a Manager or Owner can remove library quotes.","warn");return;}
                               setQuoteLibrary(prev=>{const n=prev.filter(x=>x.id!==q.id);try{localStorage.setItem("piq_quote_library",JSON.stringify(n))}catch{};return n;});
                               logActivity("Library quote removed",`${q.supplierName} - ${q.jobRef||""} removed from library`,{entity:"quote"});
                               showToast("Quote removed from library");
@@ -4327,6 +4376,13 @@ Rules:
                 <Btn outline onClick={()=>setSForm({...settings})}>Reset</Btn>
               </div>
             </div>
+            {roleRank(myRole) >= 4 && (
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Start fresh</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>Clears your workspace to begin again - all current requests are archived and all orders are cancelled. <strong>Nothing is deleted</strong>; everything stays recoverable under Archived and in your activity log. Owner only.</div>
+                <button onClick={()=>setResetConfirm(true)} style={{fontSize:13,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"1px solid var(--red)",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer"}}>Reset workspace</button>
+              </Card>
+            )}
           </div>
         )}
 
@@ -4452,15 +4508,41 @@ Rules:
         </div>
       )}
 
+      {resetConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setResetConfirm(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 30px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Reset the workspace?</div>
+            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>This archives every current request and cancels every order, giving you a clean slate. Nothing is destroyed - it all stays under Archived and in your activity log, and can be restored. This is logged against your account.</div>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <Btn outline onClick={()=>setResetConfirm(false)}>Keep everything</Btn>
+              <Btn color="#D14343" onClick={handleResetWorkspace}>Reset workspace</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelOrderConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setCancelOrderConfirm(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 30px",maxWidth:400,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Cancel this order?</div>
+            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>The order will be marked as cancelled but kept on record for your audit trail. It won't be deleted. If you've already sent the PO to the supplier, remember to let them know separately.</div>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <Btn outline onClick={()=>setCancelOrderConfirm(null)}>Keep order</Btn>
+              <Btn color="#D14343" onClick={()=>handleCancelOrder(cancelOrderConfirm.id)}>Cancel order</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteConfirm&&(
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:400,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="trash" size={34} color="var(--red)"/></div>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Delete this request?</div>
-            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>This cannot be undone. The request, quotes, and all associated data will be permanently removed.</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Archive this request?</div>
+            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>It will be hidden from your active list but kept safely under Archived, so you can restore it later if needed.</div>
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
               <Btn outline onClick={()=>setDeleteConfirm(null)}>Cancel</Btn>
-              <Btn color="#D14343" onClick={()=>{setRequests(p=>p.filter(r=>r.id!==deleteConfirm.id));if(activeReq?.id===deleteConfirm.id){setActiveReq(null);setAllAnalyses([]);}setDeleteConfirm(null);showToast("Request deleted");}}>Delete</Btn>
+              <Btn color="#D14343" onClick={()=>handleDelete(deleteConfirm.id)}>Archive</Btn>
             </div>
           </div>
         </div>
