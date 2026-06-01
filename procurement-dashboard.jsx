@@ -17,10 +17,27 @@ const cloudEnabled = !!(SB_URL && SB_KEY);
 const AI_VIA_SERVER = true;
 // Email also goes through the /api/send-email server function (central Resend key).
 const EMAIL_VIA_SERVER = true;
+
+// --- Roles & permissions ------------------------------------------------------
+// Hierarchy (high to low): owner > manager > buyer > engineer
+const ROLES = {
+  owner:    { label: "Owner",    rank: 4, desc: "Full access, manages the team and billing" },
+  manager:  { label: "Manager",  rank: 3, desc: "Manages the team and approves orders" },
+  buyer:    { label: "Buyer",    rank: 2, desc: "Approves purchase orders, full procurement" },
+  engineer: { label: "Engineer", rank: 1, desc: "Creates requests and analyses quotes" },
+};
+const roleRank = (r) => (ROLES[r]?.rank || 0);
+// Permission helpers — what each role can do
+const can = {
+  approvePO:   (role) => roleRank(role) >= 2,   // buyer and above
+  manageTeam:  (role) => roleRank(role) >= 3,   // manager and above
+  editSettings:(role) => roleRank(role) >= 3,   // manager and above
+  createRequest:(role)=> roleRank(role) >= 1,   // everyone
+};
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team"];
 
 // Pull every key for this user from the cloud into localStorage (on login)
 async function cloudPull(userId) {
@@ -959,6 +976,56 @@ function ProQuoteApp({ session }) {
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
+  const [team, setTeam] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_team")||"[]")}catch{return []} });
+  const myEmail = (session?.user?.email || "").toLowerCase();
+  // Ensure the signed-in user exists in the team. First-ever user becomes Owner.
+  useEffect(() => {
+    if (!myEmail) return;
+    setTeam(prev => {
+      const exists = prev.some(m => (m.email||"").toLowerCase() === myEmail);
+      if (exists) return prev;
+      const isFirst = prev.length === 0;
+      const me = { email: myEmail, name: "", role: isFirst ? "owner" : "engineer", addedAt: new Date().toISOString(), active: true };
+      return [...prev, me];
+    });
+  }, [myEmail]);
+  const myMember = team.find(m => (m.email||"").toLowerCase() === myEmail) || null;
+  const myRole = myMember?.role || (cloudEnabled ? "engineer" : "owner");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("engineer");
+  function handleInviteMember() {
+    if (!can.manageTeam(myRole)) { showToast("Only a Manager or Owner can add members.","warn"); return; }
+    const email = inviteEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) { showToast("Enter a valid email address.","warn"); return; }
+    if (team.some(m => (m.email||"").toLowerCase() === email)) { showToast("That person is already on the team.","warn"); return; }
+    setTeam(prev => [...prev, { email, name:"", role: inviteRole, addedAt: new Date().toISOString(), active: true }]);
+    logActivity("Team member added", `${email} added as ${ROLES[inviteRole]?.label||inviteRole}`, { entity:"team" });
+    setInviteEmail(""); setInviteRole("engineer");
+    showToast(`${email} added. They can sign in with this email to join.`);
+  }
+  function handleChangeRole(email, newRole) {
+    if (!can.manageTeam(myRole)) { showToast("Only a Manager or Owner can change roles.","warn"); return; }
+    const target = (email||"").toLowerCase();
+    // Safety: don't allow removing the last owner
+    const owners = team.filter(m => m.role === "owner");
+    if (owners.length === 1 && (owners[0].email||"").toLowerCase() === target && newRole !== "owner") {
+      showToast("There must be at least one Owner. Promote someone else first.","warn"); return;
+    }
+    setTeam(prev => prev.map(m => (m.email||"").toLowerCase() === target ? { ...m, role: newRole } : m));
+    logActivity("Role changed", `${email} is now ${ROLES[newRole]?.label||newRole}`, { entity:"team" });
+    showToast("Role updated.");
+  }
+  function handleRemoveMember(email) {
+    if (!can.manageTeam(myRole)) { showToast("Only a Manager or Owner can remove members.","warn"); return; }
+    const target = (email||"").toLowerCase();
+    const owners = team.filter(m => m.role === "owner");
+    if (owners.length === 1 && (owners[0].email||"").toLowerCase() === target) {
+      showToast("You can't remove the only Owner.","warn"); return;
+    }
+    setTeam(prev => prev.filter(m => (m.email||"").toLowerCase() !== target));
+    logActivity("Team member removed", `${email} removed from the team`, { entity:"team" });
+    showToast("Member removed.");
+  }
 
   // Wizard state
   const [step,     setStep]     = useState(1);
@@ -1384,6 +1451,12 @@ function ProQuoteApp({ session }) {
 
   async function handleApprovePO(qa) {
     const analysis = qa || quoteAnalysis;
+    // Permission: only Buyer and above can approve POs
+    if (!can.approvePO(myRole)) {
+      showToast("Only a Buyer, Manager or Owner can approve purchase orders.","warn");
+      setApproveConfirm(null);
+      return;
+    }
     // Guard: prevent approving a second quote for a request that already has an approved PO
     const existingApproved = activeReq && (activeReq.status==="approved" || orders.some(o=>o.reqId===activeReq.id));
     if (existingApproved) {
@@ -1652,6 +1725,7 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
+  useEffect(()=>{ try{localStorage.setItem("piq_team",JSON.stringify(team))}catch{} },[team]);
 
   // --- Cloud push: mirror changes up to Supabase (debounced) ----------------
   const cloudUserId = session?.user?.id || null;
@@ -1669,6 +1743,7 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_quote_library", quoteLibrary); }, [quoteLibrary, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_templates", templates); }, [templates, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_quote_sets", savedQuoteSets.slice(0,100)); }, [savedQuoteSets, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_team", team); }, [team, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
 
   // Spend by trade (from approved orders)
@@ -1722,6 +1797,7 @@ ${settings.company||""}`;
           {id:"quotes",   label:"Quotes",         d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
           {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
+          {id:"team",     label:"Team",           d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
           {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
           {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
           {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
@@ -3196,7 +3272,9 @@ Rules:
                                     </>
                                   ):(
                                     <>
-                                      <Btn onClick={()=>setApproveConfirm(qa)} color="#15824F">Approve & generate PO</Btn>
+                                      {can.approvePO(myRole)
+                                        ? <Btn onClick={()=>setApproveConfirm(qa)} color="#15824F">Approve & generate PO</Btn>
+                                        : <div style={{fontSize:12,color:"var(--text-tertiary)",padding:"8px 12px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)"}}>A Buyer or Manager approves the PO</div>}
                                       <Btn outline onClick={()=>handleSaveDraftQuote(qa)}>Save to library</Btn>
                                     </>
                                   )}
@@ -3904,6 +3982,71 @@ Rules:
           </div>
         )}
 
+        {view==="team"&&(
+          <div className="stagger-in" style={{maxWidth:820}}>
+            <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Team</h1>
+            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Manage who has access and what they can do. Your role: <strong style={{color:"var(--green-dark)"}}>{ROLES[myRole]?.label||"Member"}</strong></p>
+
+            {can.manageTeam(myRole) && (
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Invite someone</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14}}>Add a colleague by email and choose their role. They sign in with that email to join.</div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} placeholder="colleague@company.co.uk" type="email"
+                    style={{flex:"1 1 240px",padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  <select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}
+                    style={{padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}>
+                    <option value="engineer">Engineer</option>
+                    <option value="buyer">Buyer</option>
+                    <option value="manager">Manager</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                  <Btn color="#15824F" onClick={handleInviteMember}>Add member</Btn>
+                </div>
+                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:10,lineHeight:1.5}}>Engineers create requests and analyse quotes. Buyers and above can approve purchase orders. Managers and Owners can manage the team.</div>
+              </Card>
+            )}
+
+            <Card>
+              <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:14}}>Team members ({team.length})</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {team.map((m,mi)=>{
+                  const isMe = (m.email||"").toLowerCase()===myEmail;
+                  return (
+                    <div key={m.email||mi} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",flexWrap:"wrap"}}>
+                      <div style={{width:38,height:38,borderRadius:"50%",background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:700,color:"var(--green-dark)",fontSize:15}}>
+                        {(m.email||"?")[0].toUpperCase()}
+                      </div>
+                      <div style={{flex:"1 1 200px",minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.email}{isMe&&<span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:400}}> (you)</span>}</div>
+                        <div style={{fontSize:11,color:"var(--text-secondary)"}}>{ROLES[m.role]?.desc||""}</div>
+                      </div>
+                      {can.manageTeam(myRole) && !isMe ? (
+                        <select value={m.role} onChange={e=>handleChangeRole(m.email,e.target.value)}
+                          style={{padding:"7px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}>
+                          <option value="engineer">Engineer</option>
+                          <option value="buyer">Buyer</option>
+                          <option value="manager">Manager</option>
+                          <option value="owner">Owner</option>
+                        </select>
+                      ) : (
+                        <span style={{fontSize:11,fontWeight:700,padding:"4px 12px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>{ROLES[m.role]?.label||"Member"}</span>
+                      )}
+                      {can.manageTeam(myRole) && !isMe && (
+                        <button onClick={()=>handleRemoveMember(m.email)} aria-label="Remove member"
+                          style={{background:"var(--red-light)",color:"var(--red)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:600}}>Remove</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {!can.manageTeam(myRole) && (
+                <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:14,lineHeight:1.5}}>Only a Manager or Owner can invite people or change roles. Speak to your admin if you need access changed.</div>
+              )}
+            </Card>
+          </div>
+        )}
+
         {view==="contact"&&(
           <div className="stagger-in" style={{maxWidth:760}}>
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
@@ -4073,7 +4216,7 @@ Rules:
                 </div>
               </Card>
               <div style={{display:"flex",gap:10}}>
-                <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}} color="#5B5BD6">Save settings</Btn>
+                <Btn onClick={()=>{ if(!can.editSettings(myRole)){showToast("Only a Manager or Owner can change company settings.","warn");return;} saveSettings(sForm);showToast("Settings saved");}} color="#5B5BD6">Save settings</Btn>
                 <Btn outline onClick={()=>setSForm({...settings})}>Reset</Btn>
               </div>
             </div>
@@ -4118,6 +4261,7 @@ Rules:
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
                     {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building"},
+                    {id:"team",     label:"Team",            sub:"People and roles",                icon:"building"},
                     {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books"},
                     {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
                     {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"mail"},
