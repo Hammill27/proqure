@@ -19,21 +19,24 @@ const AI_VIA_SERVER = true;
 const EMAIL_VIA_SERVER = true;
 
 // --- Roles & permissions ------------------------------------------------------
-// Hierarchy (high to low): owner > manager > buyer > engineer
+// Hierarchy (high to low): manager > buyer > engineer
 const ROLES = {
-  owner:    { label: "Owner",    rank: 4, desc: "Full access, manages the team and billing", color: "#15824F", bg: "#DFF3E8" },
-  manager:  { label: "Manager",  rank: 3, desc: "Manages the team and approves orders",       color: "#4A4AB8", bg: "#EEEEFB" },
-  buyer:    { label: "Buyer",    rank: 2, desc: "Approves purchase orders, full procurement",  color: "#9A5B16", bg: "#FBF3E8" },
-  engineer: { label: "Engineer", rank: 1, desc: "Creates requests and analyses quotes",        color: "#5C6B7A", bg: "#EEF1F4" },
+  manager:  { label: "Manager",  rank: 3, desc: "Full access, manages the team and approves everything", color: "#4A4AB8", bg: "#EEEEFB" },
+  buyer:    { label: "Buyer",    rank: 2, desc: "Sends RFQs, handles quotes, raises purchase orders",  color: "#9A5B16", bg: "#FBF3E8" },
+  engineer: { label: "Engineer", rank: 1, desc: "Raises the materials list and signs off deliveries",  color: "#5C6B7A", bg: "#EEF1F4" },
 };
 const roleRank = (r) => (ROLES[r]?.rank || 0);
 // Permission helpers — what each role can do
 const can = {
-  approvePO:   (role) => roleRank(role) >= 2,   // buyer and above
-  manageTeam:  (role) => roleRank(role) >= 3,   // manager and above
-  editSettings:(role) => roleRank(role) >= 3,   // manager and above
-  createRequest:(role)=> roleRank(role) >= 1,   // everyone
-  deleteItems: (role) => roleRank(role) >= 3,   // manager and above - archive/delete
+  approvePO:   (role) => roleRank(role) >= 2,   // buyer and above (manager approval is a separate toggle)
+  manageTeam:  (role) => roleRank(role) >= 3,   // manager only
+  editSettings:(role) => roleRank(role) >= 3,   // manager only
+  createRequest:(role)=> roleRank(role) >= 1,   // everyone can raise a materials list
+  deleteItems: (role) => roleRank(role) >= 3,   // manager only - archive/delete
+  sendRFQ:     (role) => roleRank(role) >= 2,   // buyer and above send RFQs to suppliers
+  raisePO:     (role) => roleRank(role) >= 2,   // buyer and above raise purchase orders
+  viewCosts:   (role) => roleRank(role) >= 2,   // buyer and above see quote prices and spend
+  viewAllJobs: (role) => roleRank(role) >= 2,   // buyer and above see all jobs; engineers see only their own
 };
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
@@ -1039,19 +1042,19 @@ function ProQuoteApp({ session }) {
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
   const [team, setTeam] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_team")||"[]")}catch{return []} });
   const myEmail = (session?.user?.email || "").toLowerCase();
-  // Ensure the signed-in user exists in the team. First-ever user becomes Owner.
+  // Ensure the signed-in user exists in the team. First-ever user becomes Manager.
   useEffect(() => {
     if (!myEmail) return;
     setTeam(prev => {
       const exists = prev.some(m => (m.email||"").toLowerCase() === myEmail);
       if (exists) return prev;
       const isFirst = prev.length === 0;
-      const me = { email: myEmail, name: "", role: isFirst ? "owner" : "engineer", addedAt: new Date().toISOString(), active: true };
+      const me = { email: myEmail, name: "", role: isFirst ? "manager" : "engineer", addedAt: new Date().toISOString(), active: true };
       return [...prev, me];
     });
   }, [myEmail]);
   const myMember = team.find(m => (m.email||"").toLowerCase() === myEmail) || null;
-  const myRole = myMember?.role || (cloudEnabled ? "engineer" : "owner");
+  const myRole = myMember?.role || (cloudEnabled ? "engineer" : "manager");
   // If the user is on a view their role can't access, send them to the dashboard.
   useEffect(() => {
     const need = ({ library:2, team:3, settings:3 })[view];
@@ -1060,7 +1063,7 @@ function ProQuoteApp({ session }) {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("engineer");
   function handleInviteMember() {
-    if (!can.manageTeam(myRole)) { showToast("Only a Manager or Owner can add members.","warn"); return; }
+    if (!can.manageTeam(myRole)) { showToast("Only a Manager can add members.","warn"); return; }
     const email = inviteEmail.trim().toLowerCase();
     if (!email || !email.includes("@")) { showToast("Enter a valid email address.","warn"); return; }
     if (team.some(m => (m.email||"").toLowerCase() === email)) { showToast("That person is already on the team.","warn"); return; }
@@ -1071,24 +1074,24 @@ function ProQuoteApp({ session }) {
     showToast(`${email} added. They can sign in with this email to join.`);
   }
   function handleChangeRole(email, newRole) {
-    if (!can.manageTeam(myRole)) { showToast("Only a Manager or Owner can change roles.","warn"); return; }
+    if (!can.manageTeam(myRole)) { showToast("Only a Manager can change roles.","warn"); return; }
     const target = (email||"").toLowerCase();
     if (roleRank(newRole) > roleRank(myRole)) { showToast("You can only assign roles up to your own level.","warn"); return; }
-    // Safety: don't allow removing the last owner
-    const owners = team.filter(m => m.role === "owner");
-    if (owners.length === 1 && (owners[0].email||"").toLowerCase() === target && newRole !== "owner") {
-      showToast("There must be at least one Owner. Promote someone else first.","warn"); return;
+    // Safety: don't allow removing the last manager
+    const managers = team.filter(m => m.role === "manager");
+    if (managers.length === 1 && (managers[0].email||"").toLowerCase() === target && newRole !== "manager") {
+      showToast("There must be at least one Manager. Promote someone else first.","warn"); return;
     }
     setTeam(prev => prev.map(m => (m.email||"").toLowerCase() === target ? { ...m, role: newRole } : m));
     logActivity("Role changed", `${email} is now ${ROLES[newRole]?.label||newRole}`, { entity:"team" });
     showToast("Role updated.");
   }
   function handleRemoveMember(email) {
-    if (!can.manageTeam(myRole)) { showToast("Only a Manager or Owner can remove members.","warn"); return; }
+    if (!can.manageTeam(myRole)) { showToast("Only a Manager can remove members.","warn"); return; }
     const target = (email||"").toLowerCase();
-    const owners = team.filter(m => m.role === "owner");
-    if (owners.length === 1 && (owners[0].email||"").toLowerCase() === target) {
-      showToast("You can't remove the only Owner.","warn"); return;
+    const managers = team.filter(m => m.role === "manager");
+    if (managers.length === 1 && (managers[0].email||"").toLowerCase() === target) {
+      showToast("You can't remove the only Manager.","warn"); return;
     }
     setTeam(prev => prev.filter(m => (m.email||"").toLowerCase() !== target));
     logActivity("Team member removed", `${email} removed from the team`, { entity:"team" });
@@ -1261,11 +1264,13 @@ function ProQuoteApp({ session }) {
 
   // Active (non-archived) requests power all the normal views; archived are kept but hidden.
   const liveRequests = requests.filter(r=>!r.archived);
+  // Engineers only see jobs they created; buyers and managers see everything.
+  const visibleRequests = can.viewAllJobs(myRole) ? liveRequests : liveRequests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail);
   const stats = {
-    total:    liveRequests.length,
-    pending:  liveRequests.filter(r=>r.status==="pending").length,
-    received: liveRequests.filter(r=>r.status==="received").length,
-    approved: liveRequests.filter(r=>r.status==="approved").length,
+    total:    visibleRequests.length,
+    pending:  visibleRequests.filter(r=>r.status==="pending").length,
+    received: visibleRequests.filter(r=>r.status==="received").length,
+    approved: visibleRequests.filter(r=>r.status==="approved").length,
   };
 
   const filteredSup = suppliers.filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
@@ -1279,7 +1284,7 @@ function ProQuoteApp({ session }) {
   }
 
   function handleDelete(id) {
-    if (!can.deleteItems(myRole)) { showToast("Only a Manager or Owner can archive requests.","warn"); setDeleteConfirm(null); return; }
+    if (!can.deleteItems(myRole)) { showToast("Only a Manager can archive requests.","warn"); setDeleteConfirm(null); return; }
     const req = requests.find(r=>r.id===id);
     logToRequest(id, "Archived", "Request archived");
     logActivity("Request archived", `${req?.jobRef||id} archived${req?.trade?` (${req.trade})`:""}`, { entity:"request", reqId:id });
@@ -1291,7 +1296,7 @@ function ProQuoteApp({ session }) {
   }
 
   function handleRestore(id) {
-    if (!can.deleteItems(myRole)) { showToast("Only a Manager or Owner can restore items.","warn"); return; }
+    if (!can.deleteItems(myRole)) { showToast("Only a Manager can restore items.","warn"); return; }
     const req = requests.find(r=>r.id===id);
     logActivity("Request restored", `${req?.jobRef||id} restored from archive`, { entity:"request", reqId:id });
     setRequests(p=>p.map(r=>r.id===id?{...r,archived:false,archivedAt:null,archivedBy:null}:r));
@@ -1300,7 +1305,7 @@ function ProQuoteApp({ session }) {
   }
 
   function handleResetWorkspace() {
-    if (roleRank(myRole) < 4) { showToast("Only the Owner can reset the workspace.","warn"); setResetConfirm(false); return; }
+    if (roleRank(myRole) < 3) { showToast("Only a Manager can reset the workspace.","warn"); setResetConfirm(false); return; }
     const stamp = new Date().toISOString();
     setRequests(p=>p.map(r=>r.archived?r:{...r,archived:true,archivedAt:stamp,archivedBy:myEmail}));
     setSavedQuoteSets(p=>p.map(s=>({...s,archived:true})));
@@ -1312,7 +1317,7 @@ function ProQuoteApp({ session }) {
   }
 
   function handleCancelOrder(orderId) {
-    if (!can.deleteItems(myRole)) { showToast("Only a Manager or Owner can cancel orders.","warn"); return; }
+    if (!can.deleteItems(myRole)) { showToast("Only a Manager can cancel orders.","warn"); return; }
     const order = orders.find(o=>o.id===orderId);
     setOrders(p=>p.map(o=>o.id===orderId?{...o,status:"cancelled",cancelledAt:new Date().toISOString(),cancelledBy:myEmail}:o));
     logActivity("Order cancelled", `${order?.poNumber||orderId}${order?.supplier?` (${order.supplier})`:""} cancelled`, { entity:"order", jobRef:order?.jobRef });
@@ -1392,14 +1397,17 @@ function ProQuoteApp({ session }) {
     if (ok > 0) {
       const sentSuppliers = toSend.map(s=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false }));
       const newId = `RFQ-${Date.now().toString().slice(-6)}`;
+      const isEngineer = roleRank(myRole) < 2;
       const r = {
         id: newId,
         jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
-        status:"pending",
+        status: isEngineer ? "awaiting-buyer" : "pending",
+        createdBy: myEmail, createdByRole: myRole,
+        buyerNote: isEngineer ? requestNotes : "",
         created: new Date().toISOString().split("T")[0],
         items: parsed.items,
         deliveryMethod, deliveryDate, altAddress, rfqDeadline,
-        sentTo: sentSuppliers,
+        sentTo: isEngineer ? [] : sentSuppliers,
         activity:[
           { ts:new Date().toISOString(), action:"Request created", detail:`Job: ${jobRef||"TBC"} · Site: ${site||"TBC"} · Trade: ${trade} · ${parsed.items.length} items`, user:settings.contactName||"You" },
           { ts:new Date().toISOString(), action:"RFQ emails sent", detail:`Sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}${rfqDeadline?` · Deadline: ${new Date(rfqDeadline).toLocaleDateString("en-GB")}`:""}${deliveryMethod?` · Delivery: ${deliveryMethod}`:""}`, user:settings.contactName||"You" },
@@ -1556,8 +1564,18 @@ function ProQuoteApp({ session }) {
     const analysis = qa || quoteAnalysis;
     // Permission: only Buyer and above can approve POs
     if (!can.approvePO(myRole)) {
-      showToast("Only a Buyer, Manager or Owner can approve purchase orders.","warn");
+      showToast("Only a Buyer or Manager can approve purchase orders.","warn");
       setApproveConfirm(null);
+      return;
+    }
+    // Manager-approval workflow: if the company requires it, a Buyer's PO needs a Manager to sign off.
+    if (settings.requirePoApproval && roleRank(myRole) < 3) {
+      const note = { ts:new Date().toISOString(), action:"PO submitted for approval", detail:`${analysis?.supplierName||"Supplier"} - awaiting Manager approval`, user:myEmail };
+      setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"awaiting-approval",pendingApproval:{supplierName:analysis?.supplierName||"",total:analysis?.estimatedTotal||analysis?.subtotal||"",analysisId:qa?._id||null,by:myEmail,ts:new Date().toISOString()},activity:[...(r.activity||[]),note]}:r));
+      setActiveReq(prev=>({...prev,status:"awaiting-approval"}));
+      logActivity("PO awaiting approval", `${activeReq?.jobRef||activeReq?.id} - ${analysis?.supplierName||"supplier"} submitted by ${myEmail}`, { entity:"request", reqId:activeReq?.id });
+      setApproveConfirm(null);
+      showToast("Sent to a Manager for approval");
       return;
     }
     // Guard: prevent approving a second quote for a request that already has an approved PO
@@ -1688,7 +1706,7 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 
 SETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQuote can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
 
-TEAMS & ROLES: A company has four roles, high to low: Owner, Manager, Buyer, Engineer. Anyone can raise material requests, but only a Buyer, Manager or Owner can APPROVE a purchase order. Managers and Owners can manage the team (invite people by email, assign roles) and edit company settings; they can only assign roles up to their own level. Engineers raise requests and review quotes and track deliveries, but do not see the Team, Settings or pricing Library sections. Owners and Managers add a colleague on the Team page by email and role; the colleague then signs up with that same email to join. There is a first-run guided tour for new users, and a Send feedback button in the menu.
+TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
 GETTING STARTED: brand-new users see a Welcome card on the dashboard with three quick steps (create a request, send to suppliers, analyse & approve) and a button to begin; it disappears once they have any activity. The app works on any device - on a phone it switches to a mobile layout with a bottom tab bar, and you can use the camera to scan documents on site. It has a polished dark and light mode, keyboard shortcuts, smooth animations, and is built to feel calm and professional throughout.
 
@@ -1833,6 +1851,7 @@ ${settings.company||""}`;
   const [showArchived, setShowArchived] = useState(false);
   const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [showPoSetup, setShowPoSetup] = useState(false);
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0");}catch{} return n; });
   // Keep the page (html/body) background in sync with the theme so no white edges show
@@ -1863,6 +1882,13 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_orders", orders); }, [orders, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_suppliers", suppliers); }, [suppliers, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_settings", settings); }, [settings, queueCloudPush]);
+  // One-time setup: ask a Manager whether buyers need approval to raise POs.
+  useEffect(()=>{
+    if (roleRank(myRole) >= 3 && !settings.poApprovalConfigured && tourStep < 0) {
+      const t = setTimeout(()=>setShowPoSetup(true), 600);
+      return ()=>clearTimeout(t);
+    }
+  }, [myRole, settings.poApprovalConfigured, tourStep]);
   useEffect(()=>{ queueCloudPush("piq_quote_library", quoteLibrary); }, [quoteLibrary, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_templates", templates); }, [templates, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_quote_sets", savedQuoteSets.slice(0,100)); }, [savedQuoteSets, queueCloudPush]);
@@ -1917,16 +1943,16 @@ ${settings.company||""}`;
           {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
           {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
           {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
-          {id:"quotes",   label:"Quotes",         d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
+          {id:"quotes",   label:"Quotes",         min:2, d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
-          {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
+          {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
           {id:"library",  label:"Library",        min:2, d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
           {id:"settings", label:"Settings",       min:3, d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
           {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
           {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
   ];
-  const VIEW_MIN_ROLE = { library:2, team:3, settings:3 };
+  const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, team:3, settings:3 };
   const handleNav = (id) => {
     const need = VIEW_MIN_ROLE[id];
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
@@ -2459,6 +2485,22 @@ Rules:
 
         {view==="dashboard"&&(
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:1000}}>
+
+            {/* Buyer notification: lists issued by engineers, awaiting action */}
+            {can.sendRFQ(myRole)&&liveRequests.filter(r=>r.status==="awaiting-buyer").length>0&&(
+              <div onClick={()=>setView("requests")} style={{cursor:"pointer",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderLeft:"4px solid #4A4AB8",borderRadius:"var(--radius-md)",padding:"14px 18px",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div><div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{liveRequests.filter(r=>r.status==="awaiting-buyer").length} materials list{liveRequests.filter(r=>r.status==="awaiting-buyer").length!==1?"s":""} waiting for you</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>Issued by an engineer - ready for you to send the RFQ</div></div>
+                <span style={{fontSize:12,fontWeight:600,color:"#4A4AB8"}}>View &rarr;</span>
+              </div>
+            )}
+
+            {/* Manager notification: POs awaiting approval */}
+            {roleRank(myRole)>=3&&liveRequests.filter(r=>r.status==="awaiting-approval").length>0&&(
+              <div onClick={()=>setView("requests")} style={{cursor:"pointer",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderLeft:"4px solid #9A5B16",borderRadius:"var(--radius-md)",padding:"14px 18px",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div><div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{liveRequests.filter(r=>r.status==="awaiting-approval").length} purchase order{liveRequests.filter(r=>r.status==="awaiting-approval").length!==1?"s":""} awaiting your approval</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>A buyer has selected a quote - review and approve to issue the PO</div></div>
+                <span style={{fontSize:12,fontWeight:600,color:"#9A5B16"}}>Review &rarr;</span>
+              </div>
+            )}
 
             {/* Hero */}
             <div className="stagger-in" style={{background:"linear-gradient(140deg,#101013 0%,#1a1a20 55%,#15211b 100%)",borderRadius:"var(--radius-lg)",padding:isMobile?"26px 24px":"40px 44px",marginBottom:24,position:"relative",overflow:"hidden",boxShadow:"0 1px 2px rgba(0,0,0,0.1), 0 20px 50px rgba(16,16,19,0.25)",border:"1px solid rgba(255,255,255,0.04)"}}>
@@ -3054,11 +3096,11 @@ Rules:
             {!isMobile&&(
               <div style={{width:220,flexShrink:0,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:"var(--shadow-sm)",position:"sticky",top:16}}>
                 <div style={{padding:"14px 16px",borderBottom:"1px solid var(--border)",fontSize:12,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Requests</div>
-                {liveRequests.filter(r=>r.status==="pending"||r.status==="received").length===0?(
+                {visibleRequests.filter(r=>r.status==="pending"||r.status==="received").length===0?(
                   <div style={{padding:"20px 16px",fontSize:12,color:"var(--text-tertiary)",textAlign:"center"}}>No active requests</div>
                 ):(
                   <div>
-                    {liveRequests.filter(r=>r.status==="pending"||r.status==="received").map(r=>{
+                    {visibleRequests.filter(r=>r.status==="pending"||r.status==="received").map(r=>{
                       const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
                       const quotesTotal = (r.sentTo||[]).length;
                       const isActive = activeReq?.id===r.id;
@@ -3082,7 +3124,7 @@ Rules:
                 <>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
                   <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16}}>Select a request to start analysing quotes</div>
-                  {liveRequests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
+                  {visibleRequests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
                     <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
                   )}
                   {isMobile&&requests.filter(r=>r.status==="pending"||r.status==="received").length>0&&(
@@ -3174,8 +3216,25 @@ Rules:
                     </div>
                   </div>
 
+                  {/* Buyer sees who issued it + the engineer's note */}
+                  {can.viewCosts(myRole)&&activeReq.createdByRole==="engineer"&&(
+                    <div style={{marginTop:16,padding:"14px 18px",background:"var(--blue-light, #EEEEFB)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",borderLeft:"4px solid #4A4AB8"}}>
+                      <div style={{fontSize:12.5,fontWeight:700,color:"var(--text-primary)",marginBottom:activeReq.buyerNote?4:0}}>Issued by {activeReq.createdBy||"an engineer"}</div>
+                      {activeReq.buyerNote&&<div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.5}}>"{activeReq.buyerNote}"</div>}
+                    </div>
+                  )}
+
+                  {/* Engineer hand-off panel (no cost access) */}
+                  {!can.viewCosts(myRole)&&(
+                    <div style={{marginTop:16,padding:"16px 18px",background:"var(--bg-subtle2)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)"}}>
+                      <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:4}}>Issued to your buyer</div>
+                      <div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.5,marginBottom:12}}>You've raised this materials list and it's been issued to the buyer, who will request and compare quotes. You can add a note for them below. When materials arrive, you can sign off the delivery from the Orders tab.</div>
+                      <div style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>Note for the buyer</div>
+                      <textarea value={activeReq.buyerNote||""} onChange={e=>{const v=e.target.value;setActiveReq(p=>({...p,buyerNote:v}));setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,buyerNote:v}:r));}} placeholder="e.g. needed on site by Friday, prefer collection from the trade counter..." style={{width:"100%",minHeight:70,padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",resize:"vertical",fontFamily:"inherit"}}></textarea>
+                    </div>
+                  )}
                   {/* Quote entry */}
-                  {allAnalyses.length===0&&(
+                  {can.viewCosts(myRole)&&allAnalyses.length===0&&(
                     <div>
                       <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:12,textTransform:"uppercase",letterSpacing:"0.08em"}}>Enter supplier quotes</div>
                       <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:16}}>
@@ -3225,7 +3284,7 @@ Rules:
                   )}
 
                   {/* Skeleton loaders while analysing */}
-                  {loading&&allAnalyses.length===0&&(
+                  {can.viewCosts(myRole)&&loading&&allAnalyses.length===0&&(
                     <div style={{marginTop:4}}>
                       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
                         <Spinner/>
@@ -3247,7 +3306,7 @@ Rules:
                   )}
 
                   {/* Results */}
-                  {allAnalyses.length>0&&(
+                  {can.viewCosts(myRole)&&allAnalyses.length>0&&(
                     <div>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:10}} className="no-print">
                         <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Results - {allAnalyses.length} supplier{allAnalyses.length!==1?"s":""}</div>
@@ -3540,7 +3599,7 @@ Rules:
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
               <div>
                 <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Orders</h1>
-                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{orders.length} total orders</p>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{(can.viewAllJobs(myRole)?orders:orders.filter(o=>{const r=requests.find(rr=>rr.id===o.reqId);return r&&(r.createdBy||"").toLowerCase()===myEmail;})).length} {can.viewAllJobs(myRole)?"total orders":"of your deliveries"}</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                 {orders.length>0&&(
@@ -3579,6 +3638,7 @@ Rules:
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {orders.filter(o=>{
+                  if(!can.viewAllJobs(myRole)){ const r=requests.find(rr=>rr.id===o.reqId); if(!r||(r.createdBy||"").toLowerCase()!==myEmail) return false; }
                   if(orderFilter==="active") return o.status!=="delivered";
                   if(orderFilter==="delivered") return o.status==="delivered";
                   return true;
@@ -3687,6 +3747,11 @@ Rules:
                                   <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
                                     <Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",confirmedAt:new Date().toISOString()}:o));logActivity("Order confirmed",`${order.poNumber} (${order.supplier}) marked as confirmed`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as confirmed</Btn>
                                     <Btn outline onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o));logActivity("Order delivered",`${order.poNumber} (${order.supplier}) marked as delivered`,{entity:"order",jobRef:order.jobRef});}}>Mark as delivered</Btn>
+                                    <label style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
+                                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                                      {order.deliveryPhoto?"Replace delivery photo":"Photo + sign off delivery"}
+                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const img=rd.result;setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:img,signedOffBy:myEmail}:o));logActivity("Delivery signed off",`${order.poNumber} (${order.supplier}) signed off by ${myEmail} with delivery note photo`,{entity:"order",jobRef:order.jobRef});showToast("Delivery signed off with photo");};rd.readAsDataURL(f);e.target.value="";}}/>
+                                    </label>
                                     {can.deleteItems(myRole) && order.status!=="cancelled" && <Btn outline onClick={()=>setCancelOrderConfirm(order)} style={{color:"var(--red)"}}>Cancel order</Btn>}
                                   </div>
                                   <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer",marginBottom:10}}>
@@ -3712,9 +3777,15 @@ Rules:
                                     <span style={{fontSize:16}}>D</span>
                                     <div>
                                       <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)"}}>Order delivered</div>
-                                      {order.deliveredAt&&<div style={{fontSize:11,color:"var(--green-dark)",opacity:0.8}}>{new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}</div>}
+                                      {order.deliveredAt&&<div style={{fontSize:11,color:"var(--green-dark)",opacity:0.8}}>{new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}{order.signedOffBy?` - signed off by ${order.signedOffBy}`:""}</div>}
                                     </div>
                                   </div>
+                                  {order.deliveryPhoto&&(
+                                    <div style={{marginTop:10}}>
+                                      <div style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>Delivery note</div>
+                                      <a href={order.deliveryPhoto} target="_blank" rel="noreferrer"><img src={order.deliveryPhoto} alt="Delivery note" style={{maxWidth:220,maxHeight:220,borderRadius:"var(--radius-sm)",border:"1px solid var(--border)",cursor:"pointer"}}/></a>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -3738,7 +3809,7 @@ Rules:
                 <Card key={s.id}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                     <div style={{width:40,height:40,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:16,flexShrink:0}}>{s.name[0]}</div>
-                    <button onClick={()=>{ if(!can.deleteItems(myRole)){showToast("Only a Manager or Owner can remove suppliers.","warn");return;} logActivity("Supplier removed",`${s.name} removed from suppliers`,{entity:"supplier"}); setSuppliers(p=>p.filter(x=>x.id!==s.id)); showToast("Supplier removed"); }} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
+                    <button onClick={()=>{ if(!can.deleteItems(myRole)){showToast("Only a Manager can remove suppliers.","warn");return;} logActivity("Supplier removed",`${s.name} removed from suppliers`,{entity:"supplier"}); setSuppliers(p=>p.filter(x=>x.id!==s.id)); showToast("Supplier removed"); }} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
                   </div>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:3}}>{s.name}</div>
                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:8}}>{s.email}</div>
@@ -3850,7 +3921,7 @@ Rules:
                   <div style={{display:"grid",gridTemplateColumns:"80px 1fr 120px 100px 80px 140px",gap:8,padding:"10px 16px",background:"var(--bg-subtle)",fontSize:11,fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em",borderRadius:"var(--radius-sm) var(--radius-sm) 0 0"}}>
                     <span>ID</span><span>Job ref</span><span>Trade</span><span>Status</span><span>Quotes</span><span>Actions</span>
                   </div>
-                  {requests.filter(r=>{
+                  {(can.viewAllJobs(myRole)?requests:requests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail)).filter(r=>{
                     if(showArchived ? !r.archived : r.archived) return false;
                     if(reqFilterStatus!=="all"&&r.status!==reqFilterStatus) return false;
                     if(reqFilterTrade!=="all"&&r.trade!==reqFilterTrade) return false;
@@ -3986,7 +4057,7 @@ Rules:
                           </td>
                           <td style={{padding:"9px 12px",textAlign:"right"}}>
                             <button onClick={()=>{
-                              if(!can.deleteItems(myRole)){showToast("Only a Manager or Owner can remove library quotes.","warn");return;}
+                              if(!can.deleteItems(myRole)){showToast("Only a Manager can remove library quotes.","warn");return;}
                               setQuoteLibrary(prev=>{const n=prev.filter(x=>x.id!==q.id);try{localStorage.setItem("piq_quote_library",JSON.stringify(n))}catch{};return n;});
                               logActivity("Library quote removed",`${q.supplierName} - ${q.jobRef||""} removed from library`,{entity:"quote"});
                               showToast("Quote removed from library");
@@ -4155,7 +4226,7 @@ Rules:
                   </select>
                   <Btn color="#15824F" onClick={handleInviteMember}>Add member</Btn>
                 </div>
-                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:10,lineHeight:1.5}}>Engineers create requests and analyse quotes. Buyers and above can approve purchase orders. Managers and Owners can manage the team.</div>
+                <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:10,lineHeight:1.5}}>Engineers raise the materials list and sign off deliveries. Buyers send RFQs, handle quotes and raise purchase orders. Managers manage the team and have full access.</div>
               </Card>
             )}
 
@@ -4192,7 +4263,7 @@ Rules:
                 })}
               </div>
               {!can.manageTeam(myRole) && (
-                <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:14,lineHeight:1.5}}>Only a Manager or Owner can invite people or change roles. Speak to your admin if you need access changed.</div>
+                <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:14,lineHeight:1.5}}>Only a Manager can invite people or change roles. Speak to your admin if you need access changed.</div>
               )}
             </Card>
           </div>
@@ -4372,14 +4443,24 @@ Rules:
                 </div>
               </Card>
               <div style={{display:"flex",gap:10}}>
-                <Btn onClick={()=>{ if(!can.editSettings(myRole)){showToast("Only a Manager or Owner can change company settings.","warn");return;} saveSettings(sForm);showToast("Settings saved");}} color="#5B5BD6">Save settings</Btn>
+                <Btn onClick={()=>{ if(!can.editSettings(myRole)){showToast("Only a Manager can change company settings.","warn");return;} saveSettings(sForm);showToast("Settings saved");}} color="#5B5BD6">Save settings</Btn>
                 <Btn outline onClick={()=>setSForm({...settings})}>Reset</Btn>
               </div>
             </div>
-            {roleRank(myRole) >= 4 && (
+            {roleRank(myRole) >= 3 && (
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Purchase order approval</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>When a Buyer selects a winning quote, require a Manager to approve before the PO is issued.</div>
+                <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>
+                  <input type="checkbox" checked={!!settings.requirePoApproval} onChange={e=>saveSettings({...settings,requirePoApproval:e.target.checked,poApprovalConfigured:true})} style={{width:16,height:16,cursor:"pointer"}}/>
+                  Buyers need Manager approval to raise a PO
+                </label>
+              </Card>
+            )}
+            {roleRank(myRole) >= 3 && (
               <Card>
                 <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Start fresh</div>
-                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>Clears your workspace to begin again - all current requests are archived and all orders are cancelled. <strong>Nothing is deleted</strong>; everything stays recoverable under Archived and in your activity log. Owner only.</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>Clears your workspace to begin again - all current requests are archived and all orders are cancelled. <strong>Nothing is deleted</strong>; everything stays recoverable under Archived and in your activity log. Manager only.</div>
                 <button onClick={()=>setResetConfirm(true)} style={{fontSize:13,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"1px solid var(--red)",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer"}}>Reset workspace</button>
               </Card>
             )}
@@ -4503,6 +4584,25 @@ Rules:
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
               <button onClick={()=>{setApproveSuccess(null);setView("orders");}} style={{background:"linear-gradient(135deg,var(--green),var(--green-dark))",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>View in Orders</button>
               <button onClick={()=>setApproveSuccess(null)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Stay here</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPoSetup&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 30px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:17,fontWeight:700,marginBottom:8,color:"var(--text-primary)"}}>One quick setup choice</div>
+            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:20,lineHeight:1.6}}>When a <strong>Buyer</strong> picks a winning quote, should they need a <strong>Manager</strong> to approve before the purchase order is issued? You can change this anytime in Settings.</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button onClick={()=>{saveSettings({...settings,requirePoApproval:true,poApprovalConfigured:true});setShowPoSetup(false);showToast("Buyers will need Manager approval for POs");}} style={{textAlign:"left",padding:"13px 16px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",cursor:"pointer"}}>
+                <div style={{fontSize:13.5,fontWeight:700,color:"var(--text-primary)"}}>Yes - Managers approve POs</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Buyers select a quote; a Manager signs it off. More control.</div>
+              </button>
+              <button onClick={()=>{saveSettings({...settings,requirePoApproval:false,poApprovalConfigured:true});setShowPoSetup(false);showToast("Buyers can raise POs directly");}} style={{textAlign:"left",padding:"13px 16px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",cursor:"pointer"}}>
+                <div style={{fontSize:13.5,fontWeight:700,color:"var(--text-primary)"}}>No - Buyers raise POs directly</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Buyers complete the purchase themselves. Faster.</div>
+              </button>
             </div>
           </div>
         </div>
