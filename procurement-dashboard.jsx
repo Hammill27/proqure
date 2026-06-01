@@ -4,11 +4,11 @@ import { createClient } from "@supabase/supabase-js";
 // --- Supabase cloud sync ------------------------------------------------------
 // Reads keys from Vercel environment variables. If they're absent, the app
 // runs exactly as before (browser-only), so nothing breaks without them.
-const SB_URL = import.meta.env.VITE_SUPABASE_URL;
+const SB_URL = (import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
 // Paste Supabase's "Publishable key" (sb_publishable_...) here. It is the modern
 // replacement for the old "anon public" key and is safe to use in the browser
 // because Row Level Security is enabled on the table.
-const SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SB_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 const cloudEnabled = !!(SB_URL && SB_KEY);
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
