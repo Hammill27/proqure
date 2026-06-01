@@ -4615,6 +4615,15 @@ function LoginScreen({ onLoggedIn }) {
   const [mode, setMode] = useState("signin"); // signin | signup
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  // Shares the same theme setting as the app (piq_dark)
+  const [dark, setDark] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
+  const toggleTheme = () => setDark(p => { const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0")}catch{} return n; });
+
+  // Keep the page background in sync so there are no white edges
+  useEffect(() => {
+    const bg = dark ? "#0E0E11" : "#0E1512";
+    try { document.body.style.background = bg; document.documentElement.style.background = bg; } catch {}
+  }, [dark]);
 
   const submit = async () => {
     if (!email.trim() || !password) { setMsg("Enter an email and password."); return; }
@@ -4623,7 +4632,6 @@ function LoginScreen({ onLoggedIn }) {
       if (mode === "signup") {
         const { error } = await supabase.auth.signUp({ email: email.trim(), password });
         if (error) { setMsg(error.message); setBusy(false); return; }
-        // If email confirmation is off, signUp also signs them in
         const { data } = await supabase.auth.getSession();
         if (data?.session) { onLoggedIn(data.session); return; }
         setMsg("Account created. You can now sign in.");
@@ -4637,26 +4645,63 @@ function LoginScreen({ onLoggedIn }) {
     setBusy(false);
   };
 
+  // Theme-aware palette
+  const t = dark ? {
+    page1:"#0E0E11", page2:"#15211b", card:"#16161A", cardBorder:"rgba(255,255,255,0.08)",
+    title:"#F4F4F2", sub:"rgba(255,255,255,0.55)", label:"rgba(255,255,255,0.5)",
+    inputBg:"#1C1C22", inputBorder:"rgba(255,255,255,0.12)", inputText:"#F4F4F2",
+    orbGreen:"rgba(61,214,140,0.10)", orbIndigo:"rgba(91,91,214,0.08)", markFill:"rgba(61,214,140,0.06)",
+    toggleBg:"rgba(255,255,255,0.08)", toggleBorder:"rgba(255,255,255,0.14)", toggleIcon:"#E8E8E8",
+  } : {
+    page1:"#0E1512", page2:"#15211b", card:"#FFFFFF", cardBorder:"rgba(0,0,0,0.06)",
+    title:"#1A1A17", sub:"#5C5B54", label:"#5C5B54",
+    inputBg:"#FFFFFF", inputBorder:"#E2E1DA", inputText:"#1A1A17",
+    orbGreen:"rgba(30,158,99,0.14)", orbIndigo:"rgba(91,91,214,0.10)", markFill:"rgba(255,255,255,0.05)",
+    toggleBg:"rgba(255,255,255,0.10)", toggleBorder:"rgba(255,255,255,0.18)", toggleIcon:"#FFFFFF",
+  };
+
   return (
-    <div style={{minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#101013,#15211b)",padding:"24px",fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif"}}>
-      <div style={{width:"100%",maxWidth:380,background:"#FFFFFF",borderRadius:20,padding:"34px 30px",boxShadow:"0 20px 60px rgba(0,0,0,0.35)"}}>
+    <div style={{position:"fixed",inset:0,minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",
+      background:`linear-gradient(150deg, ${t.page1} 0%, #101013 55%, ${t.page2} 100%)`,
+      padding:"24px",fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif",overflow:"hidden"}}>
+
+      {/* Ambient background: soft orbs + ProQuote mark */}
+      <div style={{position:"absolute",inset:0,pointerEvents:"none",overflow:"hidden",zIndex:0}}>
+        <div style={{position:"absolute",width:560,height:560,top:-180,right:-120,borderRadius:"50%",filter:"blur(60px)",background:`radial-gradient(circle, ${t.orbGreen}, transparent 70%)`}}/>
+        <div style={{position:"absolute",width:480,height:480,bottom:-160,left:-120,borderRadius:"50%",filter:"blur(60px)",background:`radial-gradient(circle, ${t.orbIndigo}, transparent 70%)`}}/>
+        <div style={{position:"absolute",width:400,height:400,top:"40%",left:"60%",borderRadius:"50%",filter:"blur(60px)",background:`radial-gradient(circle, ${t.orbGreen}, transparent 70%)`}}/>
+        <svg width="600" height="600" viewBox="0 0 20 20" fill="none" style={{position:"absolute",bottom:-150,right:-130,pointerEvents:"none"}} preserveAspectRatio="xMidYMid meet">
+          <rect x="3" y="3" width="3" height="14" rx="1.5" fill={t.markFill}/><rect x="6" y="3" width="8" height="3" rx="1.5" fill={t.markFill}/><rect x="14" y="3" width="3" height="8" rx="1.5" fill={t.markFill}/><rect x="6" y="10" width="8" height="3" rx="1.5" fill={t.markFill}/><circle cx="16.5" cy="15.5" r="2" fill={t.markFill}/>
+        </svg>
+      </div>
+
+      {/* Theme toggle, top-right */}
+      <button onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode"
+        style={{position:"absolute",top:20,right:20,zIndex:2,width:40,height:40,borderRadius:"50%",background:t.toggleBg,border:`1px solid ${t.toggleBorder}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+        {dark
+          ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={t.toggleIcon} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={t.toggleIcon} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>}
+      </button>
+
+      {/* Card */}
+      <div style={{position:"relative",zIndex:1,width:"100%",maxWidth:380,background:t.card,border:`1px solid ${t.cardBorder}`,borderRadius:20,padding:"34px 30px",boxShadow:"0 20px 60px rgba(0,0,0,0.35)"}}>
         <div style={{display:"flex",alignItems:"center",gap:11,marginBottom:24}}>
           <div style={{width:42,height:42,borderRadius:12,background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
           </div>
-          <span style={{fontSize:22,fontWeight:800,color:"#1A1A17",letterSpacing:"-0.02em"}}>Pro<span style={{color:"#15824F"}}>Quote</span></span>
+          <span style={{fontSize:22,fontWeight:800,color:t.title,letterSpacing:"-0.02em"}}>Pro<span style={{color:dark?"#3DD68C":"#15824F"}}>Quote</span></span>
         </div>
-        <div style={{fontSize:18,fontWeight:800,color:"#1A1A17",marginBottom:4}}>{mode==="signup"?"Create your account":"Welcome back"}</div>
-        <div style={{fontSize:13,color:"#5C5B54",marginBottom:20}}>{mode==="signup"?"Set up a login to access ProQuote.":"Sign in to access your procurement dashboard."}</div>
+        <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>{mode==="signup"?"Create your account":"Welcome back"}</div>
+        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>{mode==="signup"?"Set up a login to access ProQuote.":"Sign in to access your procurement dashboard."}</div>
 
-        <label style={{fontSize:11,fontWeight:600,color:"#5C5B54",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Email</label>
+        <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Email</label>
         <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" placeholder="you@company.co.uk"
-          style={{width:"100%",padding:"11px 13px",border:"1px solid #E2E1DA",borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
+          style={{width:"100%",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
 
-        <label style={{fontSize:11,fontWeight:600,color:"#5C5B54",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Password</label>
+        <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Password</label>
         <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete={mode==="signup"?"new-password":"current-password"} placeholder="Your password"
           onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
-          style={{width:"100%",padding:"11px 13px",border:"1px solid #E2E1DA",borderRadius:10,fontSize:14,marginBottom:18,outline:"none"}}/>
+          style={{width:"100%",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:18,outline:"none"}}/>
 
         {msg && <div style={{fontSize:12.5,color:"#9A5B16",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:"9px 12px",marginBottom:14}}>{msg}</div>}
 
@@ -4665,10 +4710,10 @@ function LoginScreen({ onLoggedIn }) {
           {busy ? "Please wait..." : (mode==="signup"?"Create account":"Sign in")}
         </button>
 
-        <div style={{textAlign:"center",fontSize:12.5,color:"#5C5B54"}}>
+        <div style={{textAlign:"center",fontSize:12.5,color:t.sub}}>
           {mode==="signup" ? "Already have a login? " : "Need an account? "}
           <button onClick={()=>{setMode(mode==="signup"?"signin":"signup");setMsg("");}}
-            style={{background:"none",border:"none",color:"#15824F",fontWeight:700,cursor:"pointer",fontSize:12.5}}>
+            style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:700,cursor:"pointer",fontSize:12.5}}>
             {mode==="signup"?"Sign in":"Create one"}
           </button>
         </div>
@@ -4711,12 +4756,13 @@ export default function App() {
     return () => { active = false; };
   }, [session]);
 
+  const loadStyle = {position:"fixed",inset:0,minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)",color:"rgba(255,255,255,0.85)",fontFamily:"'Plus Jakarta Sans',sans-serif",fontSize:14};
   if (checking) {
-    return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#101013",color:"white",fontFamily:"'Plus Jakarta Sans',sans-serif",fontSize:14}}>Loading...</div>;
+    return <div style={loadStyle}>Loading...</div>;
   }
   if (!session) return <LoginScreen onLoggedIn={setSession} />;
   if (!ready) {
-    return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#101013",color:"white",fontFamily:"'Plus Jakarta Sans',sans-serif",fontSize:14}}>Syncing your data...</div>;
+    return <div style={loadStyle}>Syncing your data...</div>;
   }
   return <ProQuoteApp session={session} />;
 }
