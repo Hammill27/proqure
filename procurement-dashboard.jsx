@@ -1384,7 +1384,7 @@ function ProQuoteApp({ session }) {
       setEmailRes(results); // show brief success UI
     } else {
       setEmailRes(results);
-      showToast(`Send failed - check your Resend key and supplier emails`,"warn");
+      showToast(`Some emails could not be sent - check the supplier email addresses and try again`,"warn");
     }
   }
 
@@ -1650,7 +1650,9 @@ SAVED QUOTES: the Quotes page keeps every analysis you run as a saved collapsibl
 ACTIVITY LOG: the dashboard shows a Recent activity feed logging every action across the app - RFQs sent, quotes analysed, POs approved, orders sent/confirmed/delivered, confirmations uploaded, suppliers added, library changes. Each request also keeps its own activity history (open it from All Requests). DASHBOARD CHARTS: a Spend by trade bar chart and budget-vs-actual progress bars appear automatically once you have orders/budgets. SUPPLIER QUICK-ADD: on the request wizard supplier step you can add a new supplier inline with '+ Add a supplier' without leaving the page. LIBRARY: you can remove a quote from the library with the bin icon on its row.
 OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D dashboard, S settings, H help, ? shows the shortcut list); company branding (logo upload, default PO terms, quote validity days) in Settings - the logo appears on HTML emails; budget tracking on the dashboard (actual vs budget per job); quote expiry warnings on the dashboard; CSV export on library/orders/requests; All Requests has search and status/trade filters; click the ProQuote logo to return to the dashboard.
 
-SETUP: AI features need a free OpenRouter API key (openrouter.ai). Email sending needs a Resend API key and verified domain (resend.com). Both go in Settings. Data is stored in the browser; cloud sync is on the roadmap.
+SETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQuote can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
+
+TEAMS & ROLES: A company has four roles, high to low: Owner, Manager, Buyer, Engineer. Anyone can raise material requests, but only a Buyer, Manager or Owner can APPROVE a purchase order. Managers and Owners can manage the team (invite people by email, assign roles) and edit company settings; they can only assign roles up to their own level. Engineers raise requests and review quotes and track deliveries, but do not see the Team, Settings or pricing Library sections. Owners and Managers add a colleague on the Team page by email and role; the colleague then signs up with that same email to join. There is a first-run guided tour for new users, and a Send feedback button in the menu.
 
 GETTING STARTED: brand-new users see a Welcome card on the dashboard with three quick steps (create a request, send to suppliers, analyse & approve) and a button to begin; it disappears once they have any activity. The app works on any device - on a phone it switches to a mobile layout with a bottom tab bar, and you can use the camera to scan documents on site. It has a polished dark and light mode, keyboard shortcuts, smooth animations, and is built to feel calm and professional throughout.
 
@@ -1934,7 +1936,7 @@ ${settings.company||""}`;
       {q:"Which browsers and phones are supported?", a:"All modern browsers - Chrome, Safari, Firefox and Edge - on both desktop and mobile, including iPhone and Android. The layout adapts automatically to your screen, and on phones you can use the camera to scan documents on site."},
       {q:"Does it respect accessibility settings?", a:"Yes. The app supports a dark and light mode, has clear keyboard focus indicators, and honours your device's reduced-motion setting so animations are minimised if you prefer."},
       {q:"Do I need to install anything?", a:"No. ProQuote runs entirely in a browser - Chrome, Safari, Edge. No app download needed."},
-      {q:"Where is my data stored?", a:"All data is currently stored securely in your browser and persists across sessions. A cloud backend - giving cross-device sync, team accounts and automatic backup - is the next major item on the roadmap."},
+      {q:"Where is my data stored?", a:"Securely in the cloud, tied to your login. That is what lets you sign in on any device - phone, tablet or computer - and see the same up-to-date information everywhere. Your whole team shares one live view."},
     ]},
     {cat:"Creating requests", qs:[
       {q:"How does voice input work?", a:"Tap the microphone button on the new request page and speak your list naturally. The app transcribes in real time and the AI structures it into a clean itemised list."},
@@ -1980,9 +1982,9 @@ ${settings.company||""}`;
       {q:"Can I remove a quote from the library?", a:"Yes. Each row in the Quote Library has a bin icon to remove that quote. The removal is logged in the activity feed."},
     ]},
     {cat:"Settings & troubleshooting", qs:[
-      {q:"Why is the AI not working?", a:"You need a free OpenRouter API key. Go to openrouter.ai, sign up, copy your key, and paste it in Settings."},
-      {q:"Why are emails not sending?", a:"Email sending requires a Resend API key and a verified domain. Go to resend.com, create a free account, verify your domain, and add the key in Settings."},
-      {q:"My data disappeared after refreshing.", a:"Data is stored in your browser. Clearing browser data will remove it. Full cloud sync is on the roadmap."},
+      {q:"Why is the AI not working?", a:"AI is built in and managed for you - there is nothing to set up. If a quote analysis ever fails, it is usually a brief hiccup; wait a moment and try again. If it keeps happening, use Send feedback to let us know."},
+      {q:"Why are emails not sending?", a:"Email is managed for you, so there are no keys to set up. For ProQuote to send from your company address, your domain needs a few one-off DNS records added (your IT or whoever manages your website handles this). If emails are not arriving, check that step has been completed, then use Send feedback if it persists."},
+      {q:"My data disappeared after refreshing.", a:"Your data lives in the cloud against your account, so refreshing will not lose it. If something looks missing, make sure you are signed in with the correct email - data is tied to your login. If it still seems wrong, use Send feedback and we will look into it."},
       {q:"Can I export my data?", a:"Yes. The Library, Orders and All Requests pages each have a CSV export button, so you can back up or share your data anytime."},
       {q:"What features are coming next?", a:"The biggest upcoming step is a cloud backend, which unlocks cross-device access, multi-user team accounts with roles, and automatic backup. After that: an inbound email inbox that auto-captures supplier replies, automatic deadline and expiry reminders, company-wide spend reporting, and accounting integrations like Xero and Sage."},
     ]},
@@ -2393,10 +2395,7 @@ Rules:
                 <span style={{fontSize:13,fontWeight:600}}>Sign out</span>
               </button>
             )}
-            <div style={{fontSize:11,background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid var(--sidebar-border)"}}>
-              <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)"}}>*</span>
-              <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)",fontSize:11}}>{"AI + Email ready"}</span>
-            </div>
+      
           </div>
         </div>
       )}
@@ -2412,7 +2411,6 @@ Rules:
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <button onClick={toggleDark} aria-label="Toggle dark mode" title="Toggle dark mode" style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"white",fontSize:13}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{darkMode?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>:<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}</svg></button>
-            <div style={{width:8,height:8,borderRadius:"50%",background:settings.openRouterKey?"var(--green)":"var(--amber)"}}/>
           </div>
         </div>
       )}
@@ -2471,7 +2469,7 @@ Rules:
                 </div>
                 <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
                   <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 22px",fontSize:13,fontWeight:700,cursor:"pointer",boxShadow:"0 2px 8px rgba(30,158,99,0.25)"}}>Create your first request</button>
-                  {!settings.openRouterKey&&<button onClick={()=>setView("settings")} style={{background:"transparent",color:"var(--text-secondary)",border:"1px solid var(--border-solid)",borderRadius:"var(--radius-sm)",padding:"11px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Add API keys in Settings</button>}
+                  
                 </div>
               </div>
             )}
@@ -3182,7 +3180,7 @@ Rules:
                         <Btn onClick={handleAnalyseAll} disabled={loading||!(activeReq.sentTo||[]).some(s=>s.quote&&s.quote.trim())||!settings.openRouterKey} color="#15824F">
                           {loading?<span>Analysing... {loadMsg}</span>:"Analyse all quotes"}
                         </Btn>
-                        {!settings.openRouterKey&&<span style={{fontSize:12,color:"var(--amber)"}}>Add OpenRouter key in Settings to enable AI</span>}
+                        
                       </div>
                     </div>
                   )}
@@ -3639,7 +3637,7 @@ Rules:
                                       {sendingOrder===order.id?<><Spinner/> Sending...</>:"Send order to supplier"}
                                     </Btn>
                                   ):(
-                                    <div style={{fontSize:12,color:"var(--text-tertiary)"}}>Add Resend key in Settings to send orders by email</div>
+                                    <div style={{fontSize:12,color:"var(--text-tertiary)"}}>Email sending is being set up</div>
                                   )}
                                 </div>
                               )}
@@ -3980,7 +3978,7 @@ Rules:
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:15,fontWeight:700,color:"white"}}>ProQuote Assistant</div>
                     <div style={{fontSize:12,color:"rgba(255,255,255,0.85)",display:"flex",alignItems:"center",gap:5}}>
-                      {settings.openRouterKey?<><span style={{width:6,height:6,borderRadius:"50%",background:"#4ADE80",display:"inline-block"}}/>Online · ready to help</>:"Add OpenRouter key to chat"}
+                      {settings.openRouterKey?<><span style={{width:6,height:6,borderRadius:"50%",background:"#4ADE80",display:"inline-block"}}/>Online · ready to help</>:<>Online · ready to help</>}
                     </div>
                   </div>
                 </div>
@@ -3997,7 +3995,7 @@ Rules:
                       </div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:8,paddingLeft:40}}>
                         {["How do I send an RFQ?","How does quote analysis work?","Where are my saved quotes?","How do I import a spreadsheet?"].map(q=>(
-                          <button key={q} onClick={()=>handleHelpChat(q)} disabled={!settings.openRouterKey} style={{fontSize:12,padding:"7px 13px",borderRadius:99,border:"1px solid var(--green-light)",background:"var(--green-mint)",color:"var(--green-deep)",cursor:settings.openRouterKey?"pointer":"not-allowed",fontWeight:500}}>{q}</button>
+                          <button key={q} onClick={()=>handleHelpChat(q)} style={{fontSize:12,padding:"7px 13px",borderRadius:99,border:"1px solid var(--green-light)",background:"var(--green-mint)",color:"var(--green-deep)",cursor:settings.openRouterKey?"pointer":"not-allowed",fontWeight:500}}>{q}</button>
                         ))}
                       </div>
                     </div>
@@ -4028,11 +4026,10 @@ Rules:
                 <div style={{display:"flex",gap:8,padding:"14px 16px",borderTop:"1px solid var(--border)",background:"var(--bg-subtle)"}}>
                   <input value={helpInput} onChange={e=>setHelpInput(e.target.value)}
                     onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&handleHelpChat(helpInput)}
-                    placeholder={settings.openRouterKey?"Type your question...":"Add OpenRouter key in Settings"}
-                    disabled={!settings.openRouterKey}
+                    placeholder={"Type your question..."}
                     style={{flex:1,padding:"11px 15px",border:"1px solid var(--border)",borderRadius:99,fontSize:13,outline:"none",background:"var(--bg-card-solid)"}}
                   />
-                  <button onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading||!settings.openRouterKey} aria-label="Send message" title="Send" style={{width:42,height:42,borderRadius:"50%",border:"none",background:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"var(--bg-subtle2)":"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",cursor:(!helpInput.trim()||helpLoading||!settings.openRouterKey)?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <button onClick={()=>handleHelpChat(helpInput)} disabled={!helpInput.trim()||helpLoading} aria-label="Send message" title="Send" style={{width:42,height:42,borderRadius:"50%",border:"none",background:(!helpInput.trim()||helpLoading)?"var(--bg-subtle2)":"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",cursor:(!helpInput.trim()||helpLoading)?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                   </button>
                 </div>
