@@ -4101,7 +4101,7 @@ Rules:
                     {id:"settings", label:"Settings",         sub:"API keys and company details",     icon:"settings"},
                   ].map(item=>(
                     <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
-                      <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)",display:"flex"}}><Icon name={item.icon} size={18}/></div>
+                      <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)"}}><Icon name={item.icon} size={18}/></div>
                       <div style={{flex:1}}>
                         <div style={{fontSize:14,fontWeight:600,color:view===item.id?"var(--green)":"white"}}>{item.label}</div>
                         <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{item.sub}</div>
@@ -4364,7 +4364,7 @@ function LoginScreen({ onLoggedIn }) {
   };
 
   return (
-    <div style={{minHeight:"100vh",minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#101013,#15211b)",padding:"24px",fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif"}}>
+    <div style={{minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#101013,#15211b)",padding:"24px",fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif"}}>
       <div style={{width:"100%",maxWidth:380,background:"#FFFFFF",borderRadius:20,padding:"34px 30px",boxShadow:"0 20px 60px rgba(0,0,0,0.35)"}}>
         <div style={{display:"flex",alignItems:"center",gap:11,marginBottom:24}}>
           <div style={{width:42,height:42,borderRadius:12,background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center"}}>
