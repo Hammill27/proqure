@@ -123,7 +123,7 @@ const STATUS = {
 };
 
 // --- AI helpers ---------------------------------------------------------------
-async function callAI(system, user, history=[]) {
+async function callAI(system, user, history=[], temperature=0.1) {
   const models = [
     "deepseek/deepseek-chat",
     "meta-llama/llama-3.1-8b-instruct",
@@ -141,7 +141,7 @@ async function callAI(system, user, history=[]) {
     const res = await fetch("/api/ai", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ messages, models })
+      body: JSON.stringify({ messages, models, temperature })
     });
     if (res.ok) {
       const d = await res.json();
@@ -160,7 +160,7 @@ async function callAI(system, user, history=[]) {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method:"POST",
         headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://proquote.app","X-Title":"ProQuote"},
-        body: JSON.stringify({ model, messages })
+        body: JSON.stringify({ model, messages, temperature })
       });
       const d = await res.json();
       if (d.error) { lastErr = d.error.message||"API error"; continue; }
@@ -206,9 +206,27 @@ function preprocessQuoteText(raw) {
 
 // --- Parse price string to float ----------------------------------------------
 function parsePrice(s) {
-  if (!s || typeof s !== "string") return null;
-  const n = parseFloat(s.replace(/[^0-9.]/g, ""));
-  return isNaN(n) ? null : n;
+  if (s == null) return null;
+  if (typeof s === "number") return isNaN(s) ? null : s;
+  if (typeof s !== "string") return null;
+  let str = s.trim();
+  if (!str) return null;
+  // Reject obvious non-prices
+  if (/^(poa|tba|tbc|n\/?a|call|on application|see (note|below)|-|—|quoted separately)$/i.test(str)) return null;
+  // Detect negative (discounts, credits)
+  const negative = /^-|^\(|credit|less|discount/i.test(str) && !/\+/.test(str);
+  // Grab the FIRST monetary number only (avoids "£45 (was £60)" merging into 4560)
+  // Handles 1,234.56 and 1234.56 and 1.234,56 (European)
+  // First strip currency words/symbols around, then find first number token
+  // Find the first monetary number. Order matters: try thousands-grouped form first,
+  // then a plain decimal/integer. The thousands form REQUIRES a comma group so it
+  // won't wrongly truncate "1234.56".
+  const m = str.match(/\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?/);
+  if (!m) return null;
+  let num = m[0].replace(/,/g, ""); // remove thousands separators
+  const n = parseFloat(num);
+  if (isNaN(n)) return null;
+  return negative ? -Math.abs(n) : n;
 }
 
 // Consistent UK currency formatting: 1234.5 -> "1,234.50"
@@ -305,6 +323,41 @@ function validateAndFix(analysis, requestedItems) {
     warnings.push(`Carriage condition: "${analysis.carriageCharge}" - verify whether this order qualifies for free delivery`);
   }
 
+  // --- Additional money-safety checks ---------------------------------------
+  // Unit mismatch (e.g. requested in metres, quoted per box) - real cost risk
+  matched.forEach(m => {
+    const ru = (m.requestedUnit||"").toLowerCase().trim();
+    const qu = (m.quotedUnit||"").toLowerCase().trim();
+    if (ru && qu && ru !== qu && !(ru.includes(qu) || qu.includes(ru))) {
+      warnings.push(`Unit mismatch: ${m.item} requested in "${m.requestedUnit}" but quoted per "${m.quotedUnit}" - confirm you are comparing like-for-like`);
+    }
+  });
+
+  // VAT clarity - if no VAT info at all, the true cost is uncertain
+  if (!analysis.vatRaw && !analysis.vatNote && !(analysis.vatIncluded === true || analysis.vatIncluded === false)) {
+    warnings.push("VAT status unclear - confirm whether quoted prices include or exclude VAT before approving");
+  }
+
+  // Duplicate match detection - same quote line matched to two requested items
+  const seenProducts = {};
+  matched.forEach(m => {
+    const key = (m.quotedProduct||"").toLowerCase().trim();
+    if (key && key.length > 3) {
+      seenProducts[key] = (seenProducts[key]||0) + 1;
+      if (seenProducts[key] === 2) warnings.push(`Possible duplicate: "${m.quotedProduct}" appears matched more than once - verify line items`);
+    }
+  });
+
+  // Low-confidence lines that carry a price are the highest risk - count them
+  const riskyPricedLines = matched.filter(m => m.confidence === "low" && parsePrice(m.unitPrice) !== null).length;
+
+  // Hard review flag: any condition that means a human MUST check before trusting totals
+  const requiresReview =
+    riskyPricedLines > 0 ||
+    finalCompleteness < 90 ||
+    (aiSubtotal !== null && computedSubtotal > 0 && Math.abs(aiSubtotal - computedSubtotal) > 0.50) ||
+    warnings.some(w => /maths check|suspicious|unusually high|unit mismatch/i.test(w));
+
   // Overall verdict based on validated completeness
   const overallVerdict = finalCompleteness >= 90 ? "excellent"
     : finalCompleteness >= 75 ? "good"
@@ -319,6 +372,8 @@ function validateAndFix(analysis, requestedItems) {
     estimatedTotal: finalTotal,
     completeness: finalCompleteness,
     overallVerdict,
+    requiresReview,
+    riskyPricedLines,
     _validated: true,
   };
 }
@@ -340,13 +395,18 @@ Return ONLY valid JSON - no markdown, no explanation:
   "quoteRef": "supplier quote reference or null"
 }
 
-Rules - CRITICAL:
+Rules - CRITICAL (money depends on this being exact):
 - Copy product names EXACTLY as they appear - do not normalise or interpret
+- Copy EVERY digit of every price and quantity precisely. Do not round, estimate, or "tidy" numbers. £1,234.56 must be 1234.56, not 1234 or 1200.
+- Keep unitPrice and lineTotal as SEPARATE numbers. Never put a line total in the unitPrice field or vice versa.
 - If a price says "POA", "TBA", "Call", "On application" - set unitPrice to null and note in rawText
 - If a quantity is ambiguous (e.g. "10 x 3m lengths") - set qty to null and preserve rawText exactly
 - ONLY include lines that are clearly products or services being quoted
 - Do NOT include lines that are email headers, signatures, addresses, payment terms
-- If you cannot find a numeric price - set unitPrice to null, never guess`;
+- If you cannot find a numeric price - set unitPrice to null, never guess
+- A number you are unsure about is worse than null. When in doubt, set the field to null and keep the exact text in rawText.
+
+Before returning, silently re-read each line and check: does unitPrice multiplied by qty roughly equal lineTotal? If a line fails this check, re-read the original text for that line and correct it. Only then return the JSON.`;
 
   const cleaned = preprocessQuoteText(quoteText);
   const raw = await callAI(sys,
@@ -2307,6 +2367,13 @@ Rules:
                 <div style={{position:"absolute",top:3,left:darkMode?19:3,width:16,height:16,background:"white",borderRadius:"50%",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
               </div>
             </button>
+            {session && cloudEnabled && (
+              <button onClick={async()=>{ try{ await supabase.auth.signOut(); }catch{} window.location.reload(); }} aria-label="Sign out" title="Sign out"
+                style={{width:"100%",display:"flex",alignItems:"center",gap:8,background:"transparent",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8,color:"var(--sidebar-text)"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                <span style={{fontSize:13,fontWeight:600}}>Sign out</span>
+              </button>
+            )}
             <div style={{fontSize:11,background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid var(--sidebar-border)"}}>
               <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)"}}>*</span>
               <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)",fontSize:11}}>{"AI + Email ready"}</span>
@@ -3263,6 +3330,15 @@ Rules:
                                       <div style={{background:"var(--green-mint)",borderRadius:"var(--radius-sm)",padding:"10px 12px"}}>
                                         <div style={{fontSize:11,fontWeight:700,color:"var(--green-dark)",marginBottom:6}}>Positives</div>
                                         {qa.positives.map((p,i)=><div key={i} style={{fontSize:12,color:"var(--green-deep)",marginBottom:2}}>+ {p}</div>)}
+                                      </div>
+                                    )}
+                                    {qa.requiresReview&&(
+                                      <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderLeft:"4px solid #C77D2E",borderRadius:"var(--radius-sm)",padding:"12px 14px",marginBottom:10,display:"flex",gap:10,alignItems:"flex-start"}}>
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C77D2E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,marginTop:1}}><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>
+                                        <div>
+                                          <div style={{fontSize:12.5,fontWeight:700,color:"#9A5B16",marginBottom:2}}>Check before approving</div>
+                                          <div style={{fontSize:12,color:"#9A5B16",lineHeight:1.5}}>The AI flagged something that needs a human eye{qa.riskyPricedLines>0?` (${qa.riskyPricedLines} priced line${qa.riskyPricedLines!==1?"s":""} with low confidence)`:""}. Review the points below and confirm the figures against the original quote before generating a PO.</div>
+                                        </div>
                                       </div>
                                     )}
                                     {qa.warnings?.length>0&&(
@@ -4288,6 +4364,18 @@ Rules:
                       </div>
                     </button>
                   ))}
+                  {session && cloudEnabled && (
+                    <button onClick={async()=>{ try{ await supabase.auth.signOut(); }catch{} window.location.reload(); }}
+                      style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginTop:4,borderTop:"1px solid var(--sidebar-border)"}}>
+                      <div style={{width:40,height:40,background:"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"var(--sidebar-text)"}}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:14,fontWeight:600,color:"white"}}>Sign out</div>
+                        <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{session.user?.email}</div>
+                      </div>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -4304,6 +4392,12 @@ Rules:
               <div style={{fontSize:18,fontWeight:700,color:"var(--text-primary)",marginBottom:6}}>Approve this quote?</div>
               <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.6}}>This will generate the PO, create an order, and save all other quotes to the library.</div>
             </div>
+            {approveConfirm.requiresReview&&(
+              <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:"var(--radius-sm)",padding:"11px 14px",marginBottom:16,fontSize:12.5,color:"#9A5B16",lineHeight:1.5,display:"flex",gap:9,alignItems:"flex-start"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C77D2E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,marginTop:1}}><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>
+                <span>This quote had items the AI wasn't fully sure about. Please confirm the prices and totals match the supplier's original quote before approving.</span>
+              </div>
+            )}
             <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>SUPPLIER</div><div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{approveConfirm.supplierName||"—"}</div></div>
