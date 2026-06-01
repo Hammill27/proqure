@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { messages, models } = req.body || {};
+    const { messages, models, temperature } = req.body || {};
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: "Missing messages" });
     }
@@ -37,7 +37,7 @@ export default async function handler(req, res) {
             "HTTP-Referer": "https://proquote.app",
             "X-Title": "ProQuote",
           },
-          body: JSON.stringify({ model, messages }),
+          body: JSON.stringify({ model, messages, temperature: typeof temperature === "number" ? temperature : 0.1 }),
         });
         const d = await r.json();
         if (d.error) { lastErr = d.error.message || "API error"; continue; }
