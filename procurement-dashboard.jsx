@@ -21,10 +21,10 @@ const EMAIL_VIA_SERVER = true;
 // --- Roles & permissions ------------------------------------------------------
 // Hierarchy (high to low): owner > manager > buyer > engineer
 const ROLES = {
-  owner:    { label: "Owner",    rank: 4, desc: "Full access, manages the team and billing" },
-  manager:  { label: "Manager",  rank: 3, desc: "Manages the team and approves orders" },
-  buyer:    { label: "Buyer",    rank: 2, desc: "Approves purchase orders, full procurement" },
-  engineer: { label: "Engineer", rank: 1, desc: "Creates requests and analyses quotes" },
+  owner:    { label: "Owner",    rank: 4, desc: "Full access, manages the team and billing", color: "#15824F", bg: "#DFF3E8" },
+  manager:  { label: "Manager",  rank: 3, desc: "Manages the team and approves orders",       color: "#4A4AB8", bg: "#EEEEFB" },
+  buyer:    { label: "Buyer",    rank: 2, desc: "Approves purchase orders, full procurement",  color: "#9A5B16", bg: "#FBF3E8" },
+  engineer: { label: "Engineer", rank: 1, desc: "Creates requests and analyses quotes",        color: "#5C6B7A", bg: "#EEF1F4" },
 };
 const roleRank = (r) => (ROLES[r]?.rank || 0);
 // Permission helpers — what each role can do
@@ -991,6 +991,11 @@ function ProQuoteApp({ session }) {
   }, [myEmail]);
   const myMember = team.find(m => (m.email||"").toLowerCase() === myEmail) || null;
   const myRole = myMember?.role || (cloudEnabled ? "engineer" : "owner");
+  // If the user is on a view their role can't access, send them to the dashboard.
+  useEffect(() => {
+    const need = ({ library:2, team:3, settings:3 })[view];
+    if (need && roleRank(myRole) < need) setView("dashboard");
+  }, [view, myRole]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("engineer");
   function handleInviteMember() {
@@ -998,6 +1003,7 @@ function ProQuoteApp({ session }) {
     const email = inviteEmail.trim().toLowerCase();
     if (!email || !email.includes("@")) { showToast("Enter a valid email address.","warn"); return; }
     if (team.some(m => (m.email||"").toLowerCase() === email)) { showToast("That person is already on the team.","warn"); return; }
+    if (roleRank(inviteRole) > roleRank(myRole)) { showToast("You can only assign roles up to your own level.","warn"); return; }
     setTeam(prev => [...prev, { email, name:"", role: inviteRole, addedAt: new Date().toISOString(), active: true }]);
     logActivity("Team member added", `${email} added as ${ROLES[inviteRole]?.label||inviteRole}`, { entity:"team" });
     setInviteEmail(""); setInviteRole("engineer");
@@ -1006,6 +1012,7 @@ function ProQuoteApp({ session }) {
   function handleChangeRole(email, newRole) {
     if (!can.manageTeam(myRole)) { showToast("Only a Manager or Owner can change roles.","warn"); return; }
     const target = (email||"").toLowerCase();
+    if (roleRank(newRole) > roleRank(myRole)) { showToast("You can only assign roles up to your own level.","warn"); return; }
     // Safety: don't allow removing the last owner
     const owners = team.filter(m => m.role === "owner");
     if (owners.length === 1 && (owners[0].email||"").toLowerCase() === target && newRole !== "owner") {
@@ -1797,13 +1804,18 @@ ${settings.company||""}`;
           {id:"quotes",   label:"Quotes",         d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
           {id:"suppliers",label:"Suppliers",      d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
-          {id:"team",     label:"Team",           d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
-          {id:"library",  label:"Library",        d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
-          {id:"settings", label:"Settings",       d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
+          {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
+          {id:"library",  label:"Library",        min:2, d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
+          {id:"settings", label:"Settings",       min:3, d:"M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"},
           {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
           {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
   ];
-  const handleNav = (id) => { setView(id); setMoreMenuOpen(false); if(id==="new")resetNewRequest(); };
+  const VIEW_MIN_ROLE = { library:2, team:3, settings:3 };
+  const handleNav = (id) => {
+    const need = VIEW_MIN_ROLE[id];
+    if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
+    setView(id); setMoreMenuOpen(false); if(id==="new")resetNewRequest();
+  };
   const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
 
   // Overdue requests (for dashboard banner)
@@ -2270,7 +2282,7 @@ Rules:
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"12px 12px"}}>
             <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
-            {navItems.map(item=>(
+            {navItems.filter(item=>!item.min||roleRank(myRole)>=item.min).map(item=>(
               <button key={item.id} onClick={()=>handleNav(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"0 8px 8px 0",border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-active)":"3px solid transparent",transition:"all 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
                 {item.label}
@@ -3996,10 +4008,9 @@ Rules:
                     style={{flex:"1 1 240px",padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                   <select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}
                     style={{padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}>
-                    <option value="engineer">Engineer</option>
-                    <option value="buyer">Buyer</option>
-                    <option value="manager">Manager</option>
-                    <option value="owner">Owner</option>
+                    {Object.keys(ROLES).filter(r=>roleRank(r)<=roleRank(myRole)).sort((a,b)=>roleRank(a)-roleRank(b)).map(r=>(
+                      <option key={r} value={r}>{ROLES[r].label}</option>
+                    ))}
                   </select>
                   <Btn color="#15824F" onClick={handleInviteMember}>Add member</Btn>
                 </div>
@@ -4014,7 +4025,7 @@ Rules:
                   const isMe = (m.email||"").toLowerCase()===myEmail;
                   return (
                     <div key={m.email||mi} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",flexWrap:"wrap"}}>
-                      <div style={{width:38,height:38,borderRadius:"50%",background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:700,color:"var(--green-dark)",fontSize:15}}>
+                      <div style={{width:38,height:38,borderRadius:"50%",background:ROLES[m.role]?.bg||"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:700,color:ROLES[m.role]?.color||"var(--green-dark)",fontSize:15}}>
                         {(m.email||"?")[0].toUpperCase()}
                       </div>
                       <div style={{flex:"1 1 200px",minWidth:0}}>
@@ -4024,13 +4035,12 @@ Rules:
                       {can.manageTeam(myRole) && !isMe ? (
                         <select value={m.role} onChange={e=>handleChangeRole(m.email,e.target.value)}
                           style={{padding:"7px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}>
-                          <option value="engineer">Engineer</option>
-                          <option value="buyer">Buyer</option>
-                          <option value="manager">Manager</option>
-                          <option value="owner">Owner</option>
+                          {Object.keys(ROLES).filter(r=>roleRank(r)<=roleRank(myRole)||r===m.role).sort((a,b)=>roleRank(a)-roleRank(b)).map(r=>(
+                            <option key={r} value={r}>{ROLES[r].label}</option>
+                          ))}
                         </select>
                       ) : (
-                        <span style={{fontSize:11,fontWeight:700,padding:"4px 12px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>{ROLES[m.role]?.label||"Member"}</span>
+                        <span style={{fontSize:11,fontWeight:700,padding:"4px 12px",borderRadius:99,background:ROLES[m.role]?.bg||"var(--green-light)",color:ROLES[m.role]?.color||"var(--green-deep)"}}>{ROLES[m.role]?.label||"Member"}</span>
                       )}
                       {can.manageTeam(myRole) && !isMe && (
                         <button onClick={()=>handleRemoveMember(m.email)} aria-label="Remove member"
@@ -4126,7 +4136,10 @@ Rules:
                   </div>
                   <div>
                     <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>Signed in &amp; syncing to the cloud</div>
-                    <div style={{fontSize:12,color:"var(--text-secondary)"}}>{session.user?.email}</div>
+                    <div style={{fontSize:12,color:"var(--text-secondary)",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <span>{session.user?.email}</span>
+                      <span style={{fontSize:10,fontWeight:700,padding:"2px 9px",borderRadius:99,background:ROLES[myRole]?.bg||"var(--green-light)",color:ROLES[myRole]?.color||"var(--green-deep)"}}>{ROLES[myRole]?.label||"Member"}</span>
+                    </div>
                   </div>
                 </div>
                 <button onClick={async()=>{ try{ await supabase.auth.signOut(); }catch{} window.location.reload(); }}
@@ -4261,12 +4274,12 @@ Rules:
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
                     {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building"},
-                    {id:"team",     label:"Team",            sub:"People and roles",                icon:"building"},
-                    {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books"},
+                    {id:"team",     label:"Team",            sub:"People and roles",                icon:"building", min:3},
+                    {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
                     {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
                     {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"mail"},
-                    {id:"settings", label:"Settings",         sub:"API keys and company details",     icon:"settings"},
-                  ].map(item=>(
+                    {id:"settings", label:"Settings",         sub:"Company details and account",      icon:"settings", min:3},
+                  ].filter(item=>!item.min||roleRank(myRole)>=item.min).map(item=>(
                     <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
                       <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)"}}><Icon name={item.icon} size={18}/></div>
                       <div style={{flex:1}}>
