@@ -1772,6 +1772,21 @@ ${settings.company||""}`;
   const isMobile = useIsMobile();
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [tourStep, setTourStep] = useState(()=>{ try{ return localStorage.getItem("piq_tour_done")==="1" ? -1 : 0; }catch{ return -1; } });
+  const dismissTour = () => { try{localStorage.setItem("piq_tour_done","1")}catch{} setTourStep(-1); };
+  const tourBase = [
+    { title:"Welcome to ProQuote", body:"A quick 30-second tour so you know your way around. You can skip anytime.", icon:"rocket" },
+    { title:"Create a request", body:"Tap New request to list the materials you need. You can type, dictate, scan a document, or paste a spreadsheet - the AI turns it into a tidy request.", icon:"clipboard" },
+    { title:"Send to suppliers", body:"ProQuote drafts a branded email to your chosen suppliers asking them to quote. No copy-paste needed.", icon:"send" },
+    { title:"Let the AI analyse quotes", body:"Paste or upload the quotes that come back. The AI checks the maths, compares suppliers and highlights the best value - and flags anything you should double-check.", icon:"search" },
+  ];
+  const tourRoleStep = can.approvePO(myRole)
+    ? { title:"Approve with confidence", body:"When you're happy, approve a quote and ProQuote generates the purchase order automatically. Always confirm the figures first.", icon:"check_circle" }
+    : { title:"Your part in the flow", body:"You raise requests and review quotes. A Buyer or Manager approves the final purchase order, and you can track delivery in Orders.", icon:"truck" };
+  const tourManageStep = can.manageTeam(myRole)
+    ? [{ title:"Manage your team", body:"Head to the Team page to invite colleagues and set their roles - Engineers raise requests, Buyers approve, Managers run the team.", icon:"building" }]
+    : [];
+  const tourSteps = [...tourBase, tourRoleStep, ...tourManageStep];
   const [quoteViewMode, setQuoteViewMode] = useState("cards");
   const [marginPct, setMarginPct] = useState(0);
   const [reqFilterStatus, setReqFilterStatus] = useState("all");
@@ -2353,6 +2368,10 @@ Rules:
             ))}
           </div>
           <div style={{padding:"14px 20px",borderTop:"1px solid var(--sidebar-border)"}}>
+            <button onClick={()=>handleNav("contact")} aria-label="Send feedback" title="Send feedback" style={{width:"100%",display:"flex",alignItems:"center",gap:8,background:"transparent",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8,color:"var(--sidebar-text)"}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+              <span style={{fontSize:13,fontWeight:600}}>Send feedback</span>
+            </button>
             <button onClick={toggleDark} aria-label="Toggle dark mode" title="Toggle dark mode" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg-subtle2)",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -4135,6 +4154,9 @@ Rules:
 
         {view==="contact"&&(
           <div className="stagger-in" style={{maxWidth:760}}>
+            <div style={{background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-md)",padding:"12px 16px",marginBottom:20,fontSize:13,color:"var(--green-deep)",lineHeight:1.5}}>
+              <strong>We're keen to hear from you.</strong> Spotted a bug, or have an idea to make ProQuote better? Tell us below - your feedback during this trial directly shapes the product.
+            </div>
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(99,102,241,0.12),transparent 70%)",borderRadius:"50%"}}/>
               <div style={{position:"relative",zIndex:1}}>
@@ -4205,7 +4227,7 @@ Rules:
             <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Settings</h1>
             <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Configure your company details and API keys</p>
             {session && cloudEnabled && (
-              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 22px",marginBottom:20,boxShadow:"var(--shadow-sm)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:14,flexWrap:"wrap"}}>
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 22px",marginBottom:20,boxShadow:"var(--shadow-sm)",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   <div style={{width:38,height:38,borderRadius:"50%",background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center"}}>
                     <Icon name="check_circle" size={20} color="var(--green-dark)"/>
@@ -4218,8 +4240,7 @@ Rules:
                     </div>
                   </div>
                 </div>
-                <button onClick={async()=>{ try{ await supabase.auth.signOut(); }catch{} window.location.reload(); }}
-                  style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"transparent",border:"1px solid var(--border-solid)",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>Sign out</button>
+                
               </div>
             )}
             <div style={{display:"grid",gap:16}}>
@@ -4512,6 +4533,29 @@ Rules:
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {tourStep>=0&&tourStep<tourSteps.length&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:2500,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"30px 32px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
+            <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+              <div style={{width:54,height:54,borderRadius:16,background:"linear-gradient(135deg,var(--green),var(--green-dark))",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 24px rgba(34,197,94,0.25)"}}>
+                <Icon name={tourSteps[tourStep].icon} size={26} color="white"/>
+              </div>
+            </div>
+            <div style={{fontSize:18,fontWeight:800,color:"var(--text-primary)",textAlign:"center",marginBottom:8,letterSpacing:"-0.02em"}}>{tourSteps[tourStep].title}</div>
+            <div style={{fontSize:13.5,color:"var(--text-secondary)",textAlign:"center",lineHeight:1.6,marginBottom:22}}>{tourSteps[tourStep].body}</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:20}}>
+              {tourSteps.map((_,i)=>(
+                <div key={i} style={{width:i===tourStep?20:7,height:7,borderRadius:99,background:i===tourStep?"var(--green-dark)":"var(--border-solid)",transition:"all 0.2s"}}/>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn outline onClick={dismissTour}>Skip</Btn>
+              <Btn color="#15824F" onClick={()=>{ if(tourStep>=tourSteps.length-1) dismissTour(); else setTourStep(s=>s+1); }}>{tourStep>=tourSteps.length-1?"Get started":"Next"}</Btn>
+            </div>
           </div>
         </div>
       )}
