@@ -121,6 +121,8 @@ const DEFAULT_SUPPLIERS = [
 ];
 const STATUS = {
   draft:    { bg:"var(--amber-light)",   text:"#854D0E",         label:"Draft" },
+  "awaiting-buyer":    { bg:"var(--indigo-light)", text:"var(--indigo)", label:"With buyer" },
+  "awaiting-approval": { bg:"var(--amber-light)",  text:"#854D0E",       label:"Awaiting approval" },
   pending:  { bg:"var(--indigo-light)",  text:"var(--indigo)",   label:"Pending quotes" },
   received: { bg:"#FAF5FF",             text:"#6B21A8",         label:"Quotes received" },
   approved: { bg:"var(--green-light)",   text:"var(--green-deep)",label:"Approved" },
@@ -1384,6 +1386,7 @@ function ProQuoteApp({ session }) {
 
   async function handleGenRFQ() {
     window.__piq_or_key__ = settings.openRouterKey;
+    if (!can.sendRFQ(myRole)) { handleIssueToBuyer(); return; }
     setLoading(true); setLoadMsg("Generating RFQ email...");
     try {
       const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline);
@@ -1391,6 +1394,28 @@ function ProQuoteApp({ session }) {
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
     setLoading(false);
+  }
+
+  function handleIssueToBuyer() {
+    if (!parsed || !(parsed.items||[]).length) { showToast("Add some materials first.","warn"); return; }
+    const newId = `RFQ-${Date.now().toString().slice(-6)}`;
+    const r = {
+      id: newId,
+      jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
+      status: "awaiting-buyer",
+      createdBy: myEmail, createdByRole: myRole,
+      buyerNote: requestNotes,
+      created: new Date().toISOString().split("T")[0],
+      items: parsed.items,
+      deliveryMethod, deliveryDate, altAddress, rfqDeadline,
+      sentTo: [],
+      activity: [{ ts:new Date().toISOString(), action:"List raised", detail:`Materials list raised and issued to the buyer by ${myEmail}`, user:myEmail }],
+    };
+    setRequests(p=>[r,...p]);
+    logActivity("List issued to buyer", `${r.jobRef} raised by ${myEmail}`, { entity:"request", reqId:newId });
+    resetNewRequest();
+    setView("requests");
+    showToast("Issued to your buyer - they'll request the quotes");
   }
 
   async function handleSendEmails() {
@@ -3002,6 +3027,7 @@ Rules:
                 {/* Suppliers */}
                 <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px",marginBottom:16}}>
                   <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"var(--text-secondary)",fontWeight:400}}>({trade})</span></div>
+                  {!can.sendRFQ(myRole)&&<div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,padding:"8px 12px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)"}}>As an engineer you don't need to pick suppliers - just raise the list and your buyer will request the quotes. You can skip this section.</div>}
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                     {filteredSup.map(s=>(
                       <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",background:selSup.includes(s.id)?"var(--green-mint)":"var(--bg-card-solid)",border:`1px solid ${selSup.includes(s.id)?"var(--green-dark)":"var(--border)"}`,borderRadius:"var(--radius-sm)",padding:"8px 14px",transition:"all 0.15s"}}>
@@ -3041,8 +3067,8 @@ Rules:
                   <Btn outline onClick={()=>setStep(1)}>Back</Btn>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                     <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Save as template</button>
-                    <Btn onClick={handleGenRFQ} disabled={loading||selSup.length===0} color="#15824F">
-                      {loading?loadMsg:"Generate RFQ email"}
+                    <Btn onClick={handleGenRFQ} disabled={loading||(can.sendRFQ(myRole)&&selSup.length===0)} color="#15824F">
+                      {loading?loadMsg:(can.sendRFQ(myRole)?"Generate RFQ email":"Issue to buyer")}
                     </Btn>
                   </div>
                 </div>
@@ -3112,7 +3138,7 @@ Rules:
                       const quotesTotal = (r.sentTo||[]).length;
                       const isActive = activeReq?.id===r.id;
                       return(
-                        <button key={r.id} onClick={()=>{setActiveReq(r);setAllAnalyses([]);setExpandedQuote(null);}}
+                        <button key={r.id} onClick={()=>{const qs=savedQuoteSets.find(s=>s.reqId===r.id);setActiveReq(r);setAllAnalyses(qs?.analyses||[]);setApprovedQuoteId(qs?.approvedId||null);setExpandedQuote(null);}}
                           style={{width:"100%",textAlign:"left",background:isActive?"var(--green-mint)":"transparent",border:"none",borderLeft:isActive?"3px solid var(--green-dark)":"3px solid transparent",padding:"12px 16px",cursor:"pointer",borderBottom:"1px solid var(--border)",transition:"all 0.15s"}}>
                           <div style={{fontSize:12,fontWeight:700,color:isActive?"var(--green-dark)":"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2}}>{r.id}</div>
                           <div style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.jobRef}</div>
@@ -3137,7 +3163,7 @@ Rules:
                   {isMobile&&requests.filter(r=>r.status==="pending"||r.status==="received").length>0&&(
                     <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:400,margin:"0 auto"}}>
                       {requests.filter(r=>r.status==="pending"||r.status==="received").map(r=>(
-                        <button key={r.id} onClick={()=>{setActiveReq(r);setAllAnalyses([]);}} style={{textAlign:"left",padding:"12px 16px",background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer"}}>
+                        <button key={r.id} onClick={()=>{const qs=savedQuoteSets.find(s=>s.reqId===r.id);setActiveReq(r);setAllAnalyses(qs?.analyses||[]);setApprovedQuoteId(qs?.approvedId||null);}} style={{textAlign:"left",padding:"12px 16px",background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer"}}>
                           <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"monospace"}}>{r.id}</div>
                           <div style={{fontSize:12,color:"var(--text-secondary)"}}>{r.jobRef} · {r.site}</div>
                         </button>
@@ -3244,6 +3270,18 @@ Rules:
                   {can.viewCosts(myRole)&&allAnalyses.length===0&&(
                     <div>
                       <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:12,textTransform:"uppercase",letterSpacing:"0.08em"}}>Enter supplier quotes</div>
+                      {(activeReq.sentTo||[]).length===0&&(
+                        <div style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:16}}>
+                          <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Add suppliers to request quotes from</div>
+                          {suppliers.length===0
+                            ? <div style={{fontSize:12.5,color:"var(--text-secondary)"}}>You have no suppliers yet. Add some on the Suppliers page first.</div>
+                            : <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                                {suppliers.map(s=>(
+                                  <button key={s.id} onClick={()=>{const add={id:s.id,name:s.name,email:s.email,quote:"",saved:false};setActiveReq(p=>({...p,sentTo:[...(p.sentTo||[]),add]}));setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,sentTo:[...(r.sentTo||[]),add],status:r.status==="awaiting-buyer"?"pending":r.status}:r));}} style={{fontSize:12,fontWeight:600,padding:"7px 13px",borderRadius:99,border:"1px solid var(--border)",background:"var(--bg-card-solid)",color:"var(--text-primary)",cursor:"pointer"}}>+ {s.name}</button>
+                                ))}
+                              </div>}
+                        </div>
+                      )}
                       <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:16}}>
                         {(activeReq.sentTo||[]).map((sup,si)=>(
                           <div key={sup.id||si} style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"16px 20px",boxShadow:"var(--shadow-sm)"}}>
@@ -3282,7 +3320,7 @@ Rules:
                         ))}
                       </div>
                       <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                        <Btn onClick={handleAnalyseAll} disabled={loading||!(activeReq.sentTo||[]).some(s=>s.quote&&s.quote.trim())||!settings.openRouterKey} color="#15824F">
+                        <Btn onClick={handleAnalyseAll} disabled={loading||!(activeReq.sentTo||[]).some(s=>s.quote&&s.quote.trim())||!(AI_VIA_SERVER||settings.openRouterKey)} color="#15824F">
                           {loading?<span>Analysing... {loadMsg}</span>:"Analyse all quotes"}
                         </Btn>
                         
@@ -3728,7 +3766,10 @@ Rules:
                             <div>
                               <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Actions</div>
 
-                              {order.status==="pending-send"&&(
+                              {order.status==="pending-send"&&!can.viewCosts(myRole)&&(
+                                <div style={{fontSize:12.5,color:"var(--text-secondary)",padding:"10px 14px",background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",border:"1px solid var(--border)"}}>The buyer is arranging this order. You'll be able to sign off the delivery here once it's on its way.</div>
+                              )}
+                              {order.status==="pending-send"&&can.viewCosts(myRole)&&(
                                 <div>
                                   <div style={{marginBottom:10}}>
                                     <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Note to supplier (optional)</label>
@@ -3750,9 +3791,9 @@ Rules:
 
                               {order.status==="sent"&&(
                                 <div>
-                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>Mark this order as confirmed manually, or upload the supplier's confirmation document.</div>
+                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>{can.viewCosts(myRole)?"Mark this order as confirmed manually, or upload the supplier's confirmation document.":"When the materials arrive, take a photo of the delivery note to sign off this delivery."}</div>
                                   <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-                                    <Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",confirmedAt:new Date().toISOString()}:o));logActivity("Order confirmed",`${order.poNumber} (${order.supplier}) marked as confirmed`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as confirmed</Btn>
+                                    {can.viewCosts(myRole)&&<Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",confirmedAt:new Date().toISOString()}:o));logActivity("Order confirmed",`${order.poNumber} (${order.supplier}) marked as confirmed`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as confirmed</Btn>}
                                     <Btn outline onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o));logActivity("Order delivered",`${order.poNumber} (${order.supplier}) marked as delivered`,{entity:"order",jobRef:order.jobRef});}}>Mark as delivered</Btn>
                                     <label style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
                                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -4100,7 +4141,7 @@ Rules:
                     <div style={{width:40,height:40,borderRadius:"50%",background:"rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)"}}>
                       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><circle cx="8.5" cy="14.5" r="1.5" fill="white"/><circle cx="15.5" cy="14.5" r="1.5" fill="white"/></svg>
                     </div>
-                    {settings.openRouterKey&&<div style={{position:"absolute",bottom:0,right:0,width:11,height:11,borderRadius:"50%",background:"#4ADE80",border:"2px solid #15824F"}}/>}
+                    {(AI_VIA_SERVER||settings.openRouterKey)&&<div style={{position:"absolute",bottom:0,right:0,width:11,height:11,borderRadius:"50%",background:"#4ADE80",border:"2px solid #15824F"}}/>}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:15,fontWeight:700,color:"white"}}>ProQuote Assistant</div>
