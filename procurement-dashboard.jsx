@@ -10,6 +10,13 @@ const SB_URL = (import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\
 // because Row Level Security is enabled on the table.
 const SB_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 const cloudEnabled = !!(SB_URL && SB_KEY);
+// Central AI: the OpenRouter key now lives in the /api/ai server function, so the
+// app no longer requires the user to supply one. We assume the server route is
+// available; callAI still falls back to a user key if present, and surfaces a
+// friendly error if neither works.
+const AI_VIA_SERVER = true;
+// Email also goes through the /api/send-email server function (central Resend key).
+const EMAIL_VIA_SERVER = true;
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
@@ -100,8 +107,6 @@ const STATUS = {
 
 // --- AI helpers ---------------------------------------------------------------
 async function callAI(system, user, history=[]) {
-  const key = window.__piq_or_key__ || "";
-  if (!key) throw new Error("NO_KEY");
   const models = [
     "deepseek/deepseek-chat",
     "meta-llama/llama-3.1-8b-instruct",
@@ -113,6 +118,25 @@ async function callAI(system, user, history=[]) {
     ...history.slice(-8),
     {role:"user",content:user}
   ];
+
+  // Preferred path: central server key via /api/ai (user never needs a key).
+  try {
+    const res = await fetch("/api/ai", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ messages, models })
+    });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.text) return d.text;
+      if (d.error && !d.error.includes("not configured")) throw new Error(d.error);
+      // if "not configured", fall through to the user-key path below
+    }
+  } catch(e) { /* fall through to direct call */ }
+
+  // Fallback: user-provided key (legacy / if server key isn't set up yet).
+  const key = window.__piq_or_key__ || "";
+  if (!key) throw new Error("NO_KEY");
   let lastErr = "";
   for (const model of models) {
     try {
@@ -1146,7 +1170,7 @@ function ProQuoteApp({ session }) {
   // -- Handlers --
   async function handleParse() {
     if (!rawInput.trim()) return;
-    if (!settings.openRouterKey) { showToast("Add your free OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    if (!AI_VIA_SERVER && !settings.openRouterKey) { showToast("AI is temporarily unavailable. Please try again shortly.","warn"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Parsing your material list...");
     try {
@@ -1188,7 +1212,7 @@ function ProQuoteApp({ session }) {
   }
 
   async function handleSendEmails() {
-    if (!settings.resendKey) { showToast("Add your Resend API key in Settings first","warn"); setView("settings"); return; }
+    if (!EMAIL_VIA_SERVER && !settings.resendKey) { showToast("Email is temporarily unavailable. Please try again shortly.","warn"); return; }
     setLoading(true); setLoadMsg("Sending to suppliers...");
     const toSend = suppliers.filter(s=>selSup.includes(s.id));
     const subject = `Request for Quotation - ${jobRef||parsed?.jobRef||"TBC"}`;
@@ -1296,7 +1320,7 @@ function ProQuoteApp({ session }) {
 
   async function handleAnalyse() {
     if (!quoteInput.trim()||!activeReq) return;
-    if (!settings.openRouterKey) { showToast("Add your free OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    if (!AI_VIA_SERVER && !settings.openRouterKey) { showToast("AI is temporarily unavailable. Please try again shortly.","warn"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true); setLoadMsg("Analysing quote...");
     try {
@@ -1315,7 +1339,7 @@ function ProQuoteApp({ session }) {
     if (!activeReq) return;
     const toAnalyse = (activeReq.sentTo||[]).filter(s=>s.quote&&s.quote.trim());
     if (!toAnalyse.length) return;
-    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    if (!AI_VIA_SERVER && !settings.openRouterKey) { showToast("AI is temporarily unavailable. Please try again shortly.","warn"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
     setLoading(true);
     const results = [];
@@ -1446,7 +1470,7 @@ function ProQuoteApp({ session }) {
 
   async function handleHelpChat(question) {
     if (!question.trim()) return;
-    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings to use the AI assistant","warn"); return; }
+    if (!AI_VIA_SERVER && !settings.openRouterKey) { showToast("AI is temporarily unavailable. Please try again shortly.","warn"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
     const userMsg = {role:"user",content:question};
     setHelpMessages(p=>[...p,userMsg]);
@@ -1563,7 +1587,7 @@ If asked about something ProQuote does not do, say so clearly and mention if it 
   }
 
   async function handleSendOrder(order) {
-    if (!settings.resendKey) { showToast("Add your Resend API key in Settings to send orders","warn"); setView("settings"); return; }
+    if (!EMAIL_VIA_SERVER && !settings.resendKey) { showToast("Email is temporarily unavailable. Please try again shortly.","warn"); return; }
     if (!order.supplierEmail) { showToast("No supplier email on this order - edit the order to add one","warn"); return; }
     setSendingOrder(order.id);
     const note = orderNote[order.id]||"";
@@ -1804,7 +1828,7 @@ ${settings.company||""}`;
   // File upload handler for quote entry
   const processQuoteFile = async(file, si, sup, activeReqId) => {
     if (!file) return;
-    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    if (!AI_VIA_SERVER && !settings.openRouterKey) { showToast("AI is temporarily unavailable. Please try again shortly.","warn"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
     setFileExtracting(prev=>({...prev,[si]:true}));
     showToast(`Reading ${file.name}...`);
@@ -1878,7 +1902,7 @@ ${settings.company||""}`;
   const [scanning, setScanning] = useState(false);
   const scanDocumentFile = async (file) => {
     if (!file) return;
-    if (!settings.openRouterKey) { showToast("Add your OpenRouter key in Settings first","warn"); setView("settings"); return; }
+    if (!AI_VIA_SERVER && !settings.openRouterKey) { showToast("AI is temporarily unavailable. Please try again shortly.","warn"); return; }
     window.__piq_or_key__ = settings.openRouterKey;
     setRawInput("");  // Clear previous input before scanning
     setScanning(true);
@@ -2197,7 +2221,7 @@ Rules:
             </button>
             <div style={{fontSize:11,background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:"10px 14px",display:"flex",alignItems:"center",gap:8,border:"1px solid var(--sidebar-border)"}}>
               <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)"}}>*</span>
-              <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)",fontSize:11}}>{settings.openRouterKey?(settings.resendKey?"AI + Email ready":"AI active"):"Setup needed"}</span>
+              <span style={{color:settings.openRouterKey?"var(--green)":"var(--amber)",fontSize:11}}>{"AI + Email ready"}</span>
             </div>
           </div>
         </div>
@@ -2794,7 +2818,7 @@ Rules:
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
                       <Btn outline onClick={()=>setStep(2)}>Back</Btn>
                       <div style={{display:"flex",gap:10}}>
-                        {settings.resendKey?(
+                        {(EMAIL_VIA_SERVER||settings.resendKey)?(
                           <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#15824F">
                             {loading?loadMsg:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""}`}
                           </Btn>
@@ -3425,7 +3449,7 @@ Rules:
                                     <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Expected delivery date</label>
                                     <input type="date" value={expectedDelivery[order.id]||""} onChange={e=>setExpectedDelivery(p=>({...p,[order.id]:e.target.value}))} style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                                   </div>
-                                  {settings.resendKey?(
+                                  {(EMAIL_VIA_SERVER||settings.resendKey)?(
                                     <Btn onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id} color="#15824F">
                                       {sendingOrder===order.id?<><Spinner/> Sending...</>:"Send order to supplier"}
                                     </Btn>
@@ -4038,16 +4062,15 @@ Rules:
               </Card>
 
               <Card>
-                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>AI (OpenRouter)</div>
-                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:12}}>Required for AI parsing and quote analysis. Free at openrouter.ai</div>
-                <input type="password" value={sForm.openRouterKey||""} onChange={e=>setSForm(p=>({...p,openRouterKey:e.target.value}))} placeholder="sk-or-..." style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:8}}/>
-                {sForm.openRouterKey?<div style={{fontSize:11,color:"var(--green-dark)"}}>Key entered - AI features active</div>:<div style={{fontSize:11,color:"var(--amber)"}}>No key - AI features disabled</div>}
-              </Card>
-              <Card>
-                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Email sending (Resend)</div>
-                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:12}}>Required for sending RFQ emails. Free tier at resend.com</div>
-                <input type="password" value={sForm.resendKey||""} onChange={e=>setSForm(p=>({...p,resendKey:e.target.value}))} placeholder="re_..." style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:8}}/>
-                {sForm.resendKey?<div style={{fontSize:11,color:"var(--green-dark)"}}>Key entered</div>:<div style={{fontSize:11,color:"var(--amber)"}}>No key - email sending disabled</div>}
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:40,height:40,borderRadius:11,background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <Icon name="check_circle" size={21} color="var(--green-dark)"/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)"}}>AI &amp; email are managed for you</div>
+                    <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:2}}>Quote analysis, document scanning and email sending all work out of the box. There are no keys to set up.</div>
+                  </div>
+                </div>
               </Card>
               <div style={{display:"flex",gap:10}}>
                 <Btn onClick={()=>{saveSettings(sForm);showToast("Settings saved");}} color="#5B5BD6">Save settings</Btn>
