@@ -944,7 +944,7 @@ export default function App() {
 
   // Templates
   const [templates, setTemplates] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_templates")||"[]")}catch{return []} });
-  const saveTemplates = (t) => { setTemplates(t); localStorage.setItem("piq_templates",JSON.stringify(t)); };
+  const saveTemplates = (t) => { setTemplates(t); try{localStorage.setItem("piq_templates",JSON.stringify(t));}catch{} };
   const [templateModal, setTemplateModal] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
 
@@ -1019,9 +1019,9 @@ export default function App() {
       overallVerdict: qa.overallVerdict||"",
     };
     setQuoteLibrary(prev => {
-      const next = [entry, ...prev];
-      localStorage.setItem("piq_quote_library", JSON.stringify(next.slice(0,500)));
-      return next.slice(0,500);
+      const next = [entry, ...prev].slice(0,500);
+      try{localStorage.setItem("piq_quote_library", JSON.stringify(next));}catch{}
+      return next;
     });
   };
 
@@ -1078,7 +1078,8 @@ export default function App() {
   function handleDelete(id) {
     logToRequest(id, "Deleted", "Request permanently deleted");
     setRequests(p=>p.filter(r=>r.id!==id));
-    if (activeReq?.id===id) setActiveReq(null);
+    setSavedQuoteSets(prev=>prev.filter(s=>s.reqId!==id));
+    if (activeReq?.id===id) { setActiveReq(null); setAllAnalyses([]); }
     setDeleteConfirm(null);
     showToast("Request deleted");
   }
@@ -1342,7 +1343,7 @@ export default function App() {
         items:a.matched||[], missing:a.missing||[], warnings:a.warnings||[],
         overallVerdict:a.overallVerdict||"", autoSaved:true,
       };
-      setQuoteLibrary(prev=>{ const n=[libEntry,...prev].slice(0,500); localStorage.setItem("piq_quote_library",JSON.stringify(n)); return n; });
+      setQuoteLibrary(prev=>{ const n=[libEntry,...prev].slice(0,500); try{localStorage.setItem("piq_quote_library",JSON.stringify(n));}catch{} return n; });
     });
 
     await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:dateStr });
@@ -1571,7 +1572,7 @@ ${settings.company||""}`;
   const [reqFilterTrade, setReqFilterTrade] = useState("all");
   const [reqSearch, setReqSearch] = useState("");
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
-  const toggleDark = () => setDarkMode(p=>{ const n=!p; localStorage.setItem("piq_dark",n?"1":"0"); return n; });
+  const toggleDark = () => setDarkMode(p=>{ const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0");}catch{} return n; });
   // Keep the page (html/body) background in sync with the theme so no white edges show
   useEffect(() => {
     const pageBg = darkMode ? "#16161A" : "#FAFAF8";
@@ -2320,7 +2321,7 @@ Rules:
                 {label:"Quotes received", value:stats.received, color:"#7E6DD6", grad:"linear-gradient(135deg,#7E6DD6,#6B4FC4)", icon:"inbox", nav:()=>{setView("quotes");}},
                 {label:"Approved POs",    value:stats.approved, color:"#1E9E63", grad:"linear-gradient(135deg,#1E9E63,#15824F)", icon:"check_circle", nav:()=>setView("orders")},
               ].map((s,si)=>(
-                <button key={s.label} onClick={s.nav} className="stagger-in" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"16px 18px":"20px 24px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s",animationDelay:`${si*0.05}s`}}
+                <button key={s.label} onClick={s.nav} title={`View ${s.label.toLowerCase()}`} aria-label={`View ${s.label.toLowerCase()}`} className="stagger-in" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"16px 18px":"20px 24px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s",animationDelay:`${si*0.05}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 2px 4px rgba(26,26,23,0.04), 0 12px 28px ${s.color}1f`;e.currentTarget.style.transform="translateY(-3px)";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";e.currentTarget.style.transform="translateY(0)";}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
