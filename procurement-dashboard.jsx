@@ -4331,7 +4331,12 @@ Rules:
                       </div>
                       <div style={{flex:"1 1 200px",minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.email}{isMe&&<span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:400}}> (you)</span>}</div>
-                        <div style={{fontSize:11,color:"var(--text-secondary)"}}>{ROLES[m.role]?.desc||""}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2,flexWrap:"wrap"}}>
+                          {roleRank(m.role)>=2
+                            ? <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Internal</span>
+                            : <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",padding:"2px 8px",borderRadius:99,background:"#FBF3E8",color:"#9A5B16"}}>Subcontractor</span>}
+                          <span style={{fontSize:11,color:"var(--text-secondary)"}}>{ROLES[m.role]?.desc||""}</span>
+                        </div>
                       </div>
                       {can.manageTeam(myRole) && !isMe ? (
                         <select value={m.role} onChange={e=>handleChangeRole(m.email,e.target.value)}
