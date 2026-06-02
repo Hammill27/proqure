@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 // --- Supabase cloud sync ------------------------------------------------------
@@ -1074,7 +1074,7 @@ function ProQuoteApp({ session }) {
   function handleInviteMember() {
     if (!can.manageTeam(myRole)) { showToast("Only a Manager can add members.","warn"); return; }
     const email = inviteEmail.trim().toLowerCase();
-    if (!email || !email.includes("@")) { showToast("Enter a valid email address.","warn"); return; }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast("Enter a valid email address.","warn"); return; }
     if (team.some(m => (m.email||"").toLowerCase() === email)) { showToast("That person is already on the team.","warn"); return; }
     if (roleRank(inviteRole) > roleRank(myRole)) { showToast("You can only assign roles up to your own level.","warn"); return; }
     setTeam(prev => [...prev, { email, name:"", role: inviteRole, addedAt: new Date().toISOString(), active: true }]);
@@ -1149,6 +1149,7 @@ function ProQuoteApp({ session }) {
       else if (e.key==="Escape") { setShowShortcuts(false);
         setDeleteConfirm(null); setEditModal(null); setActivityModal(null);
         setApproveConfirm(null); setApproveSuccess(null); setTemplateModal(false);
+        setResetConfirm(false); setShowPoSetup(false); setCancelOrderConfirm(null);
       }
     };
     window.addEventListener("keydown",handler);
@@ -1182,15 +1183,16 @@ function ProQuoteApp({ session }) {
 
   function handleOrderConfirmationUpload(file, orderId) {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    // Guard against very large files bloating storage/sync. Images get compressed; others are size-capped.
+    const isImage = (file.type||"").startsWith("image/");
+    const storeDoc = (dataUrl) => {
       const doc = {
         id: `CONF-${Date.now()}`,
         type: "confirmation",
         label: file.name,
         date: new Date().toLocaleDateString("en-GB"),
         fileSize: `${(file.size/1024).toFixed(1)} KB`,
-        dataUrl: e.target.result,
+        dataUrl,
         fileType: file.type,
       };
       const entry = {
@@ -1205,10 +1207,33 @@ function ProQuoteApp({ session }) {
         confirmationDoc: doc,
         activity:[...(o.activity||[]),entry]
       }:o));
-      showToast(`Confirmation attached - order marked as Confirmed`);
-      logActivity("Confirmation uploaded",`${doc.label} attached - order confirmed`,{entity:"order"});
+      logActivity("Confirmation uploaded", `${doc.label} attached - order confirmed`, { entity:"order" });
+      showToast("Confirmation attached");
     };
+    if (isImage) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const image = new Image();
+        image.onload = () => {
+          const maxW = 1200;
+          const scale = Math.min(1, maxW / image.width);
+          const cv = document.createElement("canvas");
+          cv.width = image.width * scale; cv.height = image.height * scale;
+          cv.getContext("2d").drawImage(image, 0, 0, cv.width, cv.height);
+          let out; try { out = cv.toDataURL("image/jpeg", 0.7); } catch(err) { out = e.target.result; }
+          storeDoc(out);
+        };
+        image.onerror = () => storeDoc(e.target.result);
+        image.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    if (file.size > 4*1024*1024) { showToast("That file is too large (max 4MB). Please attach a smaller PDF.","warn"); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => storeDoc(e.target.result);
     reader.readAsDataURL(file);
+    return;
   }
 
   // Quote library - persisted
@@ -1478,7 +1503,6 @@ function ProQuoteApp({ session }) {
     setStep(2);
     setView("new");
     showToast("Request duplicated - review and send");
-    console.log(`[ProQuote] Request duplicated from ${r.id}`);
   }
 
   function handleSaveTemplate() {
@@ -1488,7 +1512,6 @@ function ProQuoteApp({ session }) {
     setTemplateModal(false);
     setNewTemplateName("");
     showToast(`Template "${t.name}" saved`);
-    console.log(`[ProQuote] Template saved: ${t.name} - ${t.items.length} items`);
   }
 
   function handleLoadTemplate(t) {
@@ -1647,7 +1670,7 @@ function ProQuoteApp({ session }) {
       detail:`PO ${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} - ${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} auto-saved to library`,
       user:settings.contactName||"You"
     };
-    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
+    setRequests(p=>p.map(r=>r.id===activeReq.id?{...r,status:"approved",pendingApproval:null,documents:[...(r.documents||[]),doc],activity:[...(r.activity||[]),poEntry]}:r));
     setActiveReq(prev=>({...prev,status:"approved",documents:[...(prev.documents||[]),doc]}));
     setApprovedQuoteId(qa?._id||null);
     setSavedQuoteSets(prev => prev.map(s => s.reqId===activeReq.id ? {...s, status:"approved", approvedId:qa?._id||null, analyses:allAnalyses.length?allAnalyses:s.analyses} : s));
@@ -3798,7 +3821,7 @@ Rules:
                                     <label style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
                                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
                                       {order.deliveryPhoto?"Replace delivery photo":"Photo + sign off delivery"}
-                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const img=rd.result;setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:img,signedOffBy:myEmail}:o));logActivity("Delivery signed off",`${order.poNumber} (${order.supplier}) signed off by ${myEmail} with delivery note photo`,{entity:"order",jobRef:order.jobRef});showToast("Delivery signed off with photo");};rd.readAsDataURL(f);e.target.value="";}}/>
+                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const dataUrl=rd.result;const image=new Image();image.onload=()=>{const maxW=1000;const scale=Math.min(1,maxW/image.width);const cv=document.createElement("canvas");cv.width=image.width*scale;cv.height=image.height*scale;cv.getContext("2d").drawImage(image,0,0,cv.width,cv.height);let img;try{img=cv.toDataURL("image/jpeg",0.7);}catch(err){img=dataUrl;}setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:img,signedOffBy:myEmail}:o));logActivity("Delivery signed off",`${order.poNumber} (${order.supplier}) signed off by ${myEmail} with delivery note photo`,{entity:"order",jobRef:order.jobRef});showToast("Delivery signed off with photo");};image.onerror=()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:dataUrl,signedOffBy:myEmail}:o));showToast("Delivery signed off with photo");};image.src=dataUrl;};rd.readAsDataURL(f);e.target.value="";}}/>
                                     </label>
                                     {can.deleteItems(myRole) && order.status!=="cancelled" && <Btn outline onClick={()=>setCancelOrderConfirm(order)} style={{color:"var(--red)"}}>Cancel order</Btn>}
                                   </div>
@@ -4993,10 +5016,27 @@ function LoginScreen({ onLoggedIn }) {
   );
 }
 
-export default function App() {
-  // If cloud isn't configured, run the app exactly as before (browser-only).
-  if (!cloudEnabled) return <ProQuoteApp session={null} />;
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error, info) { try { console.error("ProQuote error:", error, info); } catch(e){} }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Plus Jakarta Sans',system-ui,sans-serif",background:"#101013",color:"#fff",padding:24}}>
+          <div style={{maxWidth:420,textAlign:"center"}}>
+            <div style={{fontSize:18,fontWeight:700,marginBottom:10}}>Something went wrong</div>
+            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)",lineHeight:1.6,marginBottom:20}}>ProQuote hit an unexpected error. Your data is safe in the cloud - reloading usually fixes it.</div>
+            <button onClick={()=>window.location.reload()} style={{background:"#15824F",color:"#fff",border:"none",borderRadius:10,padding:"11px 22px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Reload ProQuote</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
+function AppInner() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
@@ -5036,4 +5076,11 @@ export default function App() {
     return <div style={loadStyle}>Syncing your data...</div>;
   }
   return <ProQuoteApp session={session} />;
+}
+
+export default function App() {
+  // If cloud isn't configured, run the app exactly as before (browser-only).
+  // This branch lives here (before AppInner) so AppInner's hooks are never conditional.
+  if (!cloudEnabled) return <ErrorBoundary><ProQuoteApp session={null} /></ErrorBoundary>;
+  return <ErrorBoundary><AppInner /></ErrorBoundary>;
 }
