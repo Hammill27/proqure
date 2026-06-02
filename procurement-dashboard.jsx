@@ -1150,6 +1150,7 @@ function ProQuoteApp({ session }) {
         setDeleteConfirm(null); setEditModal(null); setActivityModal(null);
         setApproveConfirm(null); setApproveSuccess(null); setTemplateModal(false);
         setResetConfirm(false); setShowPoSetup(false); setCancelOrderConfirm(null);
+        setTrialResetConfirm(false);
       }
     };
     window.addEventListener("keydown",handler);
@@ -1348,6 +1349,22 @@ function ProQuoteApp({ session }) {
     setResetConfirm(false);
     setActiveReq(null); setAllAnalyses([]);
     showToast("Workspace reset - everything is archived and recoverable, nothing was deleted");
+  }
+
+  // TEMPORARY (trial only): hard-wipe everything except suppliers for a clean start.
+  // Remove this function, its button and modal before going live.
+  function handleTrialReset() {
+    if (roleRank(myRole) < 3) { showToast("Only a Manager can do this.","warn"); setTrialResetConfirm(false); return; }
+    setRequests([]);
+    setOrders([]);
+    setSavedQuoteSets([]);
+    setQuoteLibrary([]);
+    setTemplates([]);
+    setActivityLog([]);
+    setActiveReq(null); setAllAnalyses([]); setApprovedQuoteId(null);
+    setTrialResetConfirm(false);
+    setView("dashboard");
+    showToast("Fresh start - everything cleared except your suppliers");
   }
 
   function handleCancelOrder(orderId) {
@@ -1906,6 +1923,7 @@ ${settings.company||""}`;
   const [showArchived, setShowArchived] = useState(false);
   const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [trialResetConfirm, setTrialResetConfirm] = useState(false);
   const [showPoSetup, setShowPoSetup] = useState(false);
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0");}catch{} return n; });
@@ -4535,6 +4553,14 @@ Rules:
                 <button onClick={()=>setResetConfirm(true)} style={{fontSize:13,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"1px solid var(--red)",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer"}}>Reset workspace</button>
               </Card>
             )}
+            {roleRank(myRole) >= 3 && (
+              <Card>
+                <div style={{display:"inline-block",fontSize:10,fontWeight:800,letterSpacing:"0.08em",textTransform:"uppercase",color:"#9A5B16",background:"#FBF3E8",borderRadius:99,padding:"3px 10px",marginBottom:8}}>Temporary - trial only</div>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Clear everything (keep suppliers)</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>A true fresh start for testing: <strong>permanently deletes</strong> all requests, orders, quotes, saved quote sets, templates and activity history. Your <strong>suppliers, team and settings are kept</strong>. Unlike "Start fresh" above, this is <strong>not recoverable</strong>. This button will be removed before going live.</div>
+                <button onClick={()=>setTrialResetConfirm(true)} style={{fontSize:13,fontWeight:600,color:"#fff",background:"var(--red)",border:"1px solid var(--red)",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer"}}>Clear everything except suppliers</button>
+              </Card>
+            )}
           </div>
         )}
 
@@ -4687,6 +4713,19 @@ Rules:
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
               <Btn outline onClick={()=>setResetConfirm(false)}>Keep everything</Btn>
               <Btn color="#D14343" onClick={handleResetWorkspace}>Reset workspace</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {trialResetConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setTrialResetConfirm(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 30px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:8,textAlign:"center",color:"var(--text-primary)"}}>Clear everything except suppliers?</div>
+            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:24,textAlign:"center",lineHeight:1.6}}>This <strong>permanently deletes</strong> all requests, orders, quotes, saved quote sets, templates and activity history - it cannot be undone. Your <strong>suppliers, team and settings stay.</strong> Use this only to start the trial from scratch.</div>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <Btn outline onClick={()=>setTrialResetConfirm(false)}>Cancel</Btn>
+              <Btn color="#D14343" onClick={handleTrialReset}>Yes, clear everything</Btn>
             </div>
           </div>
         </div>
