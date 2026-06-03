@@ -785,7 +785,7 @@ async function readFileForExtraction(file) {
 
 // --- Email via Vercel serverless function (no CORS) --------------------------
 // Build a branded HTML email from a plain-text body + optional logo
-function buildEmailHtml(bodyText, settings) {
+function buildEmailHtml(bodyText, settings, jobToken="") {
   const esc = (s) => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const company = esc(settings.company||"");
   const logo = settings.logoBase64
@@ -823,23 +823,62 @@ function buildEmailHtml(bodyText, settings) {
         </div>
         <div style="font-size:10px;color:#C4C3BA;margin-top:10px">This quote request was prepared and sent using ProQure${company?` on behalf of ${company}`:""}.</div>
       </div>
+      ${jobToken?`<div style="display:none;font-size:0;line-height:0;color:#F4F4F1;max-height:0;overflow:hidden">[ProQure-Ref:${esc(jobToken)}]</div>`:""}
     </div>
   </body></html>`;
 }
 
-async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settings={}) {
+// --- Email sending identity (the decided model) ------------------------------
+// ProQure sends from its own domain, showing the business as the display name,
+// with Reply-To pointing at the user's real inbox. The customer's own email is
+// never the sending address. Per-instance subdomains slot in later without
+// changing this shape - only SENDING_DOMAIN becomes the instance subdomain.
+const SENDING_DOMAIN = "proqure.co.uk"; // later: `${instanceSlug}.proqure.co.uk`
+function buildSender(kind, settings={}) {
+  // kind: "quotes" (RFQs) or "orders" (POs)
+  const localPart = kind === "orders" ? "orders" : "quotes";
+  const address = `${localPart}@${SENDING_DOMAIN}`;
+  // Display name = the business, e.g. "Andy (Initial Mechanical)" or just the company.
+  const biz = (settings.company || "").trim();
+  const person = (settings.contactName || "").trim();
+  let display = biz || person || "ProQure";
+  if (biz && person) display = `${person} (${biz})`;
+  // Strip characters that break the From header's display-name quoting.
+  display = display.replace(/["\\<>]/g, "").trim();
+  const from = `${display} <${address}>`;
+  // Reply-To: where supplier replies should land. For now this is the user's own
+  // inbox (so they receive replies during the sending trial). Later, when inbound
+  // capture is built, this becomes a unique per-job ProQure capture address and the
+  // user is CC'd a copy instead - the autofill then reads the reply.
+  const replyTo = (settings.replyToEmail || settings.fromEmail || "").trim() || null;
+  return { from, address, replyTo, display };
+}
+
+// A short, stable per-job reference embedded (invisibly) in outgoing RFQs so that,
+// once inbound capture exists, a supplier's reply can be matched back to its job.
+// Groundwork only - harmless now, essential for autofill later.
+function jobReplyToken(jobRef, reqId) {
+  const base = `${jobRef||""}-${reqId||""}`;
+  let h = 0; for (let i=0;i<base.length;i++){ h = ((h<<5)-h + base.charCodeAt(i))|0; }
+  return "PQ" + Math.abs(h).toString(36).slice(0,6).toUpperCase();
+}
+
+async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settings={}, jobCtx={}) {
   const results = [];
+  const sender = buildSender("quotes", settings);
+  const token = jobReplyToken(jobCtx.jobRef, jobCtx.reqId); // hidden reply-matching groundwork
   for (const s of suppliers) {
     try {
       const res = await fetch("/api/send-email", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          from: fromEmail||"andy@initialmechanical.co.uk",
+          from: sender.from,
           to:   [s.email],
+          reply_to: sender.replyTo || undefined,
           subject,
           text: body,
-          html: buildEmailHtml(body, settings)
+          html: buildEmailHtml(body, settings, token)
         })
       });
       const d = await res.json();
@@ -1777,7 +1816,7 @@ function ProQureApp({ session }) {
       const subject = `Off-hire / collection request - ${h.hireRef} - ${h.description}`;
       const body = `Hello ${h.supplier||""}\n\nPlease arrange collection of the following hired equipment:\n\nEquipment: ${h.description}\nHire reference: ${h.hireRef}\nSite: ${h.site||"-"}\nRequested collection date: ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}\nCollection address: ${collectionAddress||h.site||"-"}\n\nPlease confirm the collection and provide an off-hire / collection reference number.\n\nKind regards\n${settings.contactName||settings.company||"The Procurement Team"}\n${settings.company||""}`;
       try {
-        await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ from:settings.fromEmail||"onboarding@resend.dev", to:[h.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
+        await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), to:[h.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
       } catch(e) { showToast("Off-hire email may not have sent; record updated anyway.","warn"); }
     }
     updateHire(id, {
@@ -1843,7 +1882,7 @@ function ProQureApp({ session }) {
     setLoading(true); setLoadMsg("Sending to suppliers...");
     const toSend = suppliers.filter(s=>selSup.includes(s.id));
     const subject = `Request for Quotation - ${jobRef||parsed?.jobRef||"TBC"}`;
-    const results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev", settings);
+    const results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev", settings, { jobRef: jobRef||parsed?.jobRef||"", reqId: activeReq?.id||"" });
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
     if (ok > 0) {
@@ -2268,7 +2307,7 @@ ${settings.company||""}`;
       const res = await fetch("/api/send-email", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ from:settings.fromEmail||"onboarding@resend.dev", to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) })
+        body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) })
       });
       const d = await res.json();
       if (res.ok && d.success) {
@@ -5039,7 +5078,7 @@ Rules:
                   {[
                     {label:"Company name",k:"company",ph:"e.g. Initial Mechanical"},
                     {label:"Contact name",k:"contactName",ph:"e.g. Andy Hammill"},
-                    {label:"From email",k:"fromEmail",ph:"e.g. quotes@company.co.uk"},
+                    {label:"Reply-to email (your inbox)",k:"fromEmail",ph:"e.g. andy@initialmechanical.co.uk"},
                     {label:"Phone",k:"phone",ph:"e.g. 0115 123 4567"},
                     {label:"Site address",k:"siteAddress",ph:"e.g. 52 Stretton Street"},
                   ].map(f=>(
@@ -5048,6 +5087,9 @@ Rules:
                       <input value={sForm[f.k]||""} onChange={e=>setSForm(p=>({...p,[f.k]:e.target.value}))} placeholder={f.ph} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                     </div>
                   ))}
+                </div>
+                <div style={{marginTop:12,fontSize:11.5,color:"var(--text-tertiary)",lineHeight:1.6,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                  Quote requests and orders are sent from ProQure on your behalf, showing your business as the sender. When a supplier replies, it comes to the reply-to inbox above. You never need to set up your own email to send.
                 </div>
               </Card>
               <Card>
