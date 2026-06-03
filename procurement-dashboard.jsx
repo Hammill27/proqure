@@ -69,12 +69,11 @@ async function cloudPull(userId) {
 // Push one key's value up to the cloud (on change), debounced by caller
 async function cloudPush(userId, storeKey, valueObj) {
   if (!supabase || !userId) return;
-  try {
-    await supabase.from("proqure_data").upsert(
-      { user_id: userId, store_key: storeKey, value: valueObj, updated_at: new Date().toISOString() },
-      { onConflict: "user_id,store_key" }
-    );
-  } catch (e) { console.warn("cloudPush failed", storeKey, e); }
+  const { error } = await supabase.from("proqure_data").upsert(
+    { user_id: userId, store_key: storeKey, value: valueObj, updated_at: new Date().toISOString() },
+    { onConflict: "user_id,store_key" }
+  );
+  if (error) { console.warn("cloudPush failed", storeKey, error); throw error; }
 }
 
 
@@ -2452,7 +2451,7 @@ ${settings.company||""}`;
   const queueCloudPush = useCallback((key, valueObj) => {
     if (!cloudEnabled || !cloudUserId) return;
     clearTimeout(pushTimers.current[key]);
-    pushTimers.current[key] = setTimeout(() => { cloudPush(cloudUserId, key, valueObj); }, 800);
+    pushTimers.current[key] = setTimeout(() => { cloudPush(cloudUserId, key, valueObj).catch(()=>{}); }, 800);
   }, [cloudUserId]);
 
   useEffect(()=>{ queueCloudPush("piq_requests", requests); }, [requests, queueCloudPush]);
@@ -5240,7 +5239,7 @@ Rules:
                 </div>
               </Card>
               <div style={{display:"flex",gap:10}}>
-                <Btn onClick={()=>{ if(!can.editSettings(myRole)){showToast("Only a Manager can change company settings.","warn");return;} saveSettings(sForm);showToast("Settings saved");}} color="#5B5BD6">Save settings</Btn>
+                <Btn onClick={async()=>{ if(!can.editSettings(myRole)){showToast("Only a Manager can change company settings.","warn");return;} const next={...settings,...sForm}; saveSettings(sForm); if(cloudEnabled&&cloudUserId){ try{ await cloudPush(cloudUserId,"piq_settings",next); showToast("Settings saved"); }catch{ showToast("Saved on this device, but cloud sync failed - check connection","warn"); } } else { showToast("Settings saved"); } }} color="#5B5BD6">Save settings</Btn>
                 <Btn outline onClick={()=>setSForm({...settings})}>Reset</Btn>
               </div>
             </div>
