@@ -259,8 +259,9 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
   } catch { return null; }
 }
 
-async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline) {
-  const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown. Sign off with the real contact name and company provided, no placeholder brackets.`;
+async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, siteAddress) {
+  const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown.
+IMPORTANT: Do NOT start with a greeting or salutation (no "Dear ...", no "Hello") - the greeting is added separately. Begin directly with the request itself (e.g. "We are requesting a quotation for the following materials..."). Do NOT add a sign-off, "Kind regards", or contact details at the end - a signature is added separately. Just the core request body.`;
   const list = items.map(i=>`- ${i.quantity} ${i.unit} ${i.description}`).join("\n");
   const deliveryLabels = {
     direct: "Delivery direct to site",
@@ -271,8 +272,9 @@ async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliv
   const deliveryStr = deliveryLabels[deliveryMethod]||deliveryMethod;
   const dateStr = deliveryDate ? `Required by: ${deliveryDate}` : "Required date: To be confirmed";
   const deadlineStr = rfqDeadline ? `Please respond by: ${new Date(rfqDeadline).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}` : "";
+  const siteStr = (deliveryMethod==="direct" && siteAddress) ? `\n- Delivery to site: ${siteAddress}` : "";
   return callAI(sys,
-    `Generate an RFQ email for ${company||"our company"}, job ref ${jobRef||"TBC"}, contact: ${contactName||"The Procurement Team"}, email: ${fromEmail||""}.\n\nItems required:\n${list}\n\nDelivery requirements:\n- Method: ${deliveryStr}\n- ${dateStr}\n${deadlineStr?"- "+deadlineStr:""}\n\nAsk for unit prices, availability, lead time, and please ask them to include carriage/delivery charges in their quotation. Keep it concise and professional. Clearly mention the delivery method and required date in the email.${deadlineStr?" Prominently include the response deadline.":""}`
+    `Generate an RFQ email body for ${company||"our company"}, job ref ${jobRef||"TBC"}.\n\nItems required:\n${list}\n\nDelivery requirements:\n- Method: ${deliveryStr}${siteStr}\n- ${dateStr}\n${deadlineStr?"- "+deadlineStr:""}\n\nAsk for unit prices, availability, lead time, and please ask them to include carriage/delivery charges in their quotation. Keep it concise and professional. Clearly mention the delivery method and required date${siteStr?", including the delivery site address,":""} in the email.${deadlineStr?" Prominently include the response deadline.":""} Remember: no greeting line and no sign-off - body only.`
   );
 }
 // --- Quote text pre-processor ------------------------------------------------
@@ -785,47 +787,100 @@ async function readFileForExtraction(file) {
 
 // --- Email via Vercel serverless function (no CORS) --------------------------
 // Build a branded HTML email from a plain-text body + optional logo
-function buildEmailHtml(bodyText, settings, jobToken="") {
+// Email template. Table-based for reliable rendering across Outlook/Gmail/Apple Mail
+// (flexbox and many CSS features are stripped by email clients). Accepts an options
+// object so the same renderer powers both the live send and the in-app preview.
+function buildEmailHtml(bodyText, settings, optsOrToken={}) {
+  // Back-compat: older callers passed a jobToken string as the 3rd arg.
+  const opts = typeof optsOrToken === "string" ? { jobToken: optsOrToken } : (optsOrToken || {});
+  const { supplierName = "", jobToken = "" } = opts;
   const esc = (s) => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
   const company = esc(settings.company||"");
-  const logo = settings.logoBase64
-    ? `<img src="${settings.logoBase64}" alt="${company||"Company"}" style="max-height:46px;max-width:180px;display:block"/>`
-    : `<div style="font-size:21px;font-weight:800;color:#FFFFFF;letter-spacing:-0.02em">${company||"ProQure"}</div>`;
+  const contactName = esc(settings.contactName||"");
+  const accent = "#15824F";       // ProQure green
+  const accentDeep = "#0E5C38";
+  const ink = "#1A1A17";
+  const muted = "#6B6A62";
+
+  // Logo: base64 images are frequently blocked by clients, so we ALWAYS render a
+  // styled text wordmark of the business as a reliable fallback/identity, and only
+  // add the image above it if one is set. Table cell, never flex.
+  const wordmark = `<span style="font-size:20px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;font-family:'Helvetica Neue',Arial,sans-serif">${company||"ProQure"}</span>`;
+  const logoImg = settings.logoBase64
+    ? `<img src="${settings.logoBase64}" alt="${company||"Company"}" width="auto" height="40" style="max-height:40px;max-width:200px;display:block;border:0;outline:none;margin-bottom:8px"/>`
+    : "";
+  const header = `${logoImg}${wordmark}`;
+
+  // Greeting line - personalised to the supplier when we know their name.
+  const greeting = supplierName
+    ? `<p style="margin:0 0 16px;font-size:15px;color:${ink}">Dear ${esc(supplierName)},</p>`
+    : "";
+
   const safeBody = esc(bodyText).replace(/\n/g,"<br/>");
-  const terms = settings.poNotes ? `<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3;font-size:12px;line-height:1.6;color:#908F86">${esc(settings.poNotes)}</div>` : "";
-  // Contact line from settings
-  const contactBits = [];
-  if (settings.contactName) contactBits.push(esc(settings.contactName));
-  if (settings.fromEmail) contactBits.push(esc(settings.fromEmail));
-  if (settings.phone) contactBits.push(esc(settings.phone));
-  const contact = contactBits.length ? `<div style="font-size:12px;color:#5C5B54;line-height:1.7">${contactBits.join(" &nbsp;&middot;&nbsp; ")}</div>` : "";
-  // ProQure logo mark (small, inline SVG as data — using simple shapes)
-  const pqMark = `<span style="display:inline-block;width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#1E9E63,#15824F);vertical-align:middle;margin-right:6px"></span>`;
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-  <body style="margin:0;padding:0;background:#F4F4F1;font-family:'Helvetica Neue',Arial,sans-serif">
-    <div style="max-width:600px;margin:0 auto;padding:28px 18px">
-      <div style="background:#FFFFFF;border:1px solid #E8E7E1;border-radius:18px;overflow:hidden;box-shadow:0 4px 16px rgba(26,26,23,0.06)">
-        <!-- Branded header band -->
-        <div style="background:linear-gradient(135deg,#16211b,#101013);padding:24px 32px;display:flex;align-items:center">
-          ${logo}
-        </div>
+
+  // Site / delivery address block, if provided.
+  const addr = esc(settings.siteAddress||"");
+  const addressBlock = addr
+    ? `<tr><td style="padding:0 0 4px"><div style="font-size:12px;font-weight:700;color:${muted};text-transform:uppercase;letter-spacing:0.04em;margin-top:18px">Delivery / site address</div><div style="font-size:14px;color:${ink};margin-top:4px">${addr}</div></td></tr>`
+    : "";
+
+  const terms = settings.poNotes
+    ? `<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3;font-size:12px;line-height:1.6;color:${muted}">${esc(settings.poNotes)}</div>`
+    : "";
+
+  // Signature: Andy can supply his own HTML signature. If present, use it verbatim
+  // (it's his own content). Otherwise fall back to a clean contact block.
+  let signature;
+  if ((settings.emailSignature||"").trim()) {
+    const sig = settings.emailSignature.trim();
+    // If it looks like HTML, use as-is; if plain text, escape it and keep line breaks.
+    const looksHtml = /<[a-z][\s\S]*>/i.test(sig);
+    const sigHtml = looksHtml ? sig : esc(sig).replace(/\n/g,"<br/>");
+    signature = `<div style="margin-top:24px;padding-top:18px;border-top:1px solid #EAE9E3;font-size:13px;color:${ink};line-height:1.6">${sigHtml}</div>`;
+  } else {
+    const bits = [];
+    if (contactName) bits.push(`<div style="font-size:14px;font-weight:700;color:${ink}">${contactName}</div>`);
+    if (company) bits.push(`<div style="font-size:13px;color:${muted}">${company}</div>`);
+    const line2 = [];
+    if (settings.phone) line2.push(esc(settings.phone));
+    if (settings.fromEmail) line2.push(esc(settings.fromEmail));
+    if (line2.length) bits.push(`<div style="font-size:12px;color:${muted};margin-top:4px">${line2.join("&nbsp;&middot;&nbsp;")}</div>`);
+    signature = bits.length
+      ? `<div style="margin-top:24px;padding-top:18px;border-top:1px solid #EAE9E3">${bits.join("")}</div>`
+      : "";
+  }
+
+  const pqMark = `<span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${accent};vertical-align:middle;margin-right:6px"></span>`;
+
+  return `<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta http-equiv="X-UA-Compatible" content="IE=edge"/></head>
+<body style="margin:0;padding:0;background:#F4F4F1;-webkit-text-size-adjust:100%;font-family:'Helvetica Neue',Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F4F1">
+    <tr><td align="center" style="padding:28px 16px">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FFFFFF;border:1px solid #E8E7E1;border-radius:16px;overflow:hidden">
+        <!-- Header band: dark with a green accent rule under it -->
+        <tr><td style="background:#101013;padding:22px 32px">${header}</td></tr>
+        <tr><td style="height:3px;background:${accent};line-height:3px;font-size:0">&nbsp;</td></tr>
         <!-- Body -->
-        <div style="padding:30px 32px">
-          <div style="font-size:14px;line-height:1.75;color:#1A1A17">${safeBody}</div>
+        <tr><td style="padding:30px 32px">
+          ${greeting}
+          <div style="font-size:14px;line-height:1.7;color:${ink}">${safeBody}</div>
+          ${addressBlock?`<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${addressBlock}</table>`:""}
           ${terms}
-          ${contact?`<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3">${contact}</div>`:""}
-        </div>
-      </div>
-      <!-- Powered by ProQure footer -->
-      <div style="text-align:center;margin-top:18px;padding:0 12px">
-        <div style="display:inline-block;background:#FFFFFF;border:1px solid #E8E7E1;border-radius:99px;padding:7px 16px">
-          <span style="font-size:11px;color:#908F86;vertical-align:middle">${pqMark}Sent with <strong style="color:#15824F;font-weight:700">ProQure</strong> &mdash; AI procurement for trades</span>
-        </div>
-        <div style="font-size:10px;color:#C4C3BA;margin-top:10px">This quote request was prepared and sent using ProQure${company?` on behalf of ${company}`:""}.</div>
-      </div>
-      ${jobToken?`<div style="display:none;font-size:0;line-height:0;color:#F4F4F1;max-height:0;overflow:hidden">[ProQure-Ref:${esc(jobToken)}]</div>`:""}
-    </div>
-  </body></html>`;
+          ${signature}
+        </td></tr>
+      </table>
+      <!-- Footer -->
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+        <tr><td align="center" style="padding:18px 12px 0">
+          <span style="font-size:11px;color:#908F86">${pqMark}Sent with <strong style="color:${accent};font-weight:700">ProQure</strong></span>
+          <div style="font-size:10px;color:#C4C3BA;margin-top:8px">Prepared and sent via ProQure${company?` on behalf of ${company}`:""}.</div>
+        </td></tr>
+      </table>
+      ${jobToken?`<div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;color:#F4F4F1">[ProQure-Ref:${esc(jobToken)}]</div>`:""}
+    </td></tr>
+  </table>
+</body></html>`;
 }
 
 // --- Email sending identity (the decided model) ------------------------------
@@ -878,7 +933,7 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
           reply_to: sender.replyTo || undefined,
           subject,
           text: body,
-          html: buildEmailHtml(body, settings, token)
+          html: buildEmailHtml(body, settings, { supplierName: s.name, jobToken: token })
         })
       });
       const d = await res.json();
@@ -1607,7 +1662,7 @@ function ProQureApp({ session }) {
     if (!can.sendRFQ(myRole)) { handleIssueToBuyer(); return; }
     setLoading(true); setLoadMsg("Generating RFQ email...");
     try {
-      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline);
+      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress);
       setRfqEmail(email);
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
@@ -3602,8 +3657,19 @@ Rules:
               <div>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Review RFQ email</div>
-                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:16}}>This email will be sent to {selSup.length} supplier{selSup.length!==1?"s":""}</div>
-                  <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",padding:"14px 16px",fontFamily:"'JetBrains Mono',monospace",fontSize:12,lineHeight:1.8,color:"var(--text-secondary)",marginBottom:16,whiteSpace:"pre-wrap",maxHeight:300,overflowY:"auto"}}>{rfqEmail}</div>
+                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:14}}>This is exactly how the email will look to your {selSup.length} supplier{selSup.length!==1?"s":""}. Edit the wording below if you'd like.</div>
+                  <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-md)",overflow:"hidden",marginBottom:14,background:"#F4F4F1"}}>
+                    <iframe
+                      title="Email preview"
+                      style={{width:"100%",height:420,border:"none",display:"block",background:"#F4F4F1"}}
+                      srcDoc={buildEmailHtml(rfqEmail, settings, { supplierName: (suppliers.find(s=>selSup.includes(s.id))?.name)||"" })}
+                    />
+                  </div>
+                  <details style={{marginBottom:16}}>
+                    <summary style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",cursor:"pointer",marginBottom:8}}>Edit the email wording</summary>
+                    <textarea value={rfqEmail} onChange={e=>setRfqEmail(e.target.value)} rows={10} style={{width:"100%",boxSizing:"border-box",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",padding:"14px 16px",fontSize:13,lineHeight:1.7,color:"var(--text-primary)",border:"1px solid var(--border)",resize:"vertical",fontFamily:"inherit",marginTop:8}}/>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>This is the message body. The greeting (Dear [supplier]) and your signature are added automatically.</div>
+                  </details>
                   {selSup.length>0&&(
                     <div style={{marginBottom:14}}>
                       <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Will be sent to:</div>
@@ -5141,6 +5207,11 @@ Rules:
                       <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Default PO terms</label>
                       <input value={sForm.poNotes||""} onChange={e=>setSForm(p=>({...p,poNotes:e.target.value}))} placeholder="e.g. 30 day payment terms" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                     </div>
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Email signature (optional)</label>
+                    <textarea value={sForm.emailSignature||""} onChange={e=>setSForm(p=>({...p,emailSignature:e.target.value}))} placeholder={"Paste your email signature here. Plain text or HTML both work, e.g.\nAndy Robinson\nInitial Mechanical\n0115 123 4567"} rows={5} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",fontFamily:"inherit",resize:"vertical",lineHeight:1.5}}/>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Appears at the bottom of quote requests and orders. If left blank, your name, company and contact details are used.</div>
                   </div>
                 </div>
               </Card>
