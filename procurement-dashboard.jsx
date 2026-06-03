@@ -55,7 +55,7 @@ const SYNC_KEYS = ["piq_requests","piq_orders","piq_suppliers","piq_settings","p
 async function cloudPull(userId) {
   if (!supabase || !userId) return false;
   try {
-    const { data, error } = await supabase.from("proquote_data").select("store_key,value").eq("user_id", userId);
+    const { data, error } = await supabase.from("proqure_data").select("store_key,value").eq("user_id", userId);
     if (error) { console.warn("cloudPull", error.message); return false; }
     (data || []).forEach(row => {
       if (SYNC_KEYS.includes(row.store_key) && row.value != null) {
@@ -70,7 +70,7 @@ async function cloudPull(userId) {
 async function cloudPush(userId, storeKey, valueObj) {
   if (!supabase || !userId) return;
   try {
-    await supabase.from("proquote_data").upsert(
+    await supabase.from("proqure_data").upsert(
       { user_id: userId, store_key: storeKey, value: valueObj, updated_at: new Date().toISOString() },
       { onConflict: "user_id,store_key" }
     );
