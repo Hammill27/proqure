@@ -173,7 +173,7 @@ async function callAI(system, user, history=[], temperature=0.1) {
     try {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://proquote.app","X-Title":"ProQure"},
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://proqure.app","X-Title":"ProQure"},
         body: JSON.stringify({ model, messages, temperature })
       });
       const d = await res.json();
@@ -2299,7 +2299,7 @@ Rules:
         headers: {
           "Content-Type": "application/json",
           "Authorization": "Bearer " + key,
-          "HTTP-Referer": "https://proquote.app",
+          "HTTP-Referer": "https://proqure.app",
           "X-Title": "ProQure"
         },
         body: JSON.stringify({
@@ -2523,7 +2523,7 @@ Rules:
             <div style={{width:32,height:32,background:"linear-gradient(135deg,#1E9E63,#15824F)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
             </div>
-            <span style={{fontSize:16,fontWeight:800,color:"white",fontFamily:"inherit"}}>Pro<span style={{color:"#1E9E63"}}>Quote</span></span>
+            <span style={{fontSize:16,fontWeight:800,color:"white",fontFamily:"inherit"}}>Pro<span style={{color:"#1E9E63"}}>Qure</span></span>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"12px 12px"}}>
             <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
@@ -2575,7 +2575,7 @@ Rules:
             <div style={{width:28,height:28,background:"linear-gradient(135deg,#1E9E63,#15824F)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
               <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
             </div>
-            <span style={{fontSize:15,fontWeight:800,color:"white"}}>Pro<span style={{color:"#1E9E63"}}>Quote</span></span>
+            <span style={{fontSize:15,fontWeight:800,color:"white"}}>Pro<span style={{color:"#1E9E63"}}>Qure</span></span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <button onClick={toggleDark} aria-label="Toggle dark mode" title="Toggle dark mode" style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"white",fontSize:13}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{darkMode?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>:<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}</svg></button>
@@ -4319,7 +4319,7 @@ Rules:
               ))}
             </Card>
             <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12,marginTop:16}}>
-              <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>Pro<span style={{color:"var(--green-dark)"}}>Quote</span> v1.0</span>
+              <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>Pro<span style={{color:"var(--green-dark)"}}>Qure</span> v1.0</span>
               <button onClick={()=>setView("contact")} style={{fontSize:12,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Contact support</button>
             </div>
           </div>
@@ -5074,7 +5074,7 @@ function LoginScreen({ onLoggedIn }) {
           <div style={{width:42,height:42,borderRadius:12,background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
           </div>
-          <span style={{fontSize:22,fontWeight:800,color:t.title,letterSpacing:"-0.02em"}}>Pro<span style={{color:dark?"#3DD68C":"#15824F"}}>Quote</span></span>
+          <span style={{fontSize:22,fontWeight:800,color:t.title,letterSpacing:"-0.02em"}}>Pro<span style={{color:dark?"#3DD68C":"#15824F"}}>Qure</span></span>
         </div>
         <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>{mode==="signup"?"Create your account":"Welcome back"}</div>
         <div style={{fontSize:13,color:t.sub,marginBottom:20}}>{mode==="signup"?"Set up a login to access ProQure.":"Sign in to access your procurement dashboard."}</div>
