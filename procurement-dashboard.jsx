@@ -798,45 +798,52 @@ function buildEmailHtml(bodyText, settings, optsOrToken={}) {
   const company = esc(settings.company||"");
   const contactName = esc(settings.contactName||"");
   const accent = "#15824F";       // ProQure green
-  const accentDeep = "#0E5C38";
   const ink = "#1A1A17";
   const muted = "#6B6A62";
 
-  // Logo: base64 images are frequently blocked by clients, so we ALWAYS render a
-  // styled text wordmark of the business as a reliable fallback/identity, and only
-  // add the image above it if one is set. Table cell, never flex.
-  const wordmark = `<span style="font-size:20px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;font-family:'Helvetica Neue',Arial,sans-serif">${company||"ProQure"}</span>`;
+  // Header: logo on WHITE (works for any logo colour, including dark artwork).
+  // If a logo is set, show it; otherwise show the company name as text.
   const logoImg = settings.logoBase64
-    ? `<img src="${settings.logoBase64}" alt="${company||"Company"}" width="auto" height="40" style="max-height:40px;max-width:200px;display:block;border:0;outline:none;margin-bottom:8px"/>`
-    : "";
-  const header = `${logoImg}${wordmark}`;
+    ? `<img src="${settings.logoBase64}" alt="${company||"Company"}" height="44" style="height:44px;max-height:44px;max-width:240px;display:inline-block;border:0;outline:none;text-decoration:none"/>`
+    : `<span style="font-size:22px;font-weight:800;color:${ink};letter-spacing:-0.01em">${company||"ProQure"}</span>`;
 
   // Greeting line - personalised to the supplier when we know their name.
   const greeting = supplierName
-    ? `<p style="margin:0 0 16px;font-size:15px;color:${ink}">Dear ${esc(supplierName)},</p>`
+    ? `<p style="margin:0 0 14px;font-size:15px;color:${ink}">Dear ${esc(supplierName)},</p>`
     : "";
 
-  const safeBody = esc(bodyText).replace(/\n/g,"<br/>");
+  // Body: collapse 3+ blank lines, turn paragraph breaks into spaced paragraphs
+  // and single breaks into <br> - avoids the over-spaced look from raw \n\n\n.
+  const paras = esc(bodyText).trim().replace(/\n{3,}/g,"\n\n").split(/\n\n/);
+  const safeBody = paras.map(p => `<p style="margin:0 0 12px;font-size:14px;line-height:1.55;color:${ink}">${p.replace(/\n/g,"<br/>")}</p>`).join("");
 
   // Site / delivery address block, if provided.
   const addr = esc(settings.siteAddress||"");
   const addressBlock = addr
-    ? `<tr><td style="padding:0 0 4px"><div style="font-size:12px;font-weight:700;color:${muted};text-transform:uppercase;letter-spacing:0.04em;margin-top:18px">Delivery / site address</div><div style="font-size:14px;color:${ink};margin-top:4px">${addr}</div></td></tr>`
+    ? `<div style="margin-top:6px;margin-bottom:14px"><span style="font-size:11px;font-weight:700;color:${muted};text-transform:uppercase;letter-spacing:0.04em">Delivery / site address</span><br/><span style="font-size:14px;color:${ink}">${addr}</span></div>`
     : "";
 
   const terms = settings.poNotes
-    ? `<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3;font-size:12px;line-height:1.6;color:${muted}">${esc(settings.poNotes)}</div>`
+    ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid #EAE9E3;font-size:12px;line-height:1.5;color:${muted}">${esc(settings.poNotes)}</div>`
     : "";
 
-  // Signature: Andy can supply his own HTML signature. If present, use it verbatim
-  // (it's his own content). Otherwise fall back to a clean contact block.
+  // Signature. If the user pasted one, use it - but neutralise the runaway widths,
+  // huge fonts and big margins Outlook bakes in, and cap any image, so it sits neatly.
   let signature;
   if ((settings.emailSignature||"").trim()) {
-    const sig = settings.emailSignature.trim();
-    // If it looks like HTML, use as-is; if plain text, escape it and keep line breaks.
+    let sig = settings.emailSignature.trim();
     const looksHtml = /<[a-z][\s\S]*>/i.test(sig);
-    const sigHtml = looksHtml ? sig : esc(sig).replace(/\n/g,"<br/>");
-    signature = `<div style="margin-top:24px;padding-top:18px;border-top:1px solid #EAE9E3;font-size:13px;color:${ink};line-height:1.6">${sigHtml}</div>`;
+    if (looksHtml) {
+      sig = sig
+        .replace(/(<table[^>]*)\swidth="[^"]*"/gi,'$1')
+        .replace(/(<t[dr][^>]*)\swidth="[^"]*"/gi,'$1')
+        .replace(/<img/gi,'<img style="max-width:200px;height:auto;display:inline-block"')
+        .replace(/font-size\s*:\s*(1[6-9]|[2-9]\d)px/gi,'font-size:14px'); // shrink oversized text
+      sig = `<div style="font-size:13px;line-height:1.45;color:${ink}">${sig}</div>`;
+    } else {
+      sig = `<div style="font-size:13px;line-height:1.5;color:${ink}">${esc(sig).replace(/\n/g,"<br/>")}</div>`;
+    }
+    signature = `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #EAE9E3">${sig}</div>`;
   } else {
     const bits = [];
     if (contactName) bits.push(`<div style="font-size:14px;font-weight:700;color:${ink}">${contactName}</div>`);
@@ -844,36 +851,35 @@ function buildEmailHtml(bodyText, settings, optsOrToken={}) {
     const line2 = [];
     if (settings.phone) line2.push(esc(settings.phone));
     if (settings.fromEmail) line2.push(esc(settings.fromEmail));
-    if (line2.length) bits.push(`<div style="font-size:12px;color:${muted};margin-top:4px">${line2.join("&nbsp;&middot;&nbsp;")}</div>`);
+    if (line2.length) bits.push(`<div style="font-size:12px;color:${muted};margin-top:3px">${line2.join("&nbsp;&middot;&nbsp;")}</div>`);
     signature = bits.length
-      ? `<div style="margin-top:24px;padding-top:18px;border-top:1px solid #EAE9E3">${bits.join("")}</div>`
+      ? `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #EAE9E3">${bits.join("")}</div>`
       : "";
   }
 
-  const pqMark = `<span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${accent};vertical-align:middle;margin-right:6px"></span>`;
+  const pqMark = `<span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${accent};vertical-align:middle;margin-right:5px"></span>`;
 
   return `<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta http-equiv="X-UA-Compatible" content="IE=edge"/></head>
 <body style="margin:0;padding:0;background:#F4F4F1;-webkit-text-size-adjust:100%;font-family:'Helvetica Neue',Arial,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F4F1">
-    <tr><td align="center" style="padding:28px 16px">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FFFFFF;border:1px solid #E8E7E1;border-radius:16px;overflow:hidden">
-        <!-- Header band: dark with a green accent rule under it -->
-        <tr><td style="background:#101013;padding:22px 32px">${header}</td></tr>
+    <tr><td align="center" style="padding:24px 16px">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FFFFFF;border:1px solid #E8E7E1;border-radius:12px;overflow:hidden">
+        <!-- Header: logo on white, green rule beneath -->
+        <tr><td align="left" style="padding:24px 32px 18px 32px;background:#FFFFFF">${logoImg}</td></tr>
         <tr><td style="height:3px;background:${accent};line-height:3px;font-size:0">&nbsp;</td></tr>
         <!-- Body -->
-        <tr><td style="padding:30px 32px">
+        <tr><td style="padding:26px 32px 28px 32px">
           ${greeting}
-          <div style="font-size:14px;line-height:1.7;color:${ink}">${safeBody}</div>
-          ${addressBlock?`<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${addressBlock}</table>`:""}
+          ${safeBody}
+          ${addressBlock}
           ${terms}
           ${signature}
         </td></tr>
       </table>
       <!-- Footer -->
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td align="center" style="padding:18px 12px 0">
+        <tr><td align="center" style="padding:14px 12px 0">
           <span style="font-size:11px;color:#908F86">${pqMark}Sent with <strong style="color:${accent};font-weight:700">ProQure</strong></span>
-          <div style="font-size:10px;color:#C4C3BA;margin-top:8px">Prepared and sent via ProQure${company?` on behalf of ${company}`:""}.</div>
         </td></tr>
       </table>
       ${jobToken?`<div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;color:#F4F4F1">[ProQure-Ref:${esc(jobToken)}]</div>`:""}
