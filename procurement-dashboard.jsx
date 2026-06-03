@@ -6047,6 +6047,17 @@ function SignatureEditor({ value, onChange }) {
       [...el.attributes].forEach(a => {
         if (/^on/i.test(a.name) || a.name === "class" || a.name === "id") el.removeAttribute(a.name);
       });
+      // Outlook signatures use fixed-width tables/cells that overflow narrow boxes.
+      // Strip hard widths so the signature flows to fit wherever it's shown.
+      const tag = el.tagName.toLowerCase();
+      if (tag === "table" || tag === "td" || tag === "tr" || tag === "div") {
+        el.removeAttribute("width");
+        let st = el.getAttribute("style") || "";
+        st = st.replace(/(^|;)\s*(min-)?width\s*:[^;]+/gi, "");
+        st = st.replace(/(^|;)\s*max-width\s*:[^;]+/gi, "");
+        if (tag === "table") st += ";max-width:100%;width:auto";
+        el.setAttribute("style", st);
+      }
     });
     return { html: div.innerHTML, brokenImg };
   };
@@ -6098,7 +6109,13 @@ function SignatureEditor({ value, onChange }) {
       {!empty && (
         <div style={{marginTop:10}}>
           <div style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Preview - how it appears in emails</div>
-          <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"14px 16px",background:"#FFFFFF"}} dangerouslySetInnerHTML={{__html: (value||"").replace(/<img/g,'<img style="max-width:220px;height:auto"')}}/>
+          <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"14px 16px",background:"#FFFFFF",overflowX:"auto",maxWidth:"100%",boxSizing:"border-box"}}>
+            <div style={{maxWidth:"100%"}} dangerouslySetInnerHTML={{__html: (value||"")
+              .replace(/<img/gi,'<img style="max-width:200px;height:auto"')
+              .replace(/(<table[^>]*)\swidth="[^"]*"/gi,'$1')
+              .replace(/(<t[dr][^>]*)\swidth="[^"]*"/gi,'$1')
+            }}/>
+          </div>
         </div>
       )}
       {!empty && (
