@@ -26,6 +26,14 @@ const ROLES = {
   engineer: { label: "Engineer", rank: 1, desc: "Raises the materials list and signs off deliveries",  color: "#5C6B7A", bg: "#EEF1F4" },
 };
 const roleRank = (r) => (ROLES[r]?.rank || 0);
+// Hidden per-request reference for future supplier-reply matching (e.g. PQ-A7F3).
+// Invisible to users today; it lets inbound replies be auto-matched to a job once the domain/inbound is live.
+function makePqRef() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
+  let s = "";
+  for (let i = 0; i < 4; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return `PQ-${s}`;
+}
 // Permission helpers — what each role can do
 const can = {
   approvePO:   (role) => roleRank(role) >= 2,   // buyer and above (manager approval is a separate toggle)
@@ -41,7 +49,7 @@ const can = {
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage"];
 
 // Pull every key for this user from the cloud into localStorage (on login)
 async function cloudPull(userId) {
@@ -165,7 +173,7 @@ async function callAI(system, user, history=[], temperature=0.1) {
     try {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://proquote.app","X-Title":"ProQuote"},
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"HTTP-Referer":"https://proquote.app","X-Title":"ProQure"},
         body: JSON.stringify({ model, messages, temperature })
       });
       const d = await res.json();
@@ -713,7 +721,7 @@ function buildEmailHtml(bodyText, settings) {
   const company = esc(settings.company||"");
   const logo = settings.logoBase64
     ? `<img src="${settings.logoBase64}" alt="${company||"Company"}" style="max-height:46px;max-width:180px;display:block"/>`
-    : `<div style="font-size:21px;font-weight:800;color:#FFFFFF;letter-spacing:-0.02em">${company||"ProQuote"}</div>`;
+    : `<div style="font-size:21px;font-weight:800;color:#FFFFFF;letter-spacing:-0.02em">${company||"ProQure"}</div>`;
   const safeBody = esc(bodyText).replace(/\n/g,"<br/>");
   const terms = settings.poNotes ? `<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3;font-size:12px;line-height:1.6;color:#908F86">${esc(settings.poNotes)}</div>` : "";
   // Contact line from settings
@@ -722,7 +730,7 @@ function buildEmailHtml(bodyText, settings) {
   if (settings.fromEmail) contactBits.push(esc(settings.fromEmail));
   if (settings.phone) contactBits.push(esc(settings.phone));
   const contact = contactBits.length ? `<div style="font-size:12px;color:#5C5B54;line-height:1.7">${contactBits.join(" &nbsp;&middot;&nbsp; ")}</div>` : "";
-  // ProQuote logo mark (small, inline SVG as data — using simple shapes)
+  // ProQure logo mark (small, inline SVG as data — using simple shapes)
   const pqMark = `<span style="display:inline-block;width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#1E9E63,#15824F);vertical-align:middle;margin-right:6px"></span>`;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
   <body style="margin:0;padding:0;background:#F4F4F1;font-family:'Helvetica Neue',Arial,sans-serif">
@@ -739,12 +747,12 @@ function buildEmailHtml(bodyText, settings) {
           ${contact?`<div style="margin-top:22px;padding-top:18px;border-top:1px solid #EAE9E3">${contact}</div>`:""}
         </div>
       </div>
-      <!-- Powered by ProQuote footer -->
+      <!-- Powered by ProQure footer -->
       <div style="text-align:center;margin-top:18px;padding:0 12px">
         <div style="display:inline-block;background:#FFFFFF;border:1px solid #E8E7E1;border-radius:99px;padding:7px 16px">
-          <span style="font-size:11px;color:#908F86;vertical-align:middle">${pqMark}Sent with <strong style="color:#15824F;font-weight:700">ProQuote</strong> &mdash; AI procurement for trades</span>
+          <span style="font-size:11px;color:#908F86;vertical-align:middle">${pqMark}Sent with <strong style="color:#15824F;font-weight:700">ProQure</strong> &mdash; AI procurement for trades</span>
         </div>
-        <div style="font-size:10px;color:#C4C3BA;margin-top:10px">This quote request was prepared and sent using ProQuote${company?` on behalf of ${company}`:""}.</div>
+        <div style="font-size:10px;color:#C4C3BA;margin-top:10px">This quote request was prepared and sent using ProQure${company?` on behalf of ${company}`:""}.</div>
       </div>
     </div>
   </body></html>`;
@@ -807,7 +815,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
   doc.setTextColor(148,163,184);
   doc.text(company||"Your Company", M, 27);
-  doc.text("Powered by ProQuote", M, 33);
+  doc.text("Powered by ProQure", M, 33);
 
   // PO number & date - right aligned
   doc.setTextColor(255,255,255);
@@ -907,7 +915,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.line(M, 275, W-M, 275);
   doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(148,163,184);
   doc.text(`${company||"Your Company"}  ·  ${contactEmail||""}  ·  PO ${poNumber}`, M, 280);
-  doc.text("Generated by ProQuote - AI-powered procurement for trades", W-M, 280, {align:"right"});
+  doc.text("Generated by ProQure - AI-powered procurement for trades", W-M, 280, {align:"right"});
 
   doc.save(`PO-${poNumber}.pdf`);
 }
@@ -1001,7 +1009,7 @@ const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) 
 };
 
 // --- App ----------------------------------------------------------------------
-function ProQuoteApp({ session }) {
+function ProQureApp({ session }) {
   // Settings persisted to localStorage
   const [settings, setSettings] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
@@ -1042,6 +1050,22 @@ function ProQuoteApp({ session }) {
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
+  // Usage metering: quiet per-instance counters for the future admin dashboard. Invisible to users.
+  const [usage, setUsage] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_usage")||"{}")}catch{return {}} });
+  const meter = useCallback((key, n=1) => {
+    setUsage(prev => {
+      const today = new Date().toISOString().split("T")[0];
+      const next = { ...prev };
+      next.totals = { ...(next.totals||{}) };
+      next.totals[key] = (next.totals[key]||0) + n;
+      next.lastActivity = new Date().toISOString();
+      next.firstSeen = next.firstSeen || new Date().toISOString();
+      next.daily = { ...(next.daily||{}) };
+      next.daily[today] = { ...(next.daily[today]||{}) };
+      next.daily[today][key] = (next.daily[today][key]||0) + n;
+      return next;
+    });
+  }, []);
   const [team, setTeam] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_team")||"[]")}catch{return []} });
   const myEmail = (session?.user?.email || "").toLowerCase();
   // Ensure the signed-in user exists in the team. First-ever user becomes Manager.
@@ -1443,6 +1467,7 @@ function ProQuoteApp({ session }) {
     const newId = `RFQ-${Date.now().toString().slice(-6)}`;
     const r = {
       id: newId,
+      pqRef: makePqRef(),
       jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
       status: "awaiting-buyer",
       createdBy: myEmail, createdByRole: myRole,
@@ -1455,6 +1480,7 @@ function ProQuoteApp({ session }) {
     };
     setRequests(p=>[r,...p]);
     logActivity("List issued to buyer", `${r.jobRef} raised by ${myEmail}`, { entity:"request", reqId:newId });
+    meter("requestsRaised");
     resetNewRequest();
     setView("requests");
     showToast("Issued to your buyer - they'll request the quotes");
@@ -1474,6 +1500,7 @@ function ProQuoteApp({ session }) {
       const isEngineer = roleRank(myRole) < 2;
       const r = {
         id: newId,
+        pqRef: makePqRef(),
         jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
         status: isEngineer ? "awaiting-buyer" : "pending",
         createdBy: myEmail, createdByRole: myRole,
@@ -1490,7 +1517,7 @@ function ProQuoteApp({ session }) {
       setRequests(p=>[r,...p]);
       // Show success state briefly then redirect and reset
       showToast(`v ${ok} RFQ${ok!==1?"s":""} sent - ${newId} saved`);
-      logActivity("RFQ sent",`${newId} (${jobRef||"job"}) sent to ${ok} supplier${ok!==1?"s":""}`,{entity:"request",reqId:newId,jobRef});
+      logActivity("RFQ sent",`${newId} (${jobRef||"job"}) sent to ${ok} supplier${ok!==1?"s":""}`,{entity:"request",reqId:newId,jobRef});meter("rfqsSent");meter("emailsSent", ok);meter("requestsRaised");
       setTimeout(()=>{
         // Full reset - ready for next request
         setStep(1);
@@ -1602,6 +1629,7 @@ function ProQuoteApp({ session }) {
       } catch(e) { showToast(`Error analysing ${sup.name}: ${e.message}`,"warn"); }
     }
     setAllAnalyses(results);
+    if (results && results.length) meter("quotesAnalysed", results.length);
     setApprovedQuoteId(null);
     if (results.length>0) setExpandedQuote(results[0]._id);
     // Save/update this analysis as a persistent quote set
@@ -1693,7 +1721,7 @@ function ProQuoteApp({ session }) {
     setSavedQuoteSets(prev => prev.map(s => s.reqId===activeReq.id ? {...s, status:"approved", approvedId:qa?._id||null, analyses:allAnalyses.length?allAnalyses:s.analyses} : s));
     // Clear the active in-progress view so the page shows the saved list
     setTimeout(()=>{ setActiveReq(null); setAllAnalyses([]); setExpandedQuote(null); }, 1200);
-    logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});
+    logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});meter("posRaised");
 
     // Remove other quotes from the analysis view
     setAllAnalyses([qa]);
@@ -1742,7 +1770,7 @@ function ProQuoteApp({ session }) {
     setHelpMessages(p=>[...p,userMsg]);
     setHelpInput("");
     setHelpLoading(true);
-    const sys = `You are the ProQuote AI assistant. ProQuote is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use every part of the platform. Be concise, friendly, and accurate.
+    const sys = `You are the ProQure AI assistant. ProQure is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use every part of the platform. Be concise, friendly, and accurate.
 
 COMPLETE FEATURE REFERENCE (you can explain how to do all of these):
 
@@ -1774,15 +1802,15 @@ SUPPLIERS: manage supplier accounts; each shows RFQ count, response rate, averag
 
 SAVED QUOTES: the Quotes page keeps every analysis you run as a saved collapsible card (like the Orders page). After you approve a quote and the order is created, that analysis moves into the saved list automatically; you can re-open any past analysis in full at any time, and it survives a page refresh. When pasting a supplier quote into a box, it turns green and shows 'Quote entered'.
 ACTIVITY LOG: the dashboard shows a Recent activity feed logging every action across the app - RFQs sent, quotes analysed, POs approved, orders sent/confirmed/delivered, confirmations uploaded, suppliers added, library changes. Each request also keeps its own activity history (open it from All Requests). DASHBOARD CHARTS: a Spend by trade bar chart and budget-vs-actual progress bars appear automatically once you have orders/budgets. SUPPLIER QUICK-ADD: on the request wizard supplier step you can add a new supplier inline with '+ Add a supplier' without leaving the page. LIBRARY: you can remove a quote from the library with the bin icon on its row.
-OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D dashboard, S settings, H help, ? shows the shortcut list); company branding (logo upload, default PO terms, quote validity days) in Settings - the logo appears on HTML emails; budget tracking on the dashboard (actual vs budget per job); quote expiry warnings on the dashboard; CSV export on library/orders/requests; All Requests has search and status/trade filters; click the ProQuote logo to return to the dashboard.
+OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D dashboard, S settings, H help, ? shows the shortcut list); company branding (logo upload, default PO terms, quote validity days) in Settings - the logo appears on HTML emails; budget tracking on the dashboard (actual vs budget per job); quote expiry warnings on the dashboard; CSV export on library/orders/requests; All Requests has search and status/trade filters; click the ProQure logo to return to the dashboard.
 
-SETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQuote can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
+SETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
 
 TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
 GETTING STARTED: brand-new users see a Welcome card on the dashboard with three quick steps (create a request, send to suppliers, analyse & approve) and a button to begin; it disappears once they have any activity. The app works on any device - on a phone it switches to a mobile layout with a bottom tab bar, and you can use the camera to scan documents on site. It has a polished dark and light mode, keyboard shortcuts, smooth animations, and is built to feel calm and professional throughout.
 
-If asked about something ProQuote does not do, say so clearly and mention if it is on the roadmap. The current roadmap (not yet built): cloud backend for cross-device sync and multi-user team accounts; team roles and permissions; an inbound email inbox that auto-captures supplier replies; automatic deadline and expiry reminders; company-wide spend reporting; and accounting integrations (Xero/Sage). If asked when these arrive, say they are planned for future updates. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
+If asked about something ProQure does not do, say so clearly and mention if it is on the roadmap. The current roadmap (not yet built): cloud backend for cross-device sync and multi-user team accounts; team roles and permissions; an inbound email inbox that auto-captures supplier replies; automatic deadline and expiry reminders; company-wide spend reporting; and accounting integrations (Xero/Sage). If asked when these arrive, say they are planned for future updates. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
     const history = [...helpMessages,userMsg].slice(-10).map(m=>({role:m.role,content:m.content}));
     try {
       const raw = await callAI(sys, question, history);
@@ -1903,13 +1931,13 @@ ${settings.company||""}`;
   const [tourStep, setTourStep] = useState(()=>{ try{ return localStorage.getItem("piq_tour_done")==="1" ? -1 : 0; }catch{ return -1; } });
   const dismissTour = () => { try{localStorage.setItem("piq_tour_done","1")}catch{} setTourStep(-1); };
   const tourBase = [
-    { title:"Welcome to ProQuote", body:"A quick 30-second tour so you know your way around. You can skip anytime.", icon:"rocket" },
+    { title:"Welcome to ProQure", body:"A quick 30-second tour so you know your way around. You can skip anytime.", icon:"rocket" },
     { title:"Create a request", body:"Tap New request to list the materials you need. You can type, dictate, scan a document, or paste a spreadsheet - the AI turns it into a tidy request.", icon:"clipboard" },
-    { title:"Send to suppliers", body:"ProQuote drafts a branded email to your chosen suppliers asking them to quote. No copy-paste needed.", icon:"send" },
+    { title:"Send to suppliers", body:"ProQure drafts a branded email to your chosen suppliers asking them to quote. No copy-paste needed.", icon:"send" },
     { title:"Let the AI analyse quotes", body:"Paste or upload the quotes that come back. The AI checks the maths, compares suppliers and highlights the best value - and flags anything you should double-check.", icon:"search" },
   ];
   const tourRoleStep = can.approvePO(myRole)
-    ? { title:"Approve with confidence", body:"When you're happy, approve a quote and ProQuote generates the purchase order automatically. Always confirm the figures first.", icon:"check_circle" }
+    ? { title:"Approve with confidence", body:"When you're happy, approve a quote and ProQure generates the purchase order automatically. Always confirm the figures first.", icon:"check_circle" }
     : { title:"Your part in the flow", body:"You raise requests and review quotes. A Buyer or Manager approves the final purchase order, and you can track delivery in Orders.", icon:"truck" };
   const tourManageStep = can.manageTeam(myRole)
     ? [{ title:"Manage your team", body:"Head to the Team page to invite colleagues and set their roles - Engineers raise requests, Buyers approve, Managers run the team.", icon:"building" }]
@@ -1940,6 +1968,7 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
+  useEffect(()=>{ try{localStorage.setItem("piq_usage",JSON.stringify(usage))}catch{} },[usage]);
   useEffect(()=>{ try{localStorage.setItem("piq_team",JSON.stringify(team))}catch{} },[team]);
 
   // --- Cloud push: mirror changes up to Supabase (debounced) ----------------
@@ -1965,6 +1994,7 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_quote_library", quoteLibrary); }, [quoteLibrary, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_templates", templates); }, [templates, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_quote_sets", savedQuoteSets.slice(0,100)); }, [savedQuoteSets, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_usage", usage); }, [usage, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_team", team); }, [team, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
 
@@ -2067,13 +2097,13 @@ ${settings.company||""}`;
   // Help page FAQs
   const helpFaqs = [
     {cat:"Getting started", qs:[
-      {q:"What is ProQuote?", a:"ProQuote is an AI-powered procurement platform for trades contractors. It automates the full workflow from creating a material request on site through to sending a PO to your supplier."},
+      {q:"What is ProQure?", a:"ProQure is an AI-powered procurement platform for trades contractors. It automates the full workflow from creating a material request on site through to sending a PO to your supplier."},
       {q:"What trades are supported?", a:"Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas - with General as a catch-all."},
-      {q:"Does it work on mobile?", a:"Yes. ProQuote is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar and voice input."},
-      {q:"I am brand new - where do I start?", a:"When you first open ProQuote with no data, the dashboard shows a Welcome card with three quick steps: create a request, send it to suppliers, then analyse and approve the quotes. Tap 'Create your first request' to begin. The card disappears once you have any activity."},
+      {q:"Does it work on mobile?", a:"Yes. ProQure is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar and voice input."},
+      {q:"I am brand new - where do I start?", a:"When you first open ProQure with no data, the dashboard shows a Welcome card with three quick steps: create a request, send it to suppliers, then analyse and approve the quotes. Tap 'Create your first request' to begin. The card disappears once you have any activity."},
       {q:"Which browsers and phones are supported?", a:"All modern browsers - Chrome, Safari, Firefox and Edge - on both desktop and mobile, including iPhone and Android. The layout adapts automatically to your screen, and on phones you can use the camera to scan documents on site."},
       {q:"Does it respect accessibility settings?", a:"Yes. The app supports a dark and light mode, has clear keyboard focus indicators, and honours your device's reduced-motion setting so animations are minimised if you prefer."},
-      {q:"Do I need to install anything?", a:"No. ProQuote runs entirely in a browser - Chrome, Safari, Edge. No app download needed."},
+      {q:"Do I need to install anything?", a:"No. ProQure runs entirely in a browser - Chrome, Safari, Edge. No app download needed."},
       {q:"Where is my data stored?", a:"Securely in the cloud, tied to your login. That is what lets you sign in on any device - phone, tablet or computer - and see the same up-to-date information everywhere. Your whole team shares one live view."},
     ]},
     {cat:"Creating requests", qs:[
@@ -2092,7 +2122,7 @@ ${settings.company||""}`;
       {q:"What happens to other quotes when I approve one?", a:"All other quotes are automatically saved to the Quote Library in the background."},
       {q:"Can I undo an approval?", a:"Yes. The approved quote card shows an Undo button that reverses everything."},
       {q:"What is the Compare view?", a:"In the analysis results, the Cards/Compare toggle switches to a side-by-side table - one row per requested item, one column per supplier, so you can scan who is cheapest on each line. The lowest total is badged automatically. You can approve straight from the table."},
-      {q:"How does the markup calculator work?", a:"Enter a markup percentage in the analysis results and ProQuote shows each supplier's cost alongside the marked-up sell price - useful for quoting the end client. Set it back to 0 for pure cost."},
+      {q:"How does the markup calculator work?", a:"Enter a markup percentage in the analysis results and ProQure shows each supplier's cost alongside the marked-up sell price - useful for quoting the end client. Set it back to 0 for pure cost."},
       {q:"Can I export or print a comparison?", a:"Yes. The Print button in the analysis results opens a print-friendly layout - use your browser's Save as PDF to share it."},
       {q:"How are quotes collapsed?", a:"Each supplier result is a collapsible card. Tap the header to expand the full matched-items table and analysis; tap again to collapse. The first card opens automatically after analysis."},
       {q:"Are my past quote analyses saved?", a:"Yes. Every analysis you run is saved on the Quotes page as a collapsible card, just like orders. After you approve a quote, that analysis moves into the saved list automatically. You can re-open any past analysis in full at any time, and they survive a page refresh."},
@@ -2112,7 +2142,7 @@ ${settings.company||""}`;
       {q:"How do I add my company logo?", a:"In Settings, under Company branding, upload your logo. It is automatically resized and appears at the top of the branded HTML emails sent to suppliers. You can also set default PO terms and the quote validity period there."},
       {q:"Do emails include my branding?", a:"Yes. RFQ and purchase order emails are sent as branded HTML with your logo (or company name) at the top, your message in a clean card, and your PO terms in the footer."},
       {q:"What keyboard shortcuts are there?", a:"Press N for new request, Q for quotes, O for orders, D for dashboard, S for settings, H for help, and ? to show the full shortcuts panel. Esc closes any open dialog."},
-      {q:"How do I get back to the dashboard quickly?", a:"Click the ProQuote logo at the top of the sidebar, press D, or use the dashboard tab."},
+      {q:"How do I get back to the dashboard quickly?", a:"Click the ProQure logo at the top of the sidebar, press D, or use the dashboard tab."},
       {q:"Can I search and filter my requests?", a:"Yes. The All Requests page has a search box plus status and trade filters, so you can quickly find any job. The filtered list can be exported to CSV."},
       {q:"Where can I see everything that has happened?", a:"The dashboard has a Recent activity feed that logs every action across the app - RFQs sent, quotes analysed, POs approved, orders sent, confirmed and delivered, confirmations uploaded, suppliers added and library changes. Each individual request also keeps its own activity history, which you can open from the All Requests page."},
       {q:"What charts does the dashboard show?", a:"Once you have approved orders, a Spend by trade bar chart appears. If you set budgets on jobs, budget-vs-actual progress bars show too, turning amber near the limit and red if you go over."},
@@ -2121,7 +2151,7 @@ ${settings.company||""}`;
     ]},
     {cat:"Settings & troubleshooting", qs:[
       {q:"Why is the AI not working?", a:"AI is built in and managed for you - there is nothing to set up. If a quote analysis ever fails, it is usually a brief hiccup; wait a moment and try again. If it keeps happening, use Send feedback to let us know."},
-      {q:"Why are emails not sending?", a:"Email is managed for you, so there are no keys to set up. For ProQuote to send from your company address, your domain needs a few one-off DNS records added (your IT or whoever manages your website handles this). If emails are not arriving, check that step has been completed, then use Send feedback if it persists."},
+      {q:"Why are emails not sending?", a:"Email is managed for you, so there are no keys to set up. For ProQure to send from your company address, your domain needs a few one-off DNS records added (your IT or whoever manages your website handles this). If emails are not arriving, check that step has been completed, then use Send feedback if it persists."},
       {q:"My data disappeared after refreshing.", a:"Your data lives in the cloud against your account, so refreshing will not lose it. If something looks missing, make sure you are signed in with the correct email - data is tied to your login. If it still seems wrong, use Send feedback and we will look into it."},
       {q:"Can I export my data?", a:"Yes. The Library, Orders and All Requests pages each have a CSV export button, so you can back up or share your data anytime."},
       {q:"What features are coming next?", a:"The biggest upcoming step is a cloud backend, which unlocks cross-device access, multi-user team accounts with roles, and automatic backup. After that: an inbound email inbox that auto-captures supplier replies, automatic deadline and expiry reminders, company-wide spend reporting, and accounting integrations like Xero and Sage."},
@@ -2270,7 +2300,7 @@ Rules:
           "Content-Type": "application/json",
           "Authorization": "Bearer " + key,
           "HTTP-Referer": "https://proquote.app",
-          "X-Title": "ProQuote"
+          "X-Title": "ProQure"
         },
         body: JSON.stringify({
           model: isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat",
@@ -2331,7 +2361,7 @@ Rules:
         <div className="orb orb-indigo" style={{width:480,height:480,bottom:-160,left:-100}}/>
         <div className="orb orb-green" style={{width:400,height:400,top:"45%",left:"55%"}}/>
       </div>
-      {/* Large translucent ProQuote mark, bottom-right */}
+      {/* Large translucent ProQure mark, bottom-right */}
       <svg className="app-bg-mark" width="640" height="640" viewBox="0 0 20 20" fill="none" style={{bottom:-140,right:-120}} preserveAspectRatio="xMidYMid meet">
         <rect x="3" y="3" width="3" height="14" rx="1.5" fill="var(--green-dark)"/>
         <rect x="6" y="3" width="8" height="3" rx="1.5" fill="var(--green-dark)"/>
@@ -2584,7 +2614,7 @@ Rules:
                   <div style={{fontSize:11,fontWeight:600,color:"#5BE3A0",letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:8}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
                   <h1 style={{fontSize:isMobile?27:38,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"white",lineHeight:1.1,marginBottom:10}}>Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"}</h1>
                   <p style={{fontSize:isMobile?13:15,color:"rgba(148,163,184,0.9)",margin:0,lineHeight:1.6}}>
-                    {requests.length===0?"Welcome to ProQuote - create your first material request to get started":`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.`}
+                    {requests.length===0?"Welcome to ProQure - create your first material request to get started":`You have ${stats.pending} pending quote${stats.pending!==1?"s":""} waiting${stats.received>0?` and ${stats.received} ready to analyse`:""}.`}
                   </p>
                 </div>
                 <button aria-label="Voice input" title="Tap to speak your list" onClick={()=>{setView("new");resetNewRequest();}} style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:14,padding:isMobile?"11px 18px":"14px 26px",fontSize:isMobile?13:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 24px rgba(34,197,94,0.4)",flexShrink:0}}>
@@ -2601,14 +2631,14 @@ Rules:
                     <Icon name="wave" size={22} color="white"/>
                   </div>
                   <div>
-                    <div style={{fontSize:17,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em"}}>Welcome to ProQuote</div>
+                    <div style={{fontSize:17,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em"}}>Welcome to ProQure</div>
                     <div style={{fontSize:13,color:"var(--text-secondary)"}}>Three quick steps to your first purchase order.</div>
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:12,marginBottom:18}}>
                   {[
                     {n:"1",t:"Create a request",d:"Speak, type, photograph or import your material list.",ic:"mic"},
-                    {n:"2",t:"Send to suppliers",d:"ProQuote emails a branded RFQ to your chosen suppliers.",ic:"send"},
+                    {n:"2",t:"Send to suppliers",d:"ProQure emails a branded RFQ to your chosen suppliers.",ic:"send"},
                     {n:"3",t:"Analyse & approve",d:"Let the AI compare the quotes, then approve the best.",ic:"check_circle"},
                   ].map(s=>(
                     <div key={s.n} style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px 18px"}}>
@@ -3839,7 +3869,7 @@ Rules:
                                     <label style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
                                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
                                       {order.deliveryPhoto?"Replace delivery photo":"Photo + sign off delivery"}
-                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const dataUrl=rd.result;const image=new Image();image.onload=()=>{const maxW=1000;const scale=Math.min(1,maxW/image.width);const cv=document.createElement("canvas");cv.width=image.width*scale;cv.height=image.height*scale;cv.getContext("2d").drawImage(image,0,0,cv.width,cv.height);let img;try{img=cv.toDataURL("image/jpeg",0.7);}catch(err){img=dataUrl;}setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:img,signedOffBy:myEmail}:o));logActivity("Delivery signed off",`${order.poNumber} (${order.supplier}) signed off by ${myEmail} with delivery note photo`,{entity:"order",jobRef:order.jobRef});showToast("Delivery signed off with photo");};image.onerror=()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:dataUrl,signedOffBy:myEmail}:o));showToast("Delivery signed off with photo");};image.src=dataUrl;};rd.readAsDataURL(f);e.target.value="";}}/>
+                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const dataUrl=rd.result;const image=new Image();image.onload=()=>{const maxW=1000;const scale=Math.min(1,maxW/image.width);const cv=document.createElement("canvas");cv.width=image.width*scale;cv.height=image.height*scale;cv.getContext("2d").drawImage(image,0,0,cv.width,cv.height);let img;try{img=cv.toDataURL("image/jpeg",0.7);}catch(err){img=dataUrl;}setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:img,signedOffBy:myEmail}:o));logActivity("Delivery signed off",`${order.poNumber} (${order.supplier}) signed off by ${myEmail} with delivery note photo`,{entity:"order",jobRef:order.jobRef});meter("deliveriesSignedOff");showToast("Delivery signed off with photo");};image.onerror=()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:dataUrl,signedOffBy:myEmail}:o));showToast("Delivery signed off with photo");};image.src=dataUrl;};rd.readAsDataURL(f);e.target.value="";}}/>
                                     </label>
                                     {can.deleteItems(myRole) && order.status!=="cancelled" && <Btn outline onClick={()=>setCancelOrderConfirm(order)} style={{color:"var(--red)"}}>Cancel order</Btn>}
                                   </div>
@@ -4169,7 +4199,7 @@ Rules:
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(34,197,94,0.12),transparent 70%)",borderRadius:"50%"}}/>
               <div style={{position:"relative",zIndex:1}}>
-                <div style={{fontSize:11,color:"#5BE3A0",letterSpacing:"0.18em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Help Centre</div>
+                <div style={{fontSize:11,color:"#5BE3A0",letterSpacing:"0.18em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQure Help Centre</div>
                 <h1 style={{fontSize:30,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.03em",marginBottom:8}}>How can we help?</h1>
                 <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:0}}>Ask the AI assistant or browse the FAQ below</p>
               </div>
@@ -4185,7 +4215,7 @@ Rules:
                     {(AI_VIA_SERVER||settings.openRouterKey)&&<div style={{position:"absolute",bottom:0,right:0,width:11,height:11,borderRadius:"50%",background:"#4ADE80",border:"2px solid #15824F"}}/>}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:15,fontWeight:700,color:"white"}}>ProQuote Assistant</div>
+                    <div style={{fontSize:15,fontWeight:700,color:"white"}}>ProQure Assistant</div>
                     <div style={{fontSize:12,color:"rgba(255,255,255,0.85)",display:"flex",alignItems:"center",gap:5}}>
                       {settings.openRouterKey?<><span style={{width:6,height:6,borderRadius:"50%",background:"#4ADE80",display:"inline-block"}}/>Online · ready to help</>:<>Online · ready to help</>}
                     </div>
@@ -4199,7 +4229,7 @@ Rules:
                       <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
                         <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="wave" size={16} color="white"/></div>
                         <div style={{background:"var(--bg-subtle)",borderRadius:"4px 14px 14px 14px",padding:"12px 16px",fontSize:13,lineHeight:1.6,color:"var(--text-primary)",maxWidth:"85%"}}>
-                          Hi! I'm your ProQuote assistant. Ask me anything about creating requests, analysing quotes, managing orders, or any feature in the app.
+                          Hi! I'm your ProQure assistant. Ask me anything about creating requests, analysing quotes, managing orders, or any feature in the app.
                         </div>
                       </div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:8,paddingLeft:40}}>
@@ -4366,12 +4396,12 @@ Rules:
         {view==="contact"&&(
           <div className="stagger-in" style={{maxWidth:760}}>
             <div style={{background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-md)",padding:"12px 16px",marginBottom:20,fontSize:13,color:"var(--green-deep)",lineHeight:1.5}}>
-              <strong>We're keen to hear from you.</strong> Spotted a bug, or have an idea to make ProQuote better? Tell us below - your feedback during this trial directly shapes the product.
+              <strong>We're keen to hear from you.</strong> Spotted a bug, or have an idea to make ProQure better? Tell us below - your feedback during this trial directly shapes the product.
             </div>
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,background:"radial-gradient(circle,rgba(99,102,241,0.12),transparent 70%)",borderRadius:"50%"}}/>
               <div style={{position:"relative",zIndex:1}}>
-                <div style={{fontSize:11,color:"#818CF8",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQuote Support</div>
+                <div style={{fontSize:11,color:"#818CF8",letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:600,marginBottom:8}}>ProQure Support</div>
                 <h1 style={{fontSize:30,fontWeight:800,color:"white",margin:0,letterSpacing:"-0.03em",marginBottom:8}}>Contact us</h1>
                 <p style={{fontSize:14,color:"rgba(148,163,184,0.9)",margin:0}}>Raise a support request, report a bug, or suggest a feature</p>
               </div>
@@ -4541,6 +4571,23 @@ Rules:
                 <Btn outline onClick={()=>setSForm({...settings})}>Reset</Btn>
               </div>
             </div>
+            {roleRank(myRole) >= 3 && (
+              <Card>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                  <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)"}}>Activity overview</div>
+                  <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:"#4A4AB8",background:"#EEEEFB",borderRadius:99,padding:"2px 9px"}}>This workspace</span>
+                </div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>A quiet running tally of activity in this workspace. (A preview of the kind of overview the platform admin area will show across all companies later.)</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                  {[["Requests raised","requestsRaised"],["Quotes analysed","quotesAnalysed"],["RFQs sent","rfqsSent"],["POs raised","posRaised"],["Deliveries signed off","deliveriesSignedOff"],["Emails sent","emailsSent"]].map(([label,key])=>(
+                    <div key={key} style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"11px 13px"}}>
+                      <div style={{fontSize:20,fontWeight:800,color:"var(--text-primary)"}}>{(usage.totals&&usage.totals[key])||0}</div>
+                      <div style={{fontSize:11,color:"var(--text-secondary)"}}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
             {roleRank(myRole) >= 3 && (
               <Card>
                 <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Purchase order approval</div>
@@ -5003,7 +5050,7 @@ function LoginScreen({ onLoggedIn }) {
       background:`linear-gradient(150deg, ${t.page1} 0%, #101013 55%, ${t.page2} 100%)`,
       padding:"24px",fontFamily:"'Plus Jakarta Sans','Helvetica Neue',sans-serif",overflow:"hidden"}}>
 
-      {/* Ambient background: soft orbs + ProQuote mark */}
+      {/* Ambient background: soft orbs + ProQure mark */}
       <div style={{position:"absolute",inset:0,pointerEvents:"none",overflow:"hidden",zIndex:0}}>
         <div style={{position:"absolute",width:560,height:560,top:-180,right:-120,borderRadius:"50%",filter:"blur(60px)",background:`radial-gradient(circle, ${t.orbGreen}, transparent 70%)`}}/>
         <div style={{position:"absolute",width:480,height:480,bottom:-160,left:-120,borderRadius:"50%",filter:"blur(60px)",background:`radial-gradient(circle, ${t.orbIndigo}, transparent 70%)`}}/>
@@ -5030,7 +5077,7 @@ function LoginScreen({ onLoggedIn }) {
           <span style={{fontSize:22,fontWeight:800,color:t.title,letterSpacing:"-0.02em"}}>Pro<span style={{color:dark?"#3DD68C":"#15824F"}}>Quote</span></span>
         </div>
         <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>{mode==="signup"?"Create your account":"Welcome back"}</div>
-        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>{mode==="signup"?"Set up a login to access ProQuote.":"Sign in to access your procurement dashboard."}</div>
+        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>{mode==="signup"?"Set up a login to access ProQure.":"Sign in to access your procurement dashboard."}</div>
 
         <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Email</label>
         <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" placeholder="you@company.co.uk"
@@ -5063,15 +5110,15 @@ function LoginScreen({ onLoggedIn }) {
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false }; }
   static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error, info) { try { console.error("ProQuote error:", error, info); } catch(e){} }
+  componentDidCatch(error, info) { try { console.error("ProQure error:", error, info); } catch(e){} }
   render() {
     if (this.state.hasError) {
       return (
         <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Plus Jakarta Sans',system-ui,sans-serif",background:"#101013",color:"#fff",padding:24}}>
           <div style={{maxWidth:420,textAlign:"center"}}>
             <div style={{fontSize:18,fontWeight:700,marginBottom:10}}>Something went wrong</div>
-            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)",lineHeight:1.6,marginBottom:20}}>ProQuote hit an unexpected error. Your data is safe in the cloud - reloading usually fixes it.</div>
-            <button onClick={()=>window.location.reload()} style={{background:"#15824F",color:"#fff",border:"none",borderRadius:10,padding:"11px 22px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Reload ProQuote</button>
+            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)",lineHeight:1.6,marginBottom:20}}>ProQure hit an unexpected error. Your data is safe in the cloud - reloading usually fixes it.</div>
+            <button onClick={()=>window.location.reload()} style={{background:"#15824F",color:"#fff",border:"none",borderRadius:10,padding:"11px 22px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Reload ProQure</button>
           </div>
         </div>
       );
@@ -5119,12 +5166,12 @@ function AppInner() {
   if (!ready) {
     return <div style={loadStyle}>Syncing your data...</div>;
   }
-  return <ProQuoteApp session={session} />;
+  return <ProQureApp session={session} />;
 }
 
 export default function App() {
   // If cloud isn't configured, run the app exactly as before (browser-only).
   // This branch lives here (before AppInner) so AppInner's hooks are never conditional.
-  if (!cloudEnabled) return <ErrorBoundary><ProQuoteApp session={null} /></ErrorBoundary>;
+  if (!cloudEnabled) return <ErrorBoundary><ProQureApp session={null} /></ErrorBoundary>;
   return <ErrorBoundary><AppInner /></ErrorBoundary>;
 }
