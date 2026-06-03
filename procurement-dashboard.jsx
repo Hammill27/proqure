@@ -190,6 +190,75 @@ Format: {"items":[{"id":1,"description":"...","quantity":N,"unit":"...","categor
   const txt = await callAI(sys, `Parse this material request: ${raw}`);
   try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
 }
+
+// ---- AI helpers for Quick PO & Hire features --------------------------------
+// Turn a free-text/spoken hire description into structured hire fields.
+async function aiParseHire(raw) {
+  const sys = `You help a UK trades company log plant and tool hire. From a short description, return ONLY valid JSON, no markdown.
+Format: {"description":"the equipment, tidied up","category":"plant|tool","jobRef":"if mentioned else empty","site":"if mentioned else empty","suggestedReturnDays":N or null,"missingReturnDate":true/false}
+"plant" = larger machinery (excavators, dumpers, scaffolding, generators). "tool" = smaller items (breakers, drills, saws). missingReturnDate is true if no return/collection date or duration was stated.`;
+  const txt = await callAI(sys, `Hire description: ${raw}`);
+  try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
+}
+
+// Analyse hire history and surface hire-vs-buy suggestions.
+async function aiHireVsBuy(hires) {
+  // Group by a normalised description
+  const summary = {};
+  hires.forEach(h => {
+    const key = (h.description||"").toLowerCase().trim();
+    if (!key) return;
+    if (!summary[key]) summary[key] = { description:h.description, count:0, weeklyRate:h.weeklyRate||"", totalWeeks:0 };
+    summary[key].count += 1;
+  });
+  const list = Object.values(summary).filter(s => s.count >= 3);
+  if (list.length === 0) return [];
+  const sys = `You advise a UK trades company on whether repeatedly-hired equipment would be cheaper to buy. Return ONLY valid JSON, no markdown.
+Format: {"suggestions":[{"description":"...","reason":"one short sentence with the numbers","strength":"strong|worth-a-look"}]}
+Only include items where repeated hiring plausibly costs more than buying. Be realistic and brief. Do not invent purchase prices you don't know - frame as "worth checking the purchase price".`;
+  const txt = await callAI(sys, `Hire history (item, times hired, weekly rate): ${JSON.stringify(list)}`);
+  try { const j = JSON.parse(txt.replace(/```json|```/g,"").trim()); return j.suggestions||[]; } catch { return []; }
+}
+
+// Turn a spoken/typed emergency order into Quick PO fields.
+async function aiParseQuickPO(raw, supplierNames) {
+  const sys = `You help a UK trades buyer log an emergency phone order. From a short description, return ONLY valid JSON, no markdown.
+Format: {"supplierName":"best match from the known list, or the name said, or empty","items":[{"description":"...","quantity":"...","unitPrice":""}],"total":"the agreed total if stated else empty","summary":"short note"}
+Known suppliers: ${(supplierNames||[]).join(", ")||"none"}. Match the supplier loosely (e.g. "Travis" -> "Travis Perkins"). Put per-item prices only if clearly stated, otherwise leave unitPrice empty and rely on total.`;
+  const txt = await callAI(sys, `Order: ${raw}`);
+  try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
+}
+
+// Sanity-check a phone-agreed price against past quotes/orders for similar items.
+async function aiPriceCheck(itemsText, total, pastText) {
+  if (!pastText) return null;
+  const sys = `You are a quiet price sanity-checker for a UK trades buyer. Compare a phone-agreed price to past prices for similar items. Return ONLY valid JSON, no markdown.
+Format: {"flag":true/false,"message":"one short sentence, only if flag is true"}
+Only flag if the new price looks clearly high (roughly 15%+ above comparable past prices). If you can't compare confidently, flag false. Never block - this is advisory.`;
+  const txt = await callAI(sys, `New order: ${itemsText} total ${total}. Past prices for similar items: ${pastText}`);
+  try { const j = JSON.parse(txt.replace(/```json|```/g,"").trim()); return j.flag ? j.message : null; } catch { return null; }
+}
+
+// Vision: read a hire delivery/collection photo and describe the equipment + visible condition.
+async function aiReadHirePhoto(base64, mimeType, kind) {
+  const sys = `You read photos of hired construction plant and tools for a UK trades company. Describe what you see factually and briefly for a delivery/condition record. Note the equipment type and any visible damage, missing parts, or notable condition. Return ONLY valid JSON, no markdown.
+Format: {"equipment":"short name of the item(s)","condition":"one short factual sentence on visible condition","concerns":"any visible damage/missing parts, or empty string"}`;
+  const messages = [
+    { role:"system", content: sys },
+    { role:"user", content: [
+      { type:"image_url", image_url:{ url:`data:${mimeType};base64,${base64}` } },
+      { type:"text", text: kind==="collection" ? "This is equipment left on site awaiting collection. Describe it and its condition/location." : "This is hired equipment as delivered to site. Describe it and its condition." }
+    ]}
+  ];
+  try {
+    const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1 }) });
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (!d.text) return null;
+    return JSON.parse(d.text.replace(/```json|```/g,"").trim());
+  } catch { return null; }
+}
+
 async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline) {
   const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown. Sign off with the real contact name and company provided, no placeholder brackets.`;
   const list = items.map(i=>`- ${i.quantity} ${i.unit} ${i.description}`).join("\n");
@@ -1599,6 +1668,14 @@ function ProQureApp({ session }) {
     setQuickPO(null);
     showToast(`Quick PO ${poNum} raised`);
     setView("orders");
+    // Advisory price sanity-check (non-blocking) - compares to past orders for similar items
+    if (form.total && can.viewCosts(myRole)) {
+      const itemsText = lineItems.map(i=>`${i.quantity} ${i.description}`).join(", ") || form.summary || "";
+      const past = orders.filter(o=>o.estimatedTotal).slice(0,30).map(o=>`${(o.items||[]).map(i=>i.description).join("/")||o.label}: ${o.estimatedTotal}`).join(" | ");
+      if (itemsText && past) {
+        aiPriceCheck(itemsText, form.total, past).then(msg=>{ if(msg) showToast(msg, "warn"); }).catch(()=>{});
+      }
+    }
   }
 
   // ---- Hire lifecycle -------------------------------------------------------
@@ -1665,18 +1742,26 @@ function ProQureApp({ session }) {
 
   async function markHireDelivered(id, file, note) {
     let photoUrl = null;
+    let aiRead = null;
     if (file) {
-      try { photoUrl = await uploadHirePhoto(file, id, "delivery"); }
+      try {
+        // Compress + read the photo with AI in parallel-ish (read needs base64)
+        const base64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(file); });
+        try { aiRead = await aiReadHirePhoto(base64, file.type, "delivery"); } catch {}
+        photoUrl = await uploadHirePhoto(file, id, "delivery");
+      }
       catch(e){ showToast(`Photo upload failed: ${e.message}`,"warn"); }
     }
+    const aiNote = aiRead ? `${aiRead.equipment||""}${aiRead.condition?` - ${aiRead.condition}`:""}${aiRead.concerns?` (Note: ${aiRead.concerns})`:""}`.trim() : "";
     updateHire(id, {
       status:"on-hire",
       deliveredDate: new Date().toISOString(),
       deliveredPhoto: photoUrl,
       deliveryNote: (note||"").trim(),
-    }, { action:"Delivered to site", detail:`Marked on hire${photoUrl?" with delivery photo":""}${note?` - ${note}`:""}` });
+      deliveryAiNote: aiNote || null,
+    }, { action:"Delivered to site", detail:`Marked on hire${photoUrl?" with delivery photo":""}${note?` - ${note}`:""}${aiNote?` [AI: ${aiNote}]`:""}` });
     logActivity("Hire delivered", `${id} marked on hire`, { entity:"hire" });
-    showToast("Marked as on hire");
+    showToast(aiNote ? "On hire - AI noted the photo" : "Marked as on hire");
   }
 
   function extendHire(id, newDate) {
@@ -1707,9 +1792,15 @@ function ProQureApp({ session }) {
   async function addCollectionPhoto(id, file) {
     if (!file) return;
     try {
+      let aiRead = null;
+      try {
+        const base64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(file); });
+        aiRead = await aiReadHirePhoto(base64, file.type, "collection");
+      } catch {}
       const url = await uploadHirePhoto(file, id, "collection");
-      updateHire(id, { collectionPhoto:url }, { action:"Collection photo added", detail:"Photo of where equipment was left on site" });
-      showToast("Collection photo saved");
+      const aiNote = aiRead ? `${aiRead.equipment||""}${aiRead.condition?` - ${aiRead.condition}`:""}${aiRead.concerns?` (${aiRead.concerns})`:""}`.trim() : "";
+      updateHire(id, { collectionPhoto:url, collectionAiNote: aiNote||null }, { action:"Collection photo added", detail:`Photo of where equipment was left on site${aiNote?` [AI: ${aiNote}]`:""}` });
+      showToast(aiNote ? "Collection photo saved - AI noted it" : "Collection photo saved");
     } catch(e){ showToast(`Photo upload failed: ${e.message}`,"warn"); }
   }
 
@@ -2229,6 +2320,7 @@ ${settings.company||""}`;
   const [offHireModal, setOffHireModal] = useState(null);
   const [closeHireModal, setCloseHireModal] = useState(null);
   const [extendModal, setExtendModal] = useState(null);
+  const [hireBuyTips, setHireBuyTips] = useState([]);
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0");}catch{} return n; });
   // Keep the page (html/body) background in sync with the theme so no white edges show
@@ -2260,6 +2352,17 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_requests", requests); }, [requests, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_orders", orders); }, [orders, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
+  // Compute hire-vs-buy suggestions (only for cost-viewers, only with enough history)
+  useEffect(()=>{
+    if (!can.viewCosts(myRole)) { setHireBuyTips([]); return; }
+    const counts = {};
+    hires.forEach(h=>{ const k=(h.description||"").toLowerCase().trim(); if(k) counts[k]=(counts[k]||0)+1; });
+    const hasRepeat = Object.values(counts).some(n=>n>=3);
+    if (!hasRepeat) { setHireBuyTips([]); return; }
+    let active = true;
+    aiHireVsBuy(hires).then(tips=>{ if(active) setHireBuyTips(tips||[]); }).catch(()=>{});
+    return ()=>{ active=false; };
+  }, [hires, myRole]);
   useEffect(()=>{ queueCloudPush("piq_suppliers", suppliers); }, [suppliers, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_settings", settings); }, [settings, queueCloudPush]);
   // One-time setup: ask a Manager whether buyers need approval to raise POs.
@@ -4057,6 +4160,21 @@ Rules:
               );
             })()}
 
+            {hireBuyTips.length>0&&(
+              <div style={{background:"#FEF6E7",border:"1px solid #F5D9A0",borderRadius:14,padding:"16px 20px",marginBottom:20}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  <span style={{fontSize:11,fontWeight:800,color:"#9A6212",background:"#FBEAC6",borderRadius:99,padding:"2px 9px",textTransform:"uppercase",letterSpacing:"0.04em"}}>AI insight</span>
+                  <span style={{fontSize:13,fontWeight:700,color:"#7A4E0E"}}>Hiring often - worth buying?</span>
+                </div>
+                {hireBuyTips.map((t,i)=>(
+                  <div key={i} style={{fontSize:12.5,color:"#5C4410",lineHeight:1.6,marginBottom:i<hireBuyTips.length-1?6:0}}>
+                    <strong>{t.description}</strong> — {t.reason}{t.strength==="strong"?" ":""}
+                  </div>
+                ))}
+                <div style={{fontSize:11,color:"#9A6212",marginTop:8,fontStyle:"italic"}}>A suggestion based on your hire history - always check current purchase prices before deciding.</div>
+              </div>
+            )}
+
             {hires.length===0?(
               <div style={{textAlign:"center",padding:"60px 20px",color:"var(--text-secondary)"}}>
                 <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="clipboard" size={40} color="var(--text-tertiary)"/></div>
@@ -4092,6 +4210,7 @@ Rules:
                             {h.returnOpen?"Return: open / TBC":(h.returnDate?`Return by ${new Date(h.returnDate).toLocaleDateString("en-GB")}`:"Return date not set")}
                             {h.weeklyRate&&can.viewCosts(myRole)?` · ${h.weeklyRate}/wk`:""}
                           </div>
+                          {h.deliveryAiNote&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:4,padding:"6px 10px",background:"var(--bg-subtle2)",borderRadius:6,borderLeft:"3px solid #15824F"}}><span style={{fontWeight:700,color:"#15824F"}}>AI read photo:</span> {h.deliveryAiNote}</div>}
                           {h.collectionRef&&<div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>Collection ref: {h.collectionRef}</div>}
                         </div>
                         {(h.deliveredPhoto||h.collectionPhoto)&&(
@@ -5193,6 +5312,7 @@ Rules:
           suppliers={suppliers}
           onSubmit={handleQuickPO}
           onClose={()=>setQuickPO(null)}
+          onAiFill={aiParseQuickPO}
         />
       )}
 
@@ -5213,7 +5333,7 @@ Rules:
       )}
 
       {hireForm&&(
-        <HireFormModal form={hireForm} setForm={setHireForm} suppliers={suppliers} onSubmit={(f)=>{raiseHire(f);setHireForm(null);}} onClose={()=>setHireForm(null)} canViewCosts={can.viewCosts(myRole)}/>
+        <HireFormModal form={hireForm} setForm={setHireForm} suppliers={suppliers} onSubmit={(f)=>{raiseHire(f);setHireForm(null);}} onClose={()=>setHireForm(null)} canViewCosts={can.viewCosts(myRole)} onAiFill={aiParseHire}/>
       )}
       {deliverModal&&(
         <DeliverModal data={deliverModal} onSubmit={async(file,note)=>{ await markHireDelivered(deliverModal.hireId,file,note); setDeliverModal(null); }} onClose={()=>setDeliverModal(null)}/>
@@ -5465,7 +5585,7 @@ Rules:
 }
 
 // --- Quick PO modal (emergency direct PO) ------------------------------------
-function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose }) {
+function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill }) {
   const upd = (patch) => setForm(f => ({ ...f, ...patch }));
   const items = form.items || [{ description:"", quantity:"", unitPrice:"" }];
   const setItem = (idx, patch) => {
@@ -5475,11 +5595,37 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose }) {
   const addItem = () => upd({ items: [...items, { description:"", quantity:"", unitPrice:"" }] });
   const removeItem = (idx) => upd({ items: items.filter((_,i)=>i!==idx) });
 
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+
   const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
   const labelStyle = { fontSize:11, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:5, display:"block" };
 
   const approvedSuppliers = suppliers.filter(s => s.tier !== "ad-hoc");
   const adhocSuppliers = suppliers.filter(s => s.tier === "ad-hoc");
+
+  const runAi = async () => {
+    if (!aiText.trim() || !onAiFill) return;
+    setAiBusy(true);
+    try {
+      const r = await onAiFill(aiText.trim(), suppliers.map(s=>s.name));
+      if (r) {
+        const patch = {};
+        if (r.items && r.items.length) patch.items = r.items.map(it=>({description:it.description||"",quantity:it.quantity||"",unitPrice:it.unitPrice||""}));
+        if (r.total) patch.total = r.total;
+        if (r.summary) patch.summary = r.summary;
+        // Match supplier name to an existing supplier, else set up as new
+        if (r.supplierName) {
+          const match = suppliers.find(s => s.name.toLowerCase() === r.supplierName.toLowerCase())
+                     || suppliers.find(s => s.name.toLowerCase().includes(r.supplierName.toLowerCase()) || r.supplierName.toLowerCase().includes(s.name.toLowerCase()));
+          if (match) { patch.supplierId = match.id; patch.newSupplier = false; }
+          else { patch.newSupplier = true; patch.newSupplierName = r.supplierName; }
+        }
+        upd(patch);
+      }
+    } catch {}
+    setAiBusy(false);
+  };
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"20px",overflowY:"auto"}}>
@@ -5491,7 +5637,16 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose }) {
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"var(--text-secondary)",lineHeight:1}}>&times;</button>
         </div>
         <div style={{fontSize:17,fontWeight:700,marginBottom:4,color:"var(--text-primary)"}}>Raise an emergency purchase order</div>
-        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:18,lineHeight:1.55}}>For phone-agreed orders that skip the quote process. This creates a numbered PO straight away and logs it as a direct/phone order.</div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.55}}>For phone-agreed orders that skip the quote process. This creates a numbered PO straight away and logs it as a direct/phone order.</div>
+
+        {/* AI quick-fill */}
+        <div style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"10px 12px",marginBottom:16}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#D97706",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Say or type the order - AI fills it in</div>
+          <div style={{display:"flex",gap:6}}>
+            <input value={aiText} onChange={e=>setAiText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")runAi();}} placeholder='e.g. "10 lengths 22mm copper, £340 with Travis Perkins"' style={{...inputStyle,flex:1}}/>
+            <button onClick={runAi} disabled={aiBusy||!aiText.trim()} style={{padding:"9px 14px",borderRadius:"var(--radius-sm)",border:"none",background:aiBusy||!aiText.trim()?"var(--border)":"#D97706",color:"#fff",fontSize:12.5,fontWeight:700,cursor:aiBusy?"wait":"pointer",whiteSpace:"nowrap"}}>{aiBusy?"...":"AI fill"}</button>
+          </div>
+        </div>
 
         {/* Supplier */}
         <label style={labelStyle}>Supplier</label>
@@ -5560,8 +5715,19 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose }) {
 }
 
 // --- Hire modals -------------------------------------------------------------
-function HireFormModal({ form, setForm, suppliers, onSubmit, onClose, canViewCosts }) {
+function HireFormModal({ form, setForm, suppliers, onSubmit, onClose, canViewCosts, onAiFill }) {
   const upd = (patch)=>setForm(f=>({...f,...patch}));
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const runAi = async () => {
+    if (!aiText.trim() || !onAiFill) return;
+    setAiBusy(true);
+    try {
+      const r = await onAiFill(aiText.trim());
+      if (r) upd({ description: r.description||form.description||"", jobRef: r.jobRef||form.jobRef||"", site: r.site||form.site||"", _aiCategory: r.category, _aiMissingDate: r.missingReturnDate });
+    } catch {}
+    setAiBusy(false);
+  };
   const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
   const labelStyle = { fontSize:11, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:5, display:"block" };
   const approved = suppliers.filter(s=>s.tier!=="ad-hoc");
@@ -5573,7 +5739,17 @@ function HireFormModal({ form, setForm, suppliers, onSubmit, onClose, canViewCos
           <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Raise a hire</div>
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"var(--text-secondary)",lineHeight:1}}>&times;</button>
         </div>
-        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:18,lineHeight:1.55}}>Add plant or tool hire to the register. It will appear on the hire log so you can track delivery, returns and collection.</div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.55}}>Add plant or tool hire to the register. It will appear on the hire log so you can track delivery, returns and collection.</div>
+
+        {/* AI quick-fill */}
+        <div style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"10px 12px",marginBottom:16}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#15824F",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Describe it - AI fills the form</div>
+          <div style={{display:"flex",gap:6}}>
+            <input value={aiText} onChange={e=>setAiText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")runAi();}} placeholder='e.g. "digger for the Elm Street job for 2 weeks"' style={{...inputStyle,flex:1}}/>
+            <button onClick={runAi} disabled={aiBusy||!aiText.trim()} style={{padding:"9px 14px",borderRadius:"var(--radius-sm)",border:"none",background:aiBusy||!aiText.trim()?"var(--border)":"#15824F",color:"#fff",fontSize:12.5,fontWeight:700,cursor:aiBusy?"wait":"pointer",whiteSpace:"nowrap"}}>{aiBusy?"...":"AI fill"}</button>
+          </div>
+          {form._aiMissingDate&&<div style={{fontSize:11,color:"var(--amber)",marginTop:6}}>No return date mentioned - set one below or tick "open hire".</div>}
+        </div>
 
         <label style={labelStyle}>Equipment</label>
         <input value={form.description||""} onChange={e=>upd({description:e.target.value})} placeholder="e.g. 3-tonne excavator, or 2x 110v breakers" style={{...inputStyle,marginBottom:12}}/>
