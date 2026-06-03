@@ -5167,14 +5167,16 @@ Rules:
                   ))}
                 </div>
                 <div style={{marginTop:12,fontSize:11.5,color:"var(--text-tertiary)",lineHeight:1.6,paddingTop:12,borderTop:"1px solid var(--border)"}}>
-                  Quote requests and orders are sent from ProQure on your behalf, showing your business as the sender. When a supplier replies, it comes to the reply-to inbox above. You never need to set up your own email to send.
+                  Quote requests and orders are sent from ProQure on your behalf, showing your business as the sender. When a supplier replies, it comes to the reply-to inbox above. Your logo and signature (set below under "How your emails look") control how the email itself looks. You never need to set up your own email to send.
                 </div>
               </Card>
               <Card>
-                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:10}}>Company branding</div>
-                <div style={{display:"grid",gap:12}}>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>How your emails look</div>
+                <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:16,lineHeight:1.6}}>Two things shape every email you send to suppliers: your <strong>logo at the top</strong>, and your <strong>signature at the bottom</strong>. Set them once here.</div>
+                <div style={{display:"grid",gap:18}}>
                   <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Company logo</label>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--green-dark)",display:"block",marginBottom:2,textTransform:"uppercase",letterSpacing:"0.05em"}}>1 · Logo (top of the email)</label>
+                    <div style={{fontSize:11.5,color:"var(--text-muted)",marginBottom:8,lineHeight:1.5}}>Your company logo, shown in the header of every email.</div>
                     <div style={{display:"flex",alignItems:"center",gap:12}}>
                       {sForm.logoBase64&&(
                         <img src={sForm.logoBase64} alt="Logo" style={{height:48,maxWidth:120,objectFit:"contain",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:4}}/>
@@ -5207,23 +5209,21 @@ Rules:
                       </label>
                       {sForm.logoBase64&&<button onClick={()=>setSForm(p=>({...p,logoBase64:""}))} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer"}}>Remove</button>}
                     </div>
-                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Appears on PO emails · PNG or JPG recommended</div>
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div>
-                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Quote validity (days)</label>
-                      <input type="number" min="1" max="90" value={sForm.quoteValidityDays||30} onChange={e=>setSForm(p=>({...p,quoteValidityDays:parseInt(e.target.value)||30}))} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                      <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Quotes saved to library expire after this many days</div>
-                    </div>
-                    <div>
-                      <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Default PO terms</label>
-                      <input value={sForm.poNotes||""} onChange={e=>setSForm(p=>({...p,poNotes:e.target.value}))} placeholder="e.g. 30 day payment terms" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                    </div>
+                  <div style={{borderTop:"1px solid var(--border)",paddingTop:16}}>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--green-dark)",display:"block",marginBottom:2,textTransform:"uppercase",letterSpacing:"0.05em"}}>2 · Signature (bottom of the email)</label>
+                    <div style={{fontSize:11.5,color:"var(--text-muted)",marginBottom:8,lineHeight:1.5}}>Copy your signature straight from Outlook or Gmail and paste it in below - the formatting is kept. This is what appears at the bottom of every email. If you leave it blank, we'll use your name, company and contact details instead.</div>
+                    <SignatureEditor value={sForm.emailSignature||""} onChange={(html)=>setSForm(p=>({...p,emailSignature:html}))}/>
+                  </div>
+                  <div style={{borderTop:"1px solid var(--border)",paddingTop:16}}>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Default PO terms</label>
+                    <input value={sForm.poNotes||""} onChange={e=>setSForm(p=>({...p,poNotes:e.target.value}))} placeholder="e.g. 30 day payment terms" style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Optional terms shown on purchase orders.</div>
                   </div>
                   <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Email signature (optional)</label>
-                    <SignatureEditor value={sForm.emailSignature||""} onChange={(html)=>setSForm(p=>({...p,emailSignature:html}))}/>
-                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Appears at the bottom of quote requests and orders. Copy your signature from Outlook or Gmail and paste it straight in - the formatting is kept. If left blank, your name, company and contact details are used.</div>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Quote validity (days)</label>
+                    <input type="number" min="1" max="90" value={sForm.quoteValidityDays||30} onChange={e=>setSForm(p=>({...p,quoteValidityDays:parseInt(e.target.value)||30}))} style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Quotes saved to library expire after this many days.</div>
                   </div>
                 </div>
               </Card>
