@@ -6107,18 +6107,6 @@ function SignatureEditor({ value, onChange }) {
       </div>
       {warn && <div style={{fontSize:11,color:"var(--amber)",marginTop:6,lineHeight:1.5}}>{warn}</div>}
       {!empty && (
-        <div style={{marginTop:10}}>
-          <div style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Preview - how it appears in emails</div>
-          <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"14px 16px",background:"#FFFFFF",overflowX:"auto",maxWidth:"100%",boxSizing:"border-box"}}>
-            <div style={{maxWidth:"100%"}} dangerouslySetInnerHTML={{__html: (value||"")
-              .replace(/<img/gi,'<img style="max-width:200px;height:auto"')
-              .replace(/(<table[^>]*)\swidth="[^"]*"/gi,'$1')
-              .replace(/(<t[dr][^>]*)\swidth="[^"]*"/gi,'$1')
-            }}/>
-          </div>
-        </div>
-      )}
-      {!empty && (
         <button onClick={()=>{ if(ref.current) ref.current.innerHTML=""; onChange(""); setEmpty(true); setWarn(""); }}
           style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",marginTop:8}}>
           Clear signature
