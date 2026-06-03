@@ -5816,7 +5816,7 @@ function DeliverModal({ data, onSubmit, onClose }) {
         </label>
         <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Any issues on arrival? (optional)" style={{...inputStyle,minHeight:50,resize:"vertical",marginBottom:16,fontFamily:"inherit"}}></textarea>
         <div style={{display:"flex",gap:10}}>
-          <button disabled={busy} onClick={async()=>{ setBusy(true); await onSubmit(file,note); }} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"wait":"pointer",opacity:busy?0.7:1}}>{busy?"Saving...":"Confirm delivered"}</button>
+          <button disabled={busy} onClick={async()=>{ setBusy(true); try { await onSubmit(file,note); } finally { setBusy(false); } }} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"wait":"pointer",opacity:busy?0.7:1}}>{busy?"Saving...":"Confirm delivered"}</button>
           <button disabled={busy} onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
         </div>
       </div>
@@ -5840,7 +5840,7 @@ function OffHireModal({ data, hire, onSubmit, onClose }) {
         <label style={labelStyle}>Collection address</label>
         <textarea value={addr} onChange={e=>setAddr(e.target.value)} placeholder="Where should they collect from?" style={{...inputStyle,minHeight:50,resize:"vertical",marginBottom:16,fontFamily:"inherit"}}></textarea>
         <div style={{display:"flex",gap:10}}>
-          <button disabled={busy} onClick={async()=>{ setBusy(true); await onSubmit(date,addr); }} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"var(--amber)",color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"wait":"pointer",opacity:busy?0.7:1}}>{busy?"Sending...":"Request collection"}</button>
+          <button disabled={busy} onClick={async()=>{ setBusy(true); try { await onSubmit(date,addr); } finally { setBusy(false); } }} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"var(--amber)",color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"wait":"pointer",opacity:busy?0.7:1}}>{busy?"Sending...":"Request collection"}</button>
           <button disabled={busy} onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
         </div>
       </div>
