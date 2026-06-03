@@ -34,8 +34,8 @@ export default async function handler(req, res) {
           headers: {
             "Content-Type": "application/json",
             "Authorization": "Bearer " + key,
-            "HTTP-Referer": "https://proquote.app",
-            "X-Title": "ProQuote",
+            "HTTP-Referer": "https://proqure.app",
+            "X-Title": "ProQure",
           },
           body: JSON.stringify({ model, messages, temperature: typeof temperature === "number" ? temperature : 0.1 }),
         });
