@@ -49,7 +49,7 @@ const can = {
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage"];
 
 // Pull every key for this user from the cloud into localStorage (on login)
 async function cloudPull(userId) {
@@ -787,6 +787,49 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
 }
 
 // --- PDF generation via jsPDF (loaded from CDN on demand) --------------------
+// --- Photo helpers: compress in-browser, then upload to Supabase Storage ------
+// Keeps files tiny (~150-300KB) so we stay well within the free storage/bandwidth tiers.
+function compressImage(file, maxWidth = 1200, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob(
+          (blob) => { if (blob) resolve(blob); else reject(new Error("Compression failed")); },
+          "image/jpeg",
+          quality
+        );
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// Uploads a compressed photo to the 'hire-photos' bucket; returns a public URL.
+async function uploadHirePhoto(file, hireId, kind) {
+  if (!supabase) throw new Error("Photo storage needs cloud sync enabled");
+  const blob = await compressImage(file);
+  const path = `${hireId}/${kind}-${Date.now()}.jpg`;
+  const { error } = await supabase.storage.from("hire-photos").upload(path, blob, {
+    contentType: "image/jpeg",
+    upsert: false,
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from("hire-photos").getPublicUrl(path);
+  return data?.publicUrl || null;
+}
+
 async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, company, contactName, contactEmail, date }) {
   if (!window.jspdf) {
     await new Promise((res,rej) => {
@@ -1048,6 +1091,7 @@ function ProQureApp({ session }) {
   // Requests
   const [requests, setRequests] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_requests")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
+  const [hires,    setHires]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_hires")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
   // Usage metering: quiet per-instance counters for the future admin dashboard. Invisible to users.
@@ -1462,6 +1506,223 @@ function ProQureApp({ session }) {
     setLoading(false);
   }
 
+  // Count how many times a supplier has been used (any PO or quote) and prompt to promote ad-hoc ones at 5.
+  function bumpSupplierUse(supplierId) {
+    if (supplierId == null) return;
+    setSuppliers(prev => {
+      const next = prev.map(s => {
+        if (s.id !== supplierId) return s;
+        const useCount = (s.useCount || 0) + 1;
+        return { ...s, useCount };
+      });
+      const sup = next.find(s => String(s.id) === String(supplierId));
+      if (sup && sup.tier === "ad-hoc" && (sup.useCount || 0) >= 5 && !sup.promoteDismissed) {
+        setPromotePrompt(sup);
+      }
+      try { localStorage.setItem("piq_suppliers", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+
+  function promoteSupplier(supplierId) {
+    setSuppliers(prev => {
+      const next = prev.map(s => String(s.id) === String(supplierId) ? { ...s, tier: "approved" } : s);
+      try { localStorage.setItem("piq_suppliers", JSON.stringify(next)); } catch {}
+      return next;
+    });
+    const sup = suppliers.find(s => String(s.id) === String(supplierId));
+    if (sup) logActivity("Supplier approved", `${sup.name} promoted to approved supplier after repeated use`, { entity:"supplier" });
+    setPromotePrompt(null);
+    showToast("Supplier promoted to approved");
+  }
+
+  // Quick PO - raise a purchase order directly from a phone-agreed price, skipping the RFQ/quote flow.
+  // Buyers & Managers only. Skips manager approval (emergency). Logged as a direct/phone order.
+  function handleQuickPO(form) {
+    if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
+    const itemsValid = (form.items||[]).some(i => (i.description||"").trim());
+    if (!itemsValid && !(form.summary||"").trim()) { showToast("Add at least one item or a description.","warn"); return; }
+
+    // Resolve or create the supplier
+    let supplier = null;
+    let supplierId = form.supplierId;
+    if (form.newSupplier && (form.newSupplierName||"").trim()) {
+      const ns = {
+        id: `SUP-${Date.now()}`,
+        name: form.newSupplierName.trim(),
+        email: (form.newSupplierEmail||"").trim(),
+        categories: [form.trade || "General"],
+        tier: "ad-hoc",
+        useCount: 0,
+        addedVia: "quick-po",
+        addedAt: new Date().toISOString(),
+      };
+      const updated = [...suppliers, ns];
+      saveSuppliers(updated);
+      supplier = ns; supplierId = ns.id;
+    } else {
+      supplier = suppliers.find(s => String(s.id) === String(supplierId)) || null;
+    }
+
+    const poNum = `PO-${Date.now().toString().slice(-6)}`;
+    const dateStr = new Date().toLocaleDateString("en-GB");
+    const lineItems = (form.items||[]).filter(i => (i.description||"").trim()).map(i => ({
+      description: i.description.trim(),
+      quantity: i.quantity || "",
+      unitPrice: i.unitPrice || "",
+    }));
+    const order = {
+      id: poNum, reqId: null,
+      jobRef: (form.jobRef||"").trim() || "Quick PO",
+      site: (form.site||"").trim() || "",
+      trade: form.trade || "",
+      supplier: supplier?.name || form.newSupplierName || "",
+      supplierEmail: supplier?.email || form.newSupplierEmail || "",
+      items: lineItems,
+      analysis: null,
+      poNumber: poNum, poDate: dateStr,
+      estimatedTotal: (form.total||"").trim() || "",
+      status: "pending-send",
+      type: "quick",            // marks this as a direct/phone order
+      isQuickPO: true,
+      summary: (form.summary||"").trim() || "",
+      label: `PO ${poNum}`,
+      deliveryMethod: "", deliveryDate: "",
+      notes: (form.summary||"").trim() || "",
+      activity: [{ ts:new Date().toISOString(), action:"Quick PO raised", detail:`Direct/phone order - ${supplier?.name||form.newSupplierName||"supplier"}${form.total?` - ${form.total}`:""}`, user:settings.contactName||myEmail||"You" }],
+    };
+    setOrders(p => [order, ...p]);
+    if (supplierId != null) bumpSupplierUse(supplierId);
+    meter("posRaised");
+    meter("posMaterials");
+    logActivity("Quick PO raised", `${poNum} - ${supplier?.name||form.newSupplierName||"supplier"} (direct/phone order)${form.total?` - ${form.total}`:""}`, { entity:"order", jobRef:order.jobRef });
+    setQuickPO(null);
+    showToast(`Quick PO ${poNum} raised`);
+    setView("orders");
+  }
+
+  // ---- Hire lifecycle -------------------------------------------------------
+  // Weeks a hire has been on (from delivery/start date to now or to its close date)
+  function hireWeeks(h) {
+    const start = h.deliveredDate || h.startDate;
+    if (!start) return 0;
+    const end = h.closedDate ? new Date(h.closedDate) : new Date();
+    const ms = end - new Date(start);
+    return Math.max(0, Math.floor(ms / (1000*60*60*24*7)));
+  }
+  function hireRunningCost(h) {
+    if (!h.deliveredDate) return null; // no cost until it's actually on hire
+    const rate = parseFloat(String(h.weeklyRate||"").replace(/[^0-9.]/g,""));
+    if (!rate) return null;
+    const weeks = Math.max(1, hireWeeks(h) + 1); // count the current part-week
+    return rate * weeks;
+  }
+
+  // Raise a new hire directly (the quick path) or from an approved hire-type order.
+  function raiseHire(form) {
+    if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a hire.","warn"); return; }
+    if (!(form.description||"").trim()) { showToast("Describe the equipment to hire.","warn"); return; }
+    const ref = `HIRE-${Date.now().toString().slice(-6)}`;
+    let supplier = form.supplierId ? suppliers.find(s=>String(s.id)===String(form.supplierId)) : null;
+    if (form.newSupplier && (form.newSupplierName||"").trim()) {
+      const ns = { id:`SUP-${Date.now()}`, name:form.newSupplierName.trim(), email:(form.newSupplierEmail||"").trim(), categories:["Hire"], tier:"ad-hoc", useCount:0, addedVia:"hire", addedAt:new Date().toISOString() };
+      saveSuppliers([...suppliers, ns]); supplier = ns;
+    }
+    const hire = {
+      id: ref, hireRef: ref,
+      description: form.description.trim(),
+      supplier: supplier?.name || form.newSupplierName || "",
+      supplierEmail: supplier?.email || form.newSupplierEmail || "",
+      supplierId: supplier?.id || null,
+      site: (form.site||"").trim(),
+      jobRef: (form.jobRef||"").trim() || "Hire",
+      weeklyRate: (form.weeklyRate||"").trim(),
+      deliveryDate: (form.deliveryDate||"").trim(),
+      returnDate: (form.returnDate||"").trim(),
+      returnOpen: !!form.returnOpen,
+      status: "on-order",        // on-order -> on-hire -> off-hire-requested -> closed
+      deliveredDate: null, deliveredPhoto: null, deliveryNote: "",
+      offHireDate: null, collectionAddress: "", collectionPhoto: null,
+      collectionRef: null, closedDate: null,
+      createdAt: new Date().toISOString(),
+      activity: [{ ts:new Date().toISOString(), action:"Hire raised", detail:`${form.description.trim()} - ${supplier?.name||form.newSupplierName||"supplier"}`, user:settings.contactName||myEmail||"You" }],
+    };
+    setHires(p => [hire, ...p]);
+    if (supplier?.id) bumpSupplierUse(supplier.id);
+    meter("posRaised");
+    meter("posHire");
+    logActivity("Hire raised", `${ref} - ${form.description.trim()} (${supplier?.name||form.newSupplierName||"supplier"})`, { entity:"hire", jobRef:hire.jobRef });
+    showToast(`Hire ${ref} raised`);
+    setView("hire");
+  }
+
+  function updateHire(id, patch, activity) {
+    setHires(prev => prev.map(h => h.id===id ? {
+      ...h, ...patch,
+      activity: activity ? [...(h.activity||[]), { ts:new Date().toISOString(), ...activity, user:settings.contactName||myEmail||"You" }] : h.activity
+    } : h));
+  }
+
+  async function markHireDelivered(id, file, note) {
+    let photoUrl = null;
+    if (file) {
+      try { photoUrl = await uploadHirePhoto(file, id, "delivery"); }
+      catch(e){ showToast(`Photo upload failed: ${e.message}`,"warn"); }
+    }
+    updateHire(id, {
+      status:"on-hire",
+      deliveredDate: new Date().toISOString(),
+      deliveredPhoto: photoUrl,
+      deliveryNote: (note||"").trim(),
+    }, { action:"Delivered to site", detail:`Marked on hire${photoUrl?" with delivery photo":""}${note?` - ${note}`:""}` });
+    logActivity("Hire delivered", `${id} marked on hire`, { entity:"hire" });
+    showToast("Marked as on hire");
+  }
+
+  function extendHire(id, newDate) {
+    updateHire(id, { returnDate:newDate, returnOpen:false }, { action:"Hire extended", detail:`New return date: ${newDate?new Date(newDate).toLocaleDateString("en-GB"):"-"}` });
+    showToast("Hire extended");
+  }
+
+  async function offHireItem(id, collectionDate, collectionAddress) {
+    const h = hires.find(x=>x.id===id);
+    if (!h) return;
+    // Email the supplier requesting collection
+    if (h.supplierEmail) {
+      const subject = `Off-hire / collection request - ${h.hireRef} - ${h.description}`;
+      const body = `Hello ${h.supplier||""}\n\nPlease arrange collection of the following hired equipment:\n\nEquipment: ${h.description}\nHire reference: ${h.hireRef}\nSite: ${h.site||"-"}\nRequested collection date: ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}\nCollection address: ${collectionAddress||h.site||"-"}\n\nPlease confirm the collection and provide an off-hire / collection reference number.\n\nKind regards\n${settings.contactName||settings.company||"The Procurement Team"}\n${settings.company||""}`;
+      try {
+        await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ from:settings.fromEmail||"onboarding@resend.dev", to:[h.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
+      } catch(e) { showToast("Off-hire email may not have sent; record updated anyway.","warn"); }
+    }
+    updateHire(id, {
+      status:"off-hire-requested",
+      offHireDate: collectionDate || "",
+      collectionAddress: collectionAddress || h.site || "",
+    }, { action:"Off-hire requested", detail:`Collection requested for ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}${h.supplierEmail?` - emailed ${h.supplier}`:""}` });
+    logActivity("Off-hire requested", `${id} - collection ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}`, { entity:"hire" });
+    showToast("Off-hire requested" + (h.supplierEmail?` - emailed ${h.supplier}`:""));
+  }
+
+  async function addCollectionPhoto(id, file) {
+    if (!file) return;
+    try {
+      const url = await uploadHirePhoto(file, id, "collection");
+      updateHire(id, { collectionPhoto:url }, { action:"Collection photo added", detail:"Photo of where equipment was left on site" });
+      showToast("Collection photo saved");
+    } catch(e){ showToast(`Photo upload failed: ${e.message}`,"warn"); }
+  }
+
+  function closeHire(id, collectionRef) {
+    updateHire(id, {
+      status:"closed",
+      collectionRef: (collectionRef||"").trim(),
+      closedDate: new Date().toISOString(),
+    }, { action:"Hire closed", detail:`Collected${collectionRef?` - ref ${collectionRef}`:""}` });
+    logActivity("Hire closed", `${id}${collectionRef?` - collection ref ${collectionRef}`:""}`, { entity:"hire" });
+    showToast("Hire closed");
+  }
+
   function handleIssueToBuyer() {
     if (!parsed || !(parsed.items||[]).length) { showToast("Add some materials first.","warn"); return; }
     const newId = `RFQ-${Date.now().toString().slice(-6)}`;
@@ -1496,6 +1757,8 @@ function ProQureApp({ session }) {
     const ok = results.filter(r=>r.success).length;
     if (ok > 0) {
       const sentSuppliers = toSend.map(s=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false }));
+      // Count each supplier the RFQ goes to as a "use" (for ad-hoc promotion tracking)
+      toSend.forEach(s=>bumpSupplierUse(s.id));
       const newId = `RFQ-${Date.now().toString().slice(-6)}`;
       const isEngineer = roleRank(myRole) < 2;
       const r = {
@@ -1721,7 +1984,7 @@ function ProQureApp({ session }) {
     setSavedQuoteSets(prev => prev.map(s => s.reqId===activeReq.id ? {...s, status:"approved", approvedId:qa?._id||null, analyses:allAnalyses.length?allAnalyses:s.analyses} : s));
     // Clear the active in-progress view so the page shows the saved list
     setTimeout(()=>{ setActiveReq(null); setAllAnalyses([]); setExpandedQuote(null); }, 1200);
-    logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});meter("posRaised");
+    logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});meter("posRaised");meter("posMaterials");
 
     // Remove other quotes from the analysis view
     setAllAnalyses([qa]);
@@ -1953,6 +2216,15 @@ ${settings.company||""}`;
   const [resetConfirm, setResetConfirm] = useState(false);
   const [trialResetConfirm, setTrialResetConfirm] = useState(false);
   const [showPoSetup, setShowPoSetup] = useState(false);
+  // Quick PO (emergency direct PO) - skips the RFQ/quote flow for phone-agreed orders
+  const [quickPO, setQuickPO] = useState(null); // null = closed; object = form open
+  const [promotePrompt, setPromotePrompt] = useState(null); // ad-hoc supplier promotion prompt
+  // Hire modals
+  const [hireForm, setHireForm] = useState(null);
+  const [deliverModal, setDeliverModal] = useState(null);
+  const [offHireModal, setOffHireModal] = useState(null);
+  const [closeHireModal, setCloseHireModal] = useState(null);
+  const [extendModal, setExtendModal] = useState(null);
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0");}catch{} return n; });
   // Keep the page (html/body) background in sync with the theme so no white edges show
@@ -1966,6 +2238,7 @@ ${settings.company||""}`;
   // -- Persist to localStorage --
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
+  useEffect(()=>{ try{localStorage.setItem("piq_hires",JSON.stringify(hires))}catch{} },[hires]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
   useEffect(()=>{ try{localStorage.setItem("piq_usage",JSON.stringify(usage))}catch{} },[usage]);
@@ -1982,6 +2255,7 @@ ${settings.company||""}`;
 
   useEffect(()=>{ queueCloudPush("piq_requests", requests); }, [requests, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_orders", orders); }, [orders, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_suppliers", suppliers); }, [suppliers, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_settings", settings); }, [settings, queueCloudPush]);
   // One-time setup: ask a Manager whether buyers need approval to raise POs.
@@ -2048,6 +2322,7 @@ ${settings.company||""}`;
           {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
           {id:"quotes",   label:"Quotes",         min:2, d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
+          {id:"hire",     label:"Hire",           d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
           {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
           {id:"library",  label:"Library",        min:2, d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
@@ -2681,6 +2956,32 @@ Rules:
               </div>
             )}
 
+            {/* Hire due-back / overdue reminder */}
+            {(()=>{
+              const onHire = hires.filter(h=>h.status==="on-hire");
+              const flagged = onHire.filter(h=>{ if(h.returnOpen){ const d=h.deliveredDate?(Date.now()-new Date(h.deliveredDate))/(1000*60*60*24):0; return d>=21; } if(!h.returnDate)return false; const days=(new Date(h.returnDate)-new Date())/(1000*60*60*24); return days<=7; });
+              if(flagged.length===0) return null;
+              return (
+                <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:14,padding:"14px 20px",marginBottom:20}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#9A3412",marginBottom:10}}>Hire equipment to review - extend or off-hire?</div>
+                  {flagged.map(h=>{
+                    const overdue = !h.returnOpen && h.returnDate && (new Date(h.returnDate)<new Date());
+                    const wk = hireWeeks(h);
+                    return (
+                      <div key={h.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #FED7AA"}}>
+                        <div>
+                          <span style={{fontSize:13,fontWeight:600,color:"#7C2D12"}}>{h.description}</span>
+                          <span style={{fontSize:12,color:"#C2410C",marginLeft:8}}>{h.supplier||"supplier"}{h.site?` · ${h.site}`:""}</span>
+                          <span style={{fontSize:11,color:"#EA580C",marginLeft:8}}>{h.returnOpen?`open hire · ${wk}wk on`:overdue?"overdue":`due ${new Date(h.returnDate).toLocaleDateString("en-GB")}`}</span>
+                        </div>
+                        <button onClick={()=>setView("hire")} style={{fontSize:11,color:"#EA580C",background:"#FEF3C7",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>Review</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
             {/* Expiring quotes banner */}
             {expiringQuotes.length>0&&(
               <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:14,padding:"14px 20px",marginBottom:20}}>
@@ -2781,7 +3082,7 @@ Rules:
                 {label:"New request",  sub:"Voice or type",         icon:"mic", action:()=>{setView("new");resetNewRequest();}, accent:"#5B5BD6"},
                 {label:"Analyse",      sub:"Compare quotes",        icon:"search", action:()=>{setView("quotes");}, accent:"#7E6DD6"},
                 {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"package", action:()=>setView("orders"), accent:"#1E9E63"},
-                {label:"Suppliers",    sub:"Manage accounts",       icon:"building", action:()=>setView("suppliers"), accent:"#C77D2E"},
+                ...(can.raisePO(myRole) ? [{label:"Quick PO", sub:"Emergency phone order", icon:"clock", action:()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]}), accent:"#D97706"}] : [{label:"Suppliers", sub:"Manage accounts", icon:"building", action:()=>setView("suppliers"), accent:"#C77D2E"}]),
               ].map((q,qi)=>(
                 <button key={q.label} onClick={q.action} className="stagger-in" style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"14px 16px":"18px 22px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:104,animationDelay:`${0.2+qi*0.04}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
@@ -3710,6 +4011,115 @@ Rules:
           </div>
         )}
 
+        {view==="hire"&&(
+          <div className="stagger-in" style={{maxWidth:980}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:12}}>
+              <div>
+                <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Hire</h1>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Plant &amp; tool hire - on-hire register with delivery, returns and collection tracking</p>
+              </div>
+              {can.raisePO(myRole)&&(
+                <button onClick={()=>setHireForm({})} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:14,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer",fontWeight:700}}>
+                  <Icon name="clipboard" size={14} style={{verticalAlign:"-2px"}}/>Raise a hire
+                </button>
+              )}
+            </div>
+
+            {/* Summary strip */}
+            {hires.length>0&&(()=>{
+              const onHire = hires.filter(h=>h.status==="on-hire");
+              const sites = new Set(onHire.map(h=>h.site).filter(Boolean));
+              const dueSoon = onHire.filter(h=>{ if(h.returnOpen||!h.returnDate)return false; const d=new Date(h.returnDate); const days=(d-new Date())/(1000*60*60*24); return days<=7; });
+              return (
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(3,1fr)",gap:12,marginBottom:22,marginTop:14}}>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
+                    <div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{onHire.length}</div>
+                    <div style={{fontSize:12,color:"var(--text-secondary)"}}>currently on hire</div>
+                  </div>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
+                    <div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{sites.size}</div>
+                    <div style={{fontSize:12,color:"var(--text-secondary)"}}>site{sites.size!==1?"s":""} with kit</div>
+                  </div>
+                  <div style={{background:dueSoon.length?"var(--amber-light)":"var(--bg-card-solid)",border:`1px solid ${dueSoon.length?"var(--amber)":"var(--border)"}`,borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
+                    <div style={{fontSize:24,fontWeight:800,color:dueSoon.length?"var(--amber)":"var(--text-primary)"}}>{dueSoon.length}</div>
+                    <div style={{fontSize:12,color:dueSoon.length?"var(--amber)":"var(--text-secondary)"}}>due back this week</div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {hires.length===0?(
+              <div style={{textAlign:"center",padding:"60px 20px",color:"var(--text-secondary)"}}>
+                <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="clipboard" size={40} color="var(--text-tertiary)"/></div>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>No hire equipment yet</div>
+                <div style={{fontSize:13}}>Raise a hire to start tracking plant and tool hire on your sites.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {hires.map(h=>{
+                  const weeks = hireWeeks(h);
+                  const cost = hireRunningCost(h);
+                  const overdue = h.status==="on-hire" && !h.returnOpen && h.returnDate && (new Date(h.returnDate) < new Date());
+                  const statusMap = {
+                    "on-order":{label:"On order",bg:"var(--indigo-light)",col:"var(--indigo)"},
+                    "on-hire":{label:overdue?"Overdue":"On hire",bg:overdue?"var(--red-light)":"var(--green-light)",col:overdue?"var(--red)":"var(--green-deep)"},
+                    "off-hire-requested":{label:"Off-hire requested",bg:"var(--amber-light)",col:"var(--amber)"},
+                    "closed":{label:"Closed",bg:"var(--bg-subtle2)",col:"var(--text-secondary)"},
+                  };
+                  const st = statusMap[h.status]||statusMap["on-order"];
+                  return (
+                    <div key={h.id} style={{background:"var(--bg-card-solid)",border:`1px solid ${overdue?"var(--red)":"var(--border)"}`,borderRadius:"var(--radius-md)",padding:"16px 18px",boxShadow:"var(--shadow-sm)"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+                        <div style={{flex:1,minWidth:200}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                            <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{h.description}</span>
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:st.bg,color:st.col,textTransform:"uppercase",letterSpacing:"0.03em"}}>{st.label}</span>
+                          </div>
+                          <div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>
+                            <strong>{h.hireRef}</strong> · {h.supplier||"supplier TBC"}{h.site?` · ${h.site}`:""}{h.jobRef?` · ${h.jobRef}`:""}
+                          </div>
+                          <div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>
+                            {h.status==="on-hire"&&<>On hire <strong>{weeks} week{weeks!==1?"s":""}</strong>{can.viewCosts(myRole)&&cost!=null?` · ~£${cost.toFixed(2)} so far`:""}{" · "}</>}
+                            {h.returnOpen?"Return: open / TBC":(h.returnDate?`Return by ${new Date(h.returnDate).toLocaleDateString("en-GB")}`:"Return date not set")}
+                            {h.weeklyRate&&can.viewCosts(myRole)?` · ${h.weeklyRate}/wk`:""}
+                          </div>
+                          {h.collectionRef&&<div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:2}}>Collection ref: {h.collectionRef}</div>}
+                        </div>
+                        {(h.deliveredPhoto||h.collectionPhoto)&&(
+                          <div style={{display:"flex",gap:6}}>
+                            {h.deliveredPhoto&&<a href={h.deliveredPhoto} target="_blank" rel="noreferrer"><img src={h.deliveredPhoto} alt="delivery" style={{width:54,height:54,objectFit:"cover",borderRadius:8,border:"1px solid var(--border)"}}/></a>}
+                            {h.collectionPhoto&&<a href={h.collectionPhoto} target="_blank" rel="noreferrer"><img src={h.collectionPhoto} alt="collection" style={{width:54,height:54,objectFit:"cover",borderRadius:8,border:"1px solid var(--border)"}}/></a>}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Lifecycle actions */}
+                      {can.raisePO(myRole)&&h.status!=="closed"&&(
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                          {h.status==="on-order"&&(
+                            <button onClick={()=>setDeliverModal({hireId:h.id})} style={{fontSize:12.5,fontWeight:600,color:"#15824F",background:"var(--green-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Mark delivered + photo</button>
+                          )}
+                          {h.status==="on-hire"&&(<>
+                            <button onClick={()=>setOffHireModal({hireId:h.id})} style={{fontSize:12.5,fontWeight:600,color:"var(--amber)",background:"var(--amber-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Off-hire / request collection</button>
+                            <button onClick={()=>setExtendModal({hireId:h.id, current:h.returnDate||""})} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Extend</button>
+                          </>)}
+                          {h.status==="off-hire-requested"&&(<>
+                            <label style={{fontSize:12.5,fontWeight:600,color:"#15824F",background:"var(--green-light)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>
+                              Add collection photo
+                              <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{ if(e.target.files?.[0]) addCollectionPhoto(h.id, e.target.files[0]); }}/>
+                            </label>
+                            <button onClick={()=>setCloseHireModal({hireId:h.id})} style={{fontSize:12.5,fontWeight:600,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Enter collection ref &amp; close</button>
+                          </>)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {view==="orders"&&(
           <div className="stagger-in" style={{maxWidth:900}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
@@ -3718,6 +4128,11 @@ Rules:
                 <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{(can.viewAllJobs(myRole)?orders:orders.filter(o=>{const r=requests.find(rr=>rr.id===o.reqId);return r&&(r.createdBy||"").toLowerCase()===myEmail;})).length} {can.viewAllJobs(myRole)?"total orders":"of your deliveries"}</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                {can.raisePO(myRole)&&(
+                  <button onClick={()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]})} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"#fff",background:"#D97706",border:"none",borderRadius:"var(--radius-sm)",padding:"8px 15px",cursor:"pointer",fontWeight:700}}>
+                    <Icon name="clock" size={13} style={{verticalAlign:"-2px"}}/>Quick PO
+                  </button>
+                )}
                 {orders.length>0&&(
                   <button onClick={()=>downloadCSV(`orders-${new Date().toISOString().split("T")[0]}.csv`, orders.map(o=>({
                     PO: o.poNumber, Status: o.status, Supplier: o.supplier||"", Job: o.jobRef||"", Site: o.site||"",
@@ -3930,7 +4345,12 @@ Rules:
                     <div style={{width:40,height:40,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:16,flexShrink:0}}>{s.name[0]}</div>
                     <button onClick={()=>{ if(!can.deleteItems(myRole)){showToast("Only a Manager can remove suppliers.","warn");return;} logActivity("Supplier removed",`${s.name} removed from suppliers`,{entity:"supplier"}); setSuppliers(p=>p.filter(x=>x.id!==s.id)); showToast("Supplier removed"); }} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
                   </div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:3}}>{s.name}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3,flexWrap:"wrap"}}>
+                    <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{s.name}</div>
+                    {s.tier==="ad-hoc"
+                      ? <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--amber-light)",color:"var(--amber)",textTransform:"uppercase",letterSpacing:"0.03em"}}>Ad-hoc</span>
+                      : <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)",textTransform:"uppercase",letterSpacing:"0.03em"}}>Approved</span>}
+                  </div>
                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:8}}>{s.email}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
                     {(s.categories||[]).map(cat=><Badge key={cat} bg="var(--green-light)" text="var(--green-deep)">{cat}</Badge>)}
@@ -4579,7 +4999,7 @@ Rules:
                 </div>
                 <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>A quiet running tally of activity in this workspace. (A preview of the kind of overview the platform admin area will show across all companies later.)</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-                  {[["Requests raised","requestsRaised"],["Quotes analysed","quotesAnalysed"],["RFQs sent","rfqsSent"],["POs raised","posRaised"],["Deliveries signed off","deliveriesSignedOff"],["Emails sent","emailsSent"]].map(([label,key])=>(
+                  {[["Requests raised","requestsRaised"],["Quotes analysed","quotesAnalysed"],["RFQs sent","rfqsSent"],["POs raised (total)","posRaised"],["— of which materials","posMaterials"],["— of which hire","posHire"],["Deliveries signed off","deliveriesSignedOff"],["Emails sent","emailsSent"]].map(([label,key])=>(
                     <div key={key} style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"11px 13px"}}>
                       <div style={{fontSize:20,fontWeight:800,color:"var(--text-primary)"}}>{(usage.totals&&usage.totals[key])||0}</div>
                       <div style={{fontSize:11,color:"var(--text-secondary)"}}>{label}</div>
@@ -4755,6 +5175,48 @@ Rules:
             </div>
           </div>
         </div>
+      )}
+
+      {quickPO&&(
+        <QuickPOModal
+          form={quickPO}
+          setForm={setQuickPO}
+          suppliers={suppliers}
+          onSubmit={handleQuickPO}
+          onClose={()=>setQuickPO(null)}
+        />
+      )}
+
+      {promotePrompt&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1002,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>{ setSuppliers(prev=>{const n=prev.map(s=>s.id===promotePrompt.id?{...s,promoteDismissed:true}:s);try{localStorage.setItem("piq_suppliers",JSON.stringify(n));}catch{}return n;}); setPromotePrompt(null); }}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+            <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"4px 10px",borderRadius:99,background:"rgba(21,130,79,0.12)",marginBottom:14}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#15824F",letterSpacing:"0.04em",textTransform:"uppercase"}}>Frequently used</span>
+            </div>
+            <div style={{fontSize:17,fontWeight:700,marginBottom:8,color:"var(--text-primary)"}}>Promote {promotePrompt.name} to an approved supplier?</div>
+            <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:20,lineHeight:1.6}}>You've used <strong>{promotePrompt.name}</strong> {promotePrompt.useCount||5} times. They started as an ad-hoc supplier - would you like to add them to your approved suppliers?</div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>promoteSupplier(promotePrompt.id)} style={{flex:1,padding:"11px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Yes, approve</button>
+              <button onClick={()=>{ setSuppliers(prev=>{const n=prev.map(s=>s.id===promotePrompt.id?{...s,promoteDismissed:true}:s);try{localStorage.setItem("piq_suppliers",JSON.stringify(n));}catch{}return n;}); setPromotePrompt(null); }} style={{flex:1,padding:"11px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Not now</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hireForm&&(
+        <HireFormModal form={hireForm} setForm={setHireForm} suppliers={suppliers} onSubmit={(f)=>{raiseHire(f);setHireForm(null);}} onClose={()=>setHireForm(null)} canViewCosts={can.viewCosts(myRole)}/>
+      )}
+      {deliverModal&&(
+        <DeliverModal data={deliverModal} onSubmit={async(file,note)=>{ await markHireDelivered(deliverModal.hireId,file,note); setDeliverModal(null); }} onClose={()=>setDeliverModal(null)}/>
+      )}
+      {offHireModal&&(
+        <OffHireModal data={offHireModal} hire={hires.find(h=>h.id===offHireModal.hireId)} onSubmit={async(date,addr)=>{ await offHireItem(offHireModal.hireId,date,addr); setOffHireModal(null); }} onClose={()=>setOffHireModal(null)}/>
+      )}
+      {closeHireModal&&(
+        <CloseHireModal onSubmit={(ref)=>{ closeHire(closeHireModal.hireId,ref); setCloseHireModal(null); }} onClose={()=>setCloseHireModal(null)}/>
+      )}
+      {extendModal&&(
+        <ExtendModal current={extendModal.current} onSubmit={(d)=>{ extendHire(extendModal.hireId,d); setExtendModal(null); }} onClose={()=>setExtendModal(null)}/>
       )}
 
       {resetConfirm&&(
@@ -4993,6 +5455,250 @@ Rules:
   );
 }
 
+// --- Quick PO modal (emergency direct PO) ------------------------------------
+function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose }) {
+  const upd = (patch) => setForm(f => ({ ...f, ...patch }));
+  const items = form.items || [{ description:"", quantity:"", unitPrice:"" }];
+  const setItem = (idx, patch) => {
+    const next = items.map((it,i) => i===idx ? { ...it, ...patch } : it);
+    upd({ items: next });
+  };
+  const addItem = () => upd({ items: [...items, { description:"", quantity:"", unitPrice:"" }] });
+  const removeItem = (idx) => upd({ items: items.filter((_,i)=>i!==idx) });
+
+  const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
+  const labelStyle = { fontSize:11, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:5, display:"block" };
+
+  const approvedSuppliers = suppliers.filter(s => s.tier !== "ad-hoc");
+  const adhocSuppliers = suppliers.filter(s => s.tier === "ad-hoc");
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"20px",overflowY:"auto"}}>
+      <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:520,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",margin:"20px 0"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+          <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"4px 10px",borderRadius:99,background:"rgba(217,119,6,0.12)"}}>
+            <span style={{fontSize:11,fontWeight:700,color:"#D97706",letterSpacing:"0.04em",textTransform:"uppercase"}}>Quick PO</span>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"var(--text-secondary)",lineHeight:1}}>&times;</button>
+        </div>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:4,color:"var(--text-primary)"}}>Raise an emergency purchase order</div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:18,lineHeight:1.55}}>For phone-agreed orders that skip the quote process. This creates a numbered PO straight away and logs it as a direct/phone order.</div>
+
+        {/* Supplier */}
+        <label style={labelStyle}>Supplier</label>
+        {!form.newSupplier ? (
+          <div style={{marginBottom:8}}>
+            <select value={form.supplierId||""} onChange={e=>{ if(e.target.value==="__new__"){ upd({newSupplier:true,supplierId:null}); } else { upd({supplierId:e.target.value}); } }} style={{...inputStyle,marginBottom:0}}>
+              <option value="">Select a supplier...</option>
+              {approvedSuppliers.length>0 && <optgroup label="Approved suppliers">{approvedSuppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>}
+              {adhocSuppliers.length>0 && <optgroup label="Ad-hoc suppliers">{adhocSuppliers.map(s=><option key={s.id} value={s.id}>{s.name} (ad-hoc)</option>)}</optgroup>}
+              <option value="__new__">+ Add a new supplier on the spot</option>
+            </select>
+          </div>
+        ) : (
+          <div style={{marginBottom:8,padding:"12px",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-subtle2)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#D97706"}}>New ad-hoc supplier</span>
+              <button onClick={()=>upd({newSupplier:false,newSupplierName:"",newSupplierEmail:""})} style={{background:"none",border:"none",color:"var(--text-secondary)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>pick existing instead</button>
+            </div>
+            <input value={form.newSupplierName||""} onChange={e=>upd({newSupplierName:e.target.value})} placeholder="Supplier name" style={{...inputStyle,marginBottom:8}}/>
+            <input value={form.newSupplierEmail||""} onChange={e=>upd({newSupplierEmail:e.target.value})} placeholder="Email (optional)" style={inputStyle}/>
+            <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:7,lineHeight:1.45}}>Saved as an <strong>ad-hoc</strong> supplier you can reuse. After 5 uses you'll be asked whether to add them to your approved list.</div>
+          </div>
+        )}
+
+        {/* Job ref + site */}
+        <div style={{display:"flex",gap:10,marginTop:12}}>
+          <div style={{flex:1}}>
+            <label style={labelStyle}>Job ref</label>
+            <input value={form.jobRef||""} onChange={e=>upd({jobRef:e.target.value})} placeholder="e.g. JOB-104" style={inputStyle}/>
+          </div>
+          <div style={{flex:1}}>
+            <label style={labelStyle}>Site (optional)</label>
+            <input value={form.site||""} onChange={e=>upd({site:e.target.value})} placeholder="Site / address" style={inputStyle}/>
+          </div>
+        </div>
+
+        {/* Items */}
+        <div style={{marginTop:16,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <label style={{...labelStyle,marginBottom:0}}>Items</label>
+          <button onClick={addItem} style={{background:"none",border:"none",color:"#15824F",fontSize:12,fontWeight:700,cursor:"pointer"}}>+ Add line</button>
+        </div>
+        {items.map((it,idx)=>(
+          <div key={idx} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+            <input value={it.description||""} onChange={e=>setItem(idx,{description:e.target.value})} placeholder="Item description" style={{...inputStyle,flex:3}}/>
+            <input value={it.quantity||""} onChange={e=>setItem(idx,{quantity:e.target.value})} placeholder="Qty" style={{...inputStyle,flex:1}}/>
+            <input value={it.unitPrice||""} onChange={e=>setItem(idx,{unitPrice:e.target.value})} placeholder="Price" style={{...inputStyle,flex:1}}/>
+            {items.length>1 && <button onClick={()=>removeItem(idx)} style={{background:"none",border:"none",color:"var(--text-secondary)",fontSize:18,cursor:"pointer",lineHeight:1}}>&times;</button>}
+          </div>
+        ))}
+        <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:2,marginBottom:10}}>Or just describe it below and enter a total - whichever is quicker.</div>
+
+        {/* Summary + total */}
+        <label style={labelStyle}>Description / notes (optional)</label>
+        <textarea value={form.summary||""} onChange={e=>upd({summary:e.target.value})} placeholder="e.g. Emergency replacement pump agreed on phone with branch manager" style={{...inputStyle,minHeight:54,resize:"vertical",marginBottom:12,fontFamily:"inherit"}}></textarea>
+
+        <label style={labelStyle}>Agreed total (the phone-quoted price)</label>
+        <input value={form.total||""} onChange={e=>upd({total:e.target.value})} placeholder="e.g. £420.00" style={{...inputStyle,marginBottom:18}}/>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={()=>onSubmit(form)} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Raise PO</button>
+          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Hire modals -------------------------------------------------------------
+function HireFormModal({ form, setForm, suppliers, onSubmit, onClose, canViewCosts }) {
+  const upd = (patch)=>setForm(f=>({...f,...patch}));
+  const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
+  const labelStyle = { fontSize:11, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:5, display:"block" };
+  const approved = suppliers.filter(s=>s.tier!=="ad-hoc");
+  const adhoc = suppliers.filter(s=>s.tier==="ad-hoc");
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"20px",overflowY:"auto"}}>
+      <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:520,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",margin:"20px 0"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+          <div style={{fontSize:17,fontWeight:700,color:"var(--text-primary)"}}>Raise a hire</div>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"var(--text-secondary)",lineHeight:1}}>&times;</button>
+        </div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:18,lineHeight:1.55}}>Add plant or tool hire to the register. It will appear on the hire log so you can track delivery, returns and collection.</div>
+
+        <label style={labelStyle}>Equipment</label>
+        <input value={form.description||""} onChange={e=>upd({description:e.target.value})} placeholder="e.g. 3-tonne excavator, or 2x 110v breakers" style={{...inputStyle,marginBottom:12}}/>
+
+        <label style={labelStyle}>Supplier</label>
+        {!form.newSupplier ? (
+          <select value={form.supplierId||""} onChange={e=>{ if(e.target.value==="__new__"){upd({newSupplier:true,supplierId:null});} else {upd({supplierId:e.target.value});} }} style={{...inputStyle,marginBottom:12}}>
+            <option value="">Select a supplier...</option>
+            {approved.length>0&&<optgroup label="Approved suppliers">{approved.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>}
+            {adhoc.length>0&&<optgroup label="Ad-hoc suppliers">{adhoc.map(s=><option key={s.id} value={s.id}>{s.name} (ad-hoc)</option>)}</optgroup>}
+            <option value="__new__">+ Add a new supplier on the spot</option>
+          </select>
+        ) : (
+          <div style={{marginBottom:12,padding:"12px",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-subtle2)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#D97706"}}>New ad-hoc supplier</span>
+              <button onClick={()=>upd({newSupplier:false,newSupplierName:"",newSupplierEmail:""})} style={{background:"none",border:"none",color:"var(--text-secondary)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>pick existing instead</button>
+            </div>
+            <input value={form.newSupplierName||""} onChange={e=>upd({newSupplierName:e.target.value})} placeholder="Supplier name" style={{...inputStyle,marginBottom:8}}/>
+            <input value={form.newSupplierEmail||""} onChange={e=>upd({newSupplierEmail:e.target.value})} placeholder="Email (for off-hire requests)" style={inputStyle}/>
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:10}}>
+          <div style={{flex:1}}><label style={labelStyle}>Job ref</label><input value={form.jobRef||""} onChange={e=>upd({jobRef:e.target.value})} placeholder="e.g. JOB-104" style={inputStyle}/></div>
+          <div style={{flex:1}}><label style={labelStyle}>Site</label><input value={form.site||""} onChange={e=>upd({site:e.target.value})} placeholder="Site / address" style={inputStyle}/></div>
+        </div>
+
+        {canViewCosts&&(<div style={{marginTop:12}}><label style={labelStyle}>Weekly hire rate (optional)</label><input value={form.weeklyRate||""} onChange={e=>upd({weeklyRate:e.target.value})} placeholder="e.g. £80" style={inputStyle}/></div>)}
+
+        <div style={{display:"flex",gap:10,marginTop:12}}>
+          <div style={{flex:1}}><label style={labelStyle}>Expected delivery</label><input type="date" value={form.deliveryDate||""} onChange={e=>upd({deliveryDate:e.target.value})} style={inputStyle}/></div>
+          <div style={{flex:1}}><label style={labelStyle}>Return / collection date</label><input type="date" disabled={form.returnOpen} value={form.returnDate||""} onChange={e=>upd({returnDate:e.target.value})} style={{...inputStyle,opacity:form.returnOpen?0.5:1}}/></div>
+        </div>
+        <label style={{display:"flex",alignItems:"center",gap:8,marginTop:10,marginBottom:18,fontSize:12.5,color:"var(--text-secondary)",cursor:"pointer"}}>
+          <input type="checkbox" checked={!!form.returnOpen} onChange={e=>upd({returnOpen:e.target.checked})}/>
+          Return date unknown - log as an open hire (you'll be reminded to review it)
+        </label>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={()=>onSubmit(form)} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Raise hire</button>
+          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeliverModal({ data, onSubmit, onClose }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const pick = (f) => { setFile(f); if(f) setPreview(URL.createObjectURL(f)); };
+  const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:6,color:"var(--text-primary)"}}>Mark as delivered</div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:16,lineHeight:1.55}}>Take or attach a photo of how the equipment was delivered. This protects you if anything is missing or damaged.</div>
+        <label style={{display:"block",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",padding:preview?8:"22px 12px",textAlign:"center",cursor:"pointer",marginBottom:12,background:"var(--bg-subtle2)"}}>
+          {preview ? <img src={preview} alt="preview" style={{maxWidth:"100%",maxHeight:200,borderRadius:6}}/> : <span style={{fontSize:13,color:"var(--text-secondary)"}}>Tap to take / choose a photo</span>}
+          <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>pick(e.target.files?.[0]||null)}/>
+        </label>
+        <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Any issues on arrival? (optional)" style={{...inputStyle,minHeight:50,resize:"vertical",marginBottom:16,fontFamily:"inherit"}}></textarea>
+        <div style={{display:"flex",gap:10}}>
+          <button disabled={busy} onClick={async()=>{ setBusy(true); await onSubmit(file,note); }} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"wait":"pointer",opacity:busy?0.7:1}}>{busy?"Saving...":"Confirm delivered"}</button>
+          <button disabled={busy} onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OffHireModal({ data, hire, onSubmit, onClose }) {
+  const [date, setDate] = useState("");
+  const [addr, setAddr] = useState(hire?.site||"");
+  const [busy, setBusy] = useState(false);
+  const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
+  const labelStyle = { fontSize:11, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:5, display:"block" };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:6,color:"var(--text-primary)"}}>Off-hire &amp; request collection</div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:16,lineHeight:1.55}}>This emails {hire?.supplier||"the supplier"} to collect the equipment. Give them a date and the collection address.</div>
+        <label style={labelStyle}>Collection date required</label>
+        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inputStyle,marginBottom:12}}/>
+        <label style={labelStyle}>Collection address</label>
+        <textarea value={addr} onChange={e=>setAddr(e.target.value)} placeholder="Where should they collect from?" style={{...inputStyle,minHeight:50,resize:"vertical",marginBottom:16,fontFamily:"inherit"}}></textarea>
+        <div style={{display:"flex",gap:10}}>
+          <button disabled={busy} onClick={async()=>{ setBusy(true); await onSubmit(date,addr); }} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"var(--amber)",color:"#fff",fontSize:14,fontWeight:700,cursor:busy?"wait":"pointer",opacity:busy?0.7:1}}>{busy?"Sending...":"Request collection"}</button>
+          <button disabled={busy} onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExtendModal({ current, onSubmit, onClose }) {
+  const [date, setDate] = useState(current||"");
+  const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:380,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:6,color:"var(--text-primary)"}}>Extend hire</div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:16,lineHeight:1.55}}>Set the new expected return / collection date for this equipment.</div>
+        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inputStyle,marginBottom:16}}/>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={()=>onSubmit(date)} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Save</button>
+          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CloseHireModal({ onSubmit, onClose }) {
+  const [ref, setRef] = useState("");
+  const inputStyle = { width:"100%", boxSizing:"border-box", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:"var(--radius-sm)", fontSize:13, outline:"none", background:"var(--bg-card-solid)", color:"var(--text-primary)" };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:400,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)"}}>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:6,color:"var(--text-primary)"}}>Close hire</div>
+        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:16,lineHeight:1.55}}>Once collected, enter the supplier's collection / off-hire reference number to close this hire and stop the clock.</div>
+        <input value={ref} onChange={e=>setRef(e.target.value)} placeholder="Collection / off-hire reference" style={{...inputStyle,marginBottom:16}}/>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={()=>onSubmit(ref)} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Close hire</button>
+          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Auth gate + login screen ------------------------------------------------
 function LoginScreen({ onLoggedIn }) {
   const [email, setEmail] = useState("");
@@ -5127,10 +5833,57 @@ class ErrorBoundary extends Component {
   }
 }
 
+// --- Temporary private-access gate (free pre-launch privacy) ---
+// A simple shared site password shown before the login screen, so the public
+// cannot see the app while it is in private testing. Set SITE_GATE_PASSWORD
+// to "" at launch to disable the gate entirely.
+const SITE_GATE_PASSWORD = "proqure2026";
+function SiteGate({ onUnlock }) {
+  const [val, setVal] = useState("");
+  const [err, setErr] = useState(false);
+  const submit = () => {
+    if (val === SITE_GATE_PASSWORD) {
+      try { sessionStorage.setItem("pq_gate_ok", "1"); } catch {}
+      onUnlock();
+    } else { setErr(true); }
+  };
+  const wrap = {position:"fixed",inset:0,minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)",fontFamily:"'Plus Jakarta Sans',sans-serif",padding:20};
+  const card = {background:"#fff",borderRadius:18,padding:"34px 30px",width:"100%",maxWidth:380,boxShadow:"0 24px 60px rgba(0,0,0,0.4)"};
+  return (
+    <div style={wrap}>
+      <div style={card}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+          <div style={{width:40,height:40,background:"linear-gradient(135deg,#1E9E63,#15824F)",borderRadius:11,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/></svg>
+          </div>
+          <span style={{fontSize:22,fontWeight:800,color:"#101013",letterSpacing:"-0.02em"}}>Pro<span style={{color:"#15824F"}}>Qure</span></span>
+        </div>
+        <div style={{fontSize:18,fontWeight:800,color:"#101013",marginBottom:4}}>Private preview</div>
+        <div style={{fontSize:13,color:"#5C5B54",marginBottom:18,lineHeight:1.5}}>ProQure is currently in private testing. Enter the access password to continue.</div>
+        <input
+          type="password"
+          value={val}
+          onChange={e=>{setVal(e.target.value);setErr(false);}}
+          onKeyDown={e=>{if(e.key==="Enter")submit();}}
+          placeholder="Access password"
+          autoFocus
+          style={{width:"100%",boxSizing:"border-box",padding:"12px 14px",border:err?"1px solid #C0392B":"1px solid #E2E0D9",borderRadius:10,fontSize:14,marginBottom:err?6:14,outline:"none"}}
+        />
+        {err && <div style={{fontSize:12,color:"#C0392B",marginBottom:12}}>Incorrect password. Please try again.</div>}
+        <button onClick={submit} style={{width:"100%",padding:"12px",background:"#15824F",color:"#fff",border:"none",borderRadius:10,fontSize:15,fontWeight:700,cursor:"pointer"}}>Enter</button>
+      </div>
+    </div>
+  );
+}
+
 function AppInner() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
+  const [gateOk, setGateOk] = useState(() => {
+    if (!SITE_GATE_PASSWORD) return true;
+    try { return sessionStorage.getItem("pq_gate_ok") === "1"; } catch { return false; }
+  });
 
   // On mount, check for an existing session and subscribe to changes
   useEffect(() => {
@@ -5159,6 +5912,9 @@ function AppInner() {
   }, [session]);
 
   const loadStyle = {position:"fixed",inset:0,minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)",color:"rgba(255,255,255,0.85)",fontFamily:"'Plus Jakarta Sans',sans-serif",fontSize:14};
+  if (!gateOk) {
+    return <SiteGate onUnlock={() => setGateOk(true)} />;
+  }
   if (checking) {
     return <div style={loadStyle}>Loading...</div>;
   }
