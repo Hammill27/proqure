@@ -5210,8 +5210,8 @@ Rules:
                   </div>
                   <div>
                     <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Email signature (optional)</label>
-                    <textarea value={sForm.emailSignature||""} onChange={e=>setSForm(p=>({...p,emailSignature:e.target.value}))} placeholder={"Paste your email signature here. Plain text or HTML both work, e.g.\nAndy Robinson\nInitial Mechanical\n0115 123 4567"} rows={5} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",fontFamily:"inherit",resize:"vertical",lineHeight:1.5}}/>
-                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Appears at the bottom of quote requests and orders. If left blank, your name, company and contact details are used.</div>
+                    <SignatureEditor value={sForm.emailSignature||""} onChange={(html)=>setSForm(p=>({...p,emailSignature:html}))}/>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>Appears at the bottom of quote requests and orders. Copy your signature from Outlook or Gmail and paste it straight in - the formatting is kept. If left blank, your name, company and contact details are used.</div>
                   </div>
                 </div>
               </Card>
@@ -5998,6 +5998,96 @@ function CloseHireModal({ onSubmit, onClose }) {
 }
 
 // --- Auth gate + login screen ------------------------------------------------
+// Rich signature editor: paste a formatted signature (e.g. from Outlook) and it
+// keeps the formatting. Stores cleaned HTML. Handles images and warns on the one
+// case that can't carry across (Outlook's embedded cid: images).
+function SignatureEditor({ value, onChange }) {
+  const ref = useRef(null);
+  const [warn, setWarn] = useState("");
+  const [empty, setEmpty] = useState(!((value||"").trim()));
+
+  // Seed the editable area once (and when cleared externally).
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== (value||"")) {
+      ref.current.innerHTML = value || "";
+      setEmpty(!((value||"").trim()));
+    }
+  }, [value]);
+
+  // Strip anything unsafe/unwanted but KEEP formatting, colours, links and images.
+  const clean = (html) => {
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    div.querySelectorAll("script,style,meta,link,title,head,o\\:p").forEach(n=>n.remove());
+    let brokenImg = false;
+    div.querySelectorAll("img").forEach(img => {
+      const src = img.getAttribute("src") || "";
+      // cid: images are Outlook-embedded - they only exist inside that email.
+      if (src.startsWith("cid:") || src.startsWith("file:")) { img.remove(); brokenImg = true; }
+    });
+    div.querySelectorAll("*").forEach(el => {
+      // Remove event handlers and class/id noise; keep inline style.
+      [...el.attributes].forEach(a => {
+        if (/^on/i.test(a.name) || a.name === "class" || a.name === "id") el.removeAttribute(a.name);
+      });
+    });
+    return { html: div.innerHTML, brokenImg };
+  };
+
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData("text/html");
+    const text = e.clipboardData.getData("text/plain");
+    if (html) {
+      const { html: cleaned, brokenImg } = clean(html);
+      document.execCommand("insertHTML", false, cleaned);
+      setWarn(brokenImg ? "Your signature's logo couldn't be carried across (Outlook embeds it inside the email). Use the Company logo upload above, or a signature whose logo is a web link." : "");
+    } else {
+      document.execCommand("insertText", false, text);
+    }
+    sync();
+  };
+
+  const sync = () => {
+    if (!ref.current) return;
+    const html = ref.current.innerHTML;
+    setEmpty(!ref.current.textContent.trim() && !ref.current.querySelector("img"));
+    // Guard against a huge embedded (base64) logo bloating saved settings.
+    if (html.length > 200000) {
+      setWarn("That signature is very large (likely a big embedded logo). It may slow syncing - consider using the Company logo upload above and a text-only signature here.");
+    }
+    onChange(html);
+  };
+
+  return (
+    <div>
+      <div style={{position:"relative"}}>
+        <div
+          ref={ref}
+          contentEditable
+          suppressContentEditableWarning
+          onPaste={handlePaste}
+          onInput={sync}
+          onBlur={sync}
+          style={{minHeight:90,width:"100%",boxSizing:"border-box",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",lineHeight:1.5,overflowX:"auto"}}
+        />
+        {empty&&(
+          <div style={{position:"absolute",top:10,left:13,fontSize:13,color:"var(--text-muted)",pointerEvents:"none"}}>
+            Paste your signature here (copy it straight from Outlook or Gmail)
+          </div>
+        )}
+      </div>
+      {warn && <div style={{fontSize:11,color:"var(--amber)",marginTop:6,lineHeight:1.5}}>{warn}</div>}
+      {!empty && (
+        <button onClick={()=>{ if(ref.current) ref.current.innerHTML=""; onChange(""); setEmpty(true); setWarn(""); }}
+          style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",marginTop:6}}>
+          Clear signature
+        </button>
+      )}
+    </div>
+  );
+}
+
 function LoginScreen({ onLoggedIn }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
