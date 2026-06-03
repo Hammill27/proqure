@@ -1296,10 +1296,18 @@ function ProQureApp({ session }) {
   const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
   const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
   // If the user is on a view their role can't access, send them to the dashboard.
+  // Guard against transient demotion: during a background cloud sync the team list
+  // can momentarily be empty/re-loading, which would briefly resolve myRole to the
+  // default and wrongly kick a manager off Settings. Only redirect once we're
+  // confident the team data is actually loaded.
   useEffect(() => {
     const need = ({ library:2, team:3, settings:3 })[view];
-    if (need && roleRank(myRole) < need) setView("dashboard");
-  }, [view, myRole]);
+    if (!need) return;
+    const teamLoaded = Array.isArray(team) && team.length > 0;
+    const meKnown = !!myMember;
+    // Only enforce if we actually know who the user is; otherwise wait.
+    if (teamLoaded && meKnown && roleRank(myRole) < need) setView("dashboard");
+  }, [view, myRole, team, myMember]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("engineer");
   function handleInviteMember() {
@@ -6075,7 +6083,7 @@ function SignatureEditor({ value, onChange }) {
           onPaste={handlePaste}
           onInput={sync}
           onBlur={sync}
-          style={{minHeight:90,maxHeight:340,overflowY:"auto",overflowX:"hidden",width:"100%",boxSizing:"border-box",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",lineHeight:1.5,wordBreak:"break-word"}}
+          style={{minHeight:90,height:"auto",overflowX:"hidden",width:"100%",boxSizing:"border-box",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",lineHeight:1.5,wordBreak:"break-word"}}
         />
         {empty&&(
           <div style={{position:"absolute",top:10,left:13,fontSize:13,color:"var(--text-muted)",pointerEvents:"none"}}>
