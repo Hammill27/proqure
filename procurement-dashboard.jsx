@@ -1369,7 +1369,8 @@ function ProQureApp({ session }) {
   // Keyboard shortcuts
   useEffect(()=>{
     const handler = e=>{
-      if (e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT") return;
+      const t = e.target;
+      if (t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.tagName==="SELECT"||t.isContentEditable) return;
       if (e.key==="?"||e.key==="/") { setShowShortcuts(p=>!p); return; }
       if (e.key==="n"||e.key==="N") { setView("new"); resetNewRequest(); }
       else if (e.key==="q"||e.key==="Q") setView("quotes");
@@ -6006,9 +6007,9 @@ function SignatureEditor({ value, onChange }) {
   const [warn, setWarn] = useState("");
   const [empty, setEmpty] = useState(!((value||"").trim()));
 
-  // Seed the editable area once (and when cleared externally).
+  // Seed the editable area when it's not being actively edited (avoids cursor jumps).
   useEffect(() => {
-    if (ref.current && ref.current.innerHTML !== (value||"")) {
+    if (ref.current && document.activeElement !== ref.current && ref.current.innerHTML !== (value||"")) {
       ref.current.innerHTML = value || "";
       setEmpty(!((value||"").trim()));
     }
@@ -6023,7 +6024,12 @@ function SignatureEditor({ value, onChange }) {
     div.querySelectorAll("img").forEach(img => {
       const src = img.getAttribute("src") || "";
       // cid: images are Outlook-embedded - they only exist inside that email.
-      if (src.startsWith("cid:") || src.startsWith("file:")) { img.remove(); brokenImg = true; }
+      if (src.startsWith("cid:") || src.startsWith("file:")) { img.remove(); brokenImg = true; return; }
+      // Stop oversized logos overflowing the box / email - cap display width, keep ratio.
+      img.removeAttribute("width");
+      img.removeAttribute("height");
+      const existing = img.getAttribute("style") || "";
+      img.setAttribute("style", `${existing};max-width:220px;height:auto`);
     });
     div.querySelectorAll("*").forEach(el => {
       // Remove event handlers and class/id noise; keep inline style.
@@ -6069,7 +6075,7 @@ function SignatureEditor({ value, onChange }) {
           onPaste={handlePaste}
           onInput={sync}
           onBlur={sync}
-          style={{minHeight:90,width:"100%",boxSizing:"border-box",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",lineHeight:1.5,overflowX:"auto"}}
+          style={{minHeight:90,maxHeight:340,overflowY:"auto",overflowX:"hidden",width:"100%",boxSizing:"border-box",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",lineHeight:1.5,wordBreak:"break-word"}}
         />
         {empty&&(
           <div style={{position:"absolute",top:10,left:13,fontSize:13,color:"var(--text-muted)",pointerEvents:"none"}}>
