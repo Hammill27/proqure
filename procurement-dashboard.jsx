@@ -1247,7 +1247,10 @@ function ProQureApp({ session }) {
   const saveSuppliers = (s) => { setSuppliers(s); try{localStorage.setItem("piq_suppliers",JSON.stringify(s))}catch{} };
 
   // Nav & toast
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState(() => {
+    try { return sessionStorage.getItem("piq_view") || "dashboard"; } catch { return "dashboard"; }
+  });
+  useEffect(() => { try { sessionStorage.setItem("piq_view", view); } catch {} }, [view]);
   const [toast, setToast] = useState(null);
   const showToast = (msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),4000); };
 
@@ -6093,8 +6096,14 @@ function SignatureEditor({ value, onChange }) {
       </div>
       {warn && <div style={{fontSize:11,color:"var(--amber)",marginTop:6,lineHeight:1.5}}>{warn}</div>}
       {!empty && (
+        <div style={{marginTop:10}}>
+          <div style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Preview - how it appears in emails</div>
+          <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"14px 16px",background:"#FFFFFF"}} dangerouslySetInnerHTML={{__html: (value||"").replace(/<img/g,'<img style="max-width:220px;height:auto"')}}/>
+        </div>
+      )}
+      {!empty && (
         <button onClick={()=>{ if(ref.current) ref.current.innerHTML=""; onChange(""); setEmpty(true); setWarn(""); }}
-          style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",marginTop:6}}>
+          style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",marginTop:8}}>
           Clear signature
         </button>
       )}
@@ -6296,7 +6305,16 @@ function AppInner() {
       setChecking(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s || null);
+      // Supabase fires this on tab refocus (token refresh) with the SAME user.
+      // Only update session state when the user actually changes, otherwise a
+      // harmless refresh would re-trigger cloudPull and remount the app, throwing
+      // the user back to the dashboard.
+      setSession(prev => {
+        const prevId = prev?.user?.id || null;
+        const nextId = s?.user?.id || null;
+        if (prevId === nextId) return prev; // no real change - keep the same object
+        return s || null;
+      });
     });
     return () => { active = false; sub?.subscription?.unsubscribe(); };
   }, []);
