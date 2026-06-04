@@ -1427,6 +1427,7 @@ function ProQureApp({ session }) {
   const [selSup,   setSelSup]   = useState([]);
   const [contactSel, setContactSel] = useState({}); // { [supplierId]: contactId } - which contact an RFQ goes to
   const [supSearch, setSupSearch] = useState("");    // searchable supplier picker (wizard)
+  const [editingReqId, setEditingReqId] = useState(null); // when set, the wizard is revising an existing request (re-send)
   const [loading,  setLoading]  = useState(false);
   const [loadMsg,  setLoadMsg]  = useState("");
   const [emailRes, setEmailRes] = useState(null);
@@ -1627,6 +1628,11 @@ function ProQureApp({ session }) {
   // (name, trade, or any contact name/email); otherwise show the trade-filtered list.
   const supMatch = (s,q)=> (s.name||"").toLowerCase().includes(q) || (s.categories||[]).some(c=>(c||"").toLowerCase().includes(q)) || (s.contacts||[]).some(c=>(c.name||"").toLowerCase().includes(q)||(c.email||"").toLowerCase().includes(q));
   const pickList = (()=>{ const q=supSearch.trim().toLowerCase(); return q ? suppliers.filter(s=>supMatch(s,q)) : filteredSup; })();
+  // Autocomplete suggestions (native datalists) drawn from past requests + supplier branches.
+  const pastJobRefs = [...new Set((requests||[]).map(r=>r.jobRef).filter(Boolean))].slice(0,80);
+  const pastSites = [...new Set((requests||[]).map(r=>r.site).filter(Boolean))].slice(0,80);
+  const collectOptions = [...new Set([].concat(...suppliers.map(s=>s.branches||[])).concat((requests||[]).map(r=>r.collectFrom).filter(Boolean)))].filter(Boolean).slice(0,80);
+  const pastAddresses = [...new Set((requests||[]).map(r=>r.altAddress).filter(Boolean))].slice(0,80);
 
   function logToRequest(reqId, action, detail="") {
     const entry = { ts: new Date().toISOString(), action, detail, user: settings.contactName||"You" };
@@ -2058,6 +2064,30 @@ function ProQureApp({ session }) {
       const sentSuppliers = toSend.map((s,i)=>({ id:s.id, name:s.name, email:s.email, contactName:s.contactName||"", quote:"", saved:false, replyToken: results[i]?.replyToken || null }));
       // Count each supplier the RFQ goes to as a "use" (for ad-hoc promotion tracking)
       toSend.forEach(s=>bumpSupplierUse(s.id));
+
+      // REVISE & RE-SEND: update the existing request in place (new revision) instead of
+      // creating a new one. Quotes for the re-sent suppliers are reset, since the RFQ changed.
+      if (editingReqId) {
+        const existing = requests.find(r=>r.id===editingReqId);
+        const rev = (existing?.revision||1)+1;
+        const reviseEntry = { ts:new Date().toISOString(), action:`RFQ revised (v${rev}) & re-sent`, detail:`Re-sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}`, user:settings.contactName||"You" };
+        setRequests(p=>p.map(r=>r.id===editingReqId ? {
+          ...r,
+          jobRef:jobRef||r.jobRef, site:site||r.site, trade, notes:requestNotes,
+          items: parsed.items,
+          deliveryMethod, deliveryDate, altAddress, collectFrom, rfqDeadline,
+          revision: rev,
+          status: "pending",
+          sentTo: sentSuppliers,
+          activity: [...(r.activity||[]), reviseEntry]
+        } : r));
+        showToast(`v Revised RFQ re-sent to ${ok} supplier${ok!==1?"s":""}`);
+        logActivity("RFQ revised & re-sent",`${jobRef||editingReqId} revised to v${rev}, re-sent to ${ok} supplier${ok!==1?"s":""}`,{entity:"request",reqId:editingReqId,jobRef});meter("rfqsSent");meter("emailsSent", ok);
+        setEmailRes(results);
+        setTimeout(()=>{ resetNewRequest(); setView("requests"); }, 1800);
+        return;
+      }
+
       const newId = `RFQ-${Date.now().toString().slice(-6)}`;
       const isEngineer = roleRank(myRole) < 2;
       const r = {
@@ -2095,7 +2125,41 @@ function ProQureApp({ session }) {
     }
   }
 
+  // Revise & re-send an existing (already-sent) request: load it back into the wizard,
+  // keeping the SAME request id. On send, handleSendEmails updates that request in place
+  // (bumps a revision, resets quotes for the re-sent suppliers) rather than creating a new one.
+  function handleRevise(r) {
+    if (!can.sendRFQ(myRole)) { showToast("Only a Buyer or Manager can re-send RFQs.","warn"); return; }
+    setEditingReqId(r.id);
+    setJobRef(r.jobRef||"");
+    setSite(r.site||"");
+    setTrade(r.trade||"Plumbing");
+    setRequestNotes(r.notes||"");
+    setDeliveryMethod(r.deliveryMethod||"direct");
+    setDeliveryDate(r.deliveryDate||"");
+    setAltAddress(r.altAddress||""); setCollectFrom(r.collectFrom||"");
+    setRfqDeadline(r.rfqDeadline||"");
+    const raw = (r.items||[]).map(i=>`${i.quantity} ${i.unit} of ${i.description}${i.notes?` (${i.notes})`:""}`).join(", ");
+    setRawInput(raw);
+    setParsed({ items: (r.items||[]).map(i=>({...i})), jobRef:r.jobRef||"", urgency:"standard" });
+    // Pre-select the suppliers it was sent to, and remember which contact each went to.
+    const ids = (r.sentTo||[]).map(s=>s.id).filter(Boolean);
+    setSelSup(ids);
+    const cs = {};
+    (r.sentTo||[]).forEach(st=>{
+      const sup = suppliers.find(x=>x.id===st.id);
+      if (sup) { const c = (sup.contacts||[]).find(c=>c.email===st.email) || (sup.contacts||[])[0]; if (c) cs[st.id]=c.id; }
+    });
+    setContactSel(cs);
+    setSupSearch("");
+    setRfqEmail(""); setEmailRes(null);
+    setStep(2);
+    setView("new");
+    showToast(`Revising ${r.jobRef||r.id} - edit, then re-send`);
+  }
+
   function handleDuplicate(r) {
+    setEditingReqId(null);
     setJobRef(r.jobRef+" (copy)");
     setSite(r.site||"");
     setTrade(r.trade||"Plumbing");
@@ -2121,6 +2185,7 @@ function ProQureApp({ session }) {
   }
 
   function handleLoadTemplate(t) {
+    setEditingReqId(null);
     setTrade(t.trade||"Plumbing");
     setParsed({ items:(t.items||[]).map(i=>({...i})), jobRef:"", urgency:"standard" });
     setRawInput(t.items.map(i=>`${i.quantity} ${i.unit} of ${i.description}`).join(", "));
@@ -2132,7 +2197,7 @@ function ProQureApp({ session }) {
   }
 
   function resetNewRequest() {
-    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
+    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
     setRfqEmail(""); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
     setInterim(""); setScanning(false);
@@ -2375,6 +2440,8 @@ SUPPLIERS: manage supplier accounts; each shows RFQ count, response rate, averag
 SAVED QUOTES: the Quotes page keeps every analysis you run as a saved collapsible card (like the Orders page). After you approve a quote and the order is created, that analysis moves into the saved list automatically; you can re-open any past analysis in full at any time, and it survives a page refresh. When pasting a supplier quote into a box, it turns green and shows 'Quote entered'.
 ACTIVITY LOG: the dashboard shows a Recent activity feed logging every action across the app - RFQs sent, quotes analysed, POs approved, orders sent/confirmed/delivered, confirmations uploaded, suppliers added, library changes. Each request also keeps its own activity history (open it from All Requests). DASHBOARD CHARTS: a Spend by trade bar chart appears automatically once you have orders. SUPPLIER QUICK-ADD: on the request wizard supplier step you can add a new supplier inline with '+ Add a supplier' without leaving the page. SUPPLIERS PAGE: each supplier can hold multiple named contacts (each with their own email address) and named branches/depots. Tap Edit on a supplier card to add or change its contacts and branches. When you send an RFQ you choose which contact it goes to, and the supplier picker has a search box for long lists. LIBRARY: you can remove a quote from the library with the bin icon on its row.
 OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D dashboard, S settings, H help, ? shows the shortcut list); company branding (logo upload, default PO terms, quote validity days) in Settings - the logo appears on HTML emails; quote expiry warnings on the dashboard; CSV export on library/orders/requests; All Requests has search and status/trade filters; click the ProQure logo to return to the dashboard.
+RFQ REVISIONS: a sent request can be revised and re-sent. On All Requests, tap 'Revise' on a sent request (Buyers/Managers) - it reopens in the wizard with everything pre-filled and the original suppliers/contacts selected. Edit anything, then re-send: it updates the SAME request (bumps the version, e.g. v2), re-sends to the chosen suppliers and resets their quote boxes for the new revision, rather than creating a duplicate.
+AUTOCOMPLETE: the Job reference and Site fields suggest values from your past requests as you type; the alternative-address field suggests past addresses; and the Collect-from field suggests your suppliers' branches plus places you've collected from before.
 
 SETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
 
@@ -2697,7 +2764,7 @@ ${settings.company||""}`;
   const helpFaqs = [
     {cat:"Getting started", qs:[
       {q:"What is ProQure?", a:"ProQure is an AI-powered procurement platform for trades contractors. It automates the full workflow from creating a material request on site through to sending a PO to your supplier."},
-      {q:"What trades are supported?", a:"Plumbing, HVAC, Electrical, Mechanical, Ventilation, and Gas - with General as a catch-all."},
+      {q:"What trades are supported?", a:"All the main building trades - Plumbing, Heating & Gas, Electrical, HVAC, Ventilation, Mechanical, Joinery & Carpentry, Bricklaying, Groundworks, Roofing, Plastering & Drylining, Decorating, Flooring & Tiling, Drainage, Steel & Fabrication and Landscaping, with General as a catch-all. The trade is auto-detected from the materials you enter and still powers the spend-by-trade breakdown."},
       {q:"Does it work on mobile?", a:"Yes. ProQure is a web app that works on any device. On mobile you get a dedicated layout with a bottom tab bar and voice input."},
       {q:"I am brand new - where do I start?", a:"When you first open ProQure with no data, the dashboard shows a Welcome card with three quick steps: create a request, send it to suppliers, then analyse and approve the quotes. Tap 'Create your first request' to begin. The card disappears once you have any activity."},
       {q:"Which browsers and phones are supported?", a:"All modern browsers - Chrome, Safari, Firefox and Edge - on both desktop and mobile, including iPhone and Android. The layout adapts automatically to your screen, and on phones you can use the camera to scan documents on site."},
@@ -2760,7 +2827,9 @@ ${settings.company||""}`;
       {q:"Why are emails not sending?", a:"Email is managed for you, so there are no keys to set up. For ProQure to send from your company address, your domain needs a few one-off DNS records added (your IT or whoever manages your website handles this). If emails are not arriving, check that step has been completed, then use Send feedback if it persists."},
       {q:"My data disappeared after refreshing.", a:"Your data lives in the cloud against your account, so refreshing will not lose it. If something looks missing, make sure you are signed in with the correct email - data is tied to your login. If it still seems wrong, use Send feedback and we will look into it."},
       {q:"Can I export my data?", a:"Yes. The Library, Orders and All Requests pages each have a CSV export button, so you can back up or share your data anytime."},
-      {q:"What features are coming next?", a:"Recently added: Quick PO for emergency phone orders, full plant/tool hire tracking with delivery and collection photos, and automatic capture of supplier email replies straight into the quote box. On the roadmap next: company-wide spend reporting, smart matching of stray supplier emails to the right job, AI that reads hire delivery photos to note condition automatically, hire-vs-buy suggestions based on your hire history, and accounting integrations like Xero and Sage."},
+      {q:"Can I revise and re-send an RFQ?", a:"Yes. On All Requests, tap 'Revise' on a sent request (Buyers and Managers). It reopens in the wizard with everything pre-filled and the original suppliers and contacts already selected. Change whatever you need, then re-send - it updates the same request, bumps the version (v2, v3...), re-sends to your chosen suppliers and clears their quote boxes for the new revision, so you're not left with a duplicate request."},
+      {q:"Does it remember my jobs and addresses?", a:"Yes. As you type, the Job reference and Site fields suggest values from your past requests, the alternative-address field suggests addresses you've used before, and the Collect-from field suggests your suppliers' branches plus places you've collected from - so recurring jobs and depots are a quick tap rather than retyping."},
+      {q:"What features are coming next?", a:"Recently added: trade auto-detect, multiple named contacts and branches per supplier, automatic capture of supplier email replies into the quote box, revise-and-re-send for RFQs, collect-from branch details, and job/site/branch autocomplete. On the roadmap next: company-wide spend reporting, smart matching of stray supplier emails to the right job, AI that reads hire delivery photos to note condition automatically, hire-vs-buy suggestions based on your hire history, and accounting integrations like Xero and Sage."},
     ]},
   ];
 
@@ -3529,11 +3598,13 @@ Rules:
                 <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:12,marginBottom:20}}>
                   <div>
                     <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Job reference</label>
-                    <input value={jobRef} onChange={e=>setJobRef(e.target.value)} placeholder="e.g. JOB-2025-012" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <input value={jobRef} onChange={e=>setJobRef(e.target.value)} list="dl-jobrefs" placeholder="e.g. JOB-2025-012" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <datalist id="dl-jobrefs">{pastJobRefs.map(v=><option key={v} value={v}/>)}</datalist>
                   </div>
                   <div>
                     <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Site / Location</label>
-                    <input value={site} onChange={e=>setSite(e.target.value)} placeholder="e.g. Unit 4, High Street" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <input value={site} onChange={e=>setSite(e.target.value)} list="dl-sites" placeholder="e.g. Unit 4, High Street" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <datalist id="dl-sites">{pastSites.map(v=><option key={v} value={v}/>)}</datalist>
                   </div>
                   <div>
                     <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trade <span style={{textTransform:"none",fontWeight:400,color:"var(--text-tertiary)"}}>· auto-detected, change if needed</span></label>
@@ -3708,12 +3779,14 @@ Rules:
                       </label>
                     ))}
                   </div>
-                  {deliveryMethod==="alternative"&&(
-                    <input value={altAddress} onChange={e=>setAltAddress(e.target.value)} placeholder="Enter alternative delivery address" style={{width:"100%",marginTop:10,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                  )}
-                  {deliveryMethod==="collect"&&(
-                    <input value={collectFrom} onChange={e=>setCollectFrom(e.target.value)} placeholder="Collect from (e.g. Plumb Centre, Geldard Road)" style={{width:"100%",marginTop:10,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                  )}
+                  {deliveryMethod==="alternative"&&(<>
+                    <input value={altAddress} onChange={e=>setAltAddress(e.target.value)} list="dl-addresses" placeholder="Enter alternative delivery address" style={{width:"100%",marginTop:10,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <datalist id="dl-addresses">{pastAddresses.map(v=><option key={v} value={v}/>)}</datalist>
+                  </>)}
+                  {deliveryMethod==="collect"&&(<>
+                    <input value={collectFrom} onChange={e=>setCollectFrom(e.target.value)} list="dl-collect" placeholder="Collect from (e.g. Plumb Centre, Geldard Road)" style={{width:"100%",marginTop:10,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    <datalist id="dl-collect">{collectOptions.map(v=><option key={v} value={v}/>)}</datalist>
+                  </>)}
                   <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap"}}>
                     <div>
                       <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:4}}>Required by date</label>
@@ -3801,6 +3874,7 @@ Rules:
               <div>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Review RFQ email</div>
+                  {editingReqId&&<div style={{fontSize:12,fontWeight:600,color:"var(--amber)",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",padding:"8px 12px",marginBottom:10}}>Revising {jobRef||editingReqId} - sending this will re-send to the selected suppliers and reset their quotes for this revision.</div>}
                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:14}}>This is exactly how the email will look to your {selSup.length} supplier{selSup.length!==1?"s":""}. Edit the wording below if you'd like.</div>
                   <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-md)",overflow:"hidden",marginBottom:14,background:"#F4F4F1"}}>
                     <iframe
@@ -3843,7 +3917,7 @@ Rules:
                       <div style={{display:"flex",gap:10}}>
                         {(EMAIL_VIA_SERVER||settings.resendKey)?(
                           <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#15824F">
-                            {loading?loadMsg:`Send to ${selSup.length} supplier${selSup.length!==1?"s":""}`}
+                            {loading?loadMsg:`${editingReqId?"Re-send to":"Send to"} ${selSup.length} supplier${selSup.length!==1?"s":""}`}
                           </Btn>
                         ):(
                           <div style={{fontSize:13,color:"var(--text-tertiary)"}}>
@@ -4900,6 +4974,9 @@ Rules:
                             setView("quotes");
                           }} style={{fontSize:11,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View</button>
                           <button onClick={()=>handleDuplicate(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
+                          {can.sendRFQ(myRole)&&(r.sentTo||[]).length>0&&!r.archived&&(
+                            <button onClick={()=>handleRevise(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Revise{r.revision?` (v${r.revision})`:""}</button>
+                          )}
                           <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
                           <button onClick={()=>setActivityModal(r)} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
                           {can.deleteItems(myRole) && (r.archived
