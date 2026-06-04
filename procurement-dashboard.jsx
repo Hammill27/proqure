@@ -894,6 +894,13 @@ function buildEmailHtml(bodyText, settings, optsOrToken={}) {
 // never the sending address. Per-instance subdomains slot in later without
 // changing this shape - only SENDING_DOMAIN becomes the instance subdomain.
 const SENDING_DOMAIN = "proqure.co.uk"; // later: `${instanceSlug}.proqure.co.uk`
+// Inbound reply capture (Resend Inbound). Empty = disabled: replies go to the user's
+// own inbox exactly as before. Set the Vercel env var VITE_INBOUND_CAPTURE_DOMAIN to
+// turn it on - to the Resend test domain (e.g. "xxxx.resend.app") for testing, or a
+// verified subdomain (e.g. "reply.proqure.co.uk") live. It's a catch-all domain, so
+// each supplier's reply is addressed to a unique q-<token>@<domain> address that
+// api/inbound.js matches back to the right supplier + request.
+const INBOUND_CAPTURE_DOMAIN = (import.meta.env.VITE_INBOUND_CAPTURE_DOMAIN || "").trim();
 function buildSender(kind, settings={}) {
   // kind: "quotes" (RFQs) or "orders" (POs)
   const localPart = kind === "orders" ? "orders" : "quotes";
@@ -923,11 +930,31 @@ function jobReplyToken(jobRef, reqId) {
   return "PQ" + Math.abs(h).toString(36).slice(0,6).toUpperCase();
 }
 
+// Per-supplier reply token for inbound capture. Unique, lowercase, email-safe. Stored
+// on each sentTo entry so api/inbound.js can match an incoming reply back to the exact
+// supplier + request that was sent that address.
+function makeReplyToken() {
+  return (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)).toLowerCase();
+}
+// Build the capture reply address for a token, e.g. q-ab12cd@reply.proqure.co.uk.
+// Returns null when capture is disabled (INBOUND_CAPTURE_DOMAIN unset), so callers
+// fall back to the user's own inbox exactly as before.
+function captureReplyAddress(token) {
+  return INBOUND_CAPTURE_DOMAIN ? `q-${token}@${INBOUND_CAPTURE_DOMAIN}` : null;
+}
+
 async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settings={}, jobCtx={}) {
   const results = [];
   const sender = buildSender("quotes", settings);
-  const token = jobReplyToken(jobCtx.jobRef, jobCtx.reqId); // hidden reply-matching groundwork
+  const token = jobReplyToken(jobCtx.jobRef, jobCtx.reqId); // hidden reply-matching groundwork (legacy/backup)
   for (const s of suppliers) {
+    // Per-supplier reply token: when inbound capture is enabled the supplier's reply
+    // is addressed to a unique catch-all address we can match back to this exact
+    // supplier + request in api/inbound.js. Falls back to the user's own inbox when
+    // capture is disabled (INBOUND_CAPTURE_DOMAIN unset), preserving prior behaviour.
+    const replyToken = makeReplyToken();
+    const captureAddr = captureReplyAddress(replyToken);
+    const replyTo = captureAddr || sender.replyTo || undefined;
     try {
       const res = await fetch("/api/send-email", {
         method:"POST",
@@ -935,7 +962,7 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
         body: JSON.stringify({
           from: sender.from,
           to:   [s.email],
-          reply_to: sender.replyTo || undefined,
+          reply_to: replyTo,
           subject,
           text: body,
           html: buildEmailHtml(body, settings, { supplierName: s.name, jobToken: token })
@@ -943,12 +970,12 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
       });
       const d = await res.json();
       if (res.ok && d.success) {
-        results.push({ supplier:s.name, success:true, id:d.id });
+        results.push({ supplier:s.name, success:true, id:d.id, replyToken });
       } else {
-        results.push({ supplier:s.name, success:false, error:d.error||JSON.stringify(d), statusCode:res.status });
+        results.push({ supplier:s.name, success:false, error:d.error||JSON.stringify(d), statusCode:res.status, replyToken });
       }
     } catch(e) {
-      results.push({ supplier:s.name, success:false, error:"Network error: "+e.message });
+      results.push({ supplier:s.name, success:false, error:"Network error: "+e.message, replyToken });
     }
   }
   return results;
@@ -1958,7 +1985,7 @@ function ProQureApp({ session }) {
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
     if (ok > 0) {
-      const sentSuppliers = toSend.map(s=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false }));
+      const sentSuppliers = toSend.map((s,i)=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false, replyToken: results[i]?.replyToken || null }));
       // Count each supplier the RFQ goes to as a "use" (for ad-hoc promotion tracking)
       toSend.forEach(s=>bumpSupplierUse(s.id));
       const newId = `RFQ-${Date.now().toString().slice(-6)}`;
