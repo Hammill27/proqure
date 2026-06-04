@@ -2001,7 +2001,14 @@ function ProQureApp({ session }) {
     setLoading(true); setLoadMsg("Sending to suppliers...");
     const toSend = suppliers.filter(s=>selSup.includes(s.id));
     const subject = `Request for Quotation - ${jobRef||parsed?.jobRef||"TBC"}`;
-    const results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev", settings, { jobRef: jobRef||parsed?.jobRef||"", reqId: activeReq?.id||"" });
+    let results;
+    try {
+      results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev", settings, { jobRef: jobRef||parsed?.jobRef||"", reqId: activeReq?.id||"" });
+    } catch(e) {
+      setLoading(false);
+      showToast("Couldn't send to suppliers: "+(e?.message||"unknown error"),"warn");
+      return;
+    }
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
     if (ok > 0) {
@@ -5347,10 +5354,10 @@ Rules:
           {[
             {id:"dashboard",label:"Home",    d:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"},
             {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
-            {id:"quotes",   label:"Quotes",  d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
+            {id:"quotes",   label:"Quotes",  min:2, d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
             {id:"orders",   label:"Orders",  d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
             {id:"settings", label:"More",    d:"M4 6h16M4 12h16M4 18h16"},
-          ].map(tab=>(
+          ].filter(tab=>!tab.min||roleRank(myRole)>=tab.min).map(tab=>(
             <button key={tab.id}
               onClick={()=>{
                 if(tab.id==="settings"){setMoreMenuOpen(p=>!p);return;}
@@ -5376,7 +5383,8 @@ Rules:
                 <div style={{padding:"0 8px"}}>
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
-                    {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building"},
+                    {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck"},
+                    {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building", min:2},
                     {id:"team",     label:"Team",            sub:"People and roles",                icon:"building", min:3},
                     {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
                     {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
