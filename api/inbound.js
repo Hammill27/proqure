@@ -3,46 +3,88 @@
 //
 // Flow: a supplier replies to q-<token>@<inbound-domain>  ->  Resend parses the email
 // and POSTs an `email.received` event here  ->  we verify it's genuinely from Resend,
-// fetch the full body, match <token> back to the exact supplier + request that was sent
-// that reply address, and write the reply text into that supplier's quote box.
+// retrieve the full body, match <token> back to the exact supplier + request that was
+// sent that reply address, and write the reply text into that supplier's quote box.
 // Best-effort: also forwards a copy to the user's own inbox so they still see replies.
 //
 // The capture domain is a CATCH-ALL, so this same endpoint serves every client and
-// every job - the token in the address is what routes it. Nothing here is tied to a
-// specific domain, so switching the test ".resend.app" address for a live
-// "reply.proqure.co.uk" subdomain later needs no change in this file.
+// every job - the token in the address is what routes it. Switching the test
+// ".resend.app" address for a live "reply.proqure.co.uk" subdomain later needs NO
+// change here.
+//
+// Verification: Resend signs webhooks with the Svix scheme. We verify it manually with
+// Node's built-in crypto (no SDK, no svix dependency) so it can't break on library or
+// version differences. If you ever need to prove the rest of the pipeline while sorting
+// the signing secret, set INBOUND_SKIP_VERIFY=1 in Vercel TEMPORARILY - it processes
+// unverified events and logs loudly. Remove it once verification passes.
 //
 // Required Vercel env vars (server-only - never exposed to the browser):
 //   RESEND_API_KEY            - same key used for sending
 //   RESEND_WEBHOOK_SECRET     - signing secret from the webhook (whsec_...)
 //   SUPABASE_URL              - Supabase project URL (falls back to VITE_SUPABASE_URL)
-//   SUPABASE_SERVICE_ROLE_KEY - service-role key (server-only; bypasses RLS to write)
-//
-// The email.received payload is metadata only, so the body is retrieved via the
-// Received Emails API (resend.emails.receiving.get).
+//   SUPABASE_SERVICE_ROLE_KEY - service/secret key (server-only; bypasses RLS to write)
 
-import { Resend } from "resend";
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
-// Vercel: we need the RAW request body to verify the webhook signature, so the
-// built-in JSON body parser must be disabled for this route.
+// We need the RAW request body to verify the signature, so disable Vercel's parser.
 export const config = { api: { bodyParser: false } };
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET || "";
+const SKIP_VERIFY = process.env.INBOUND_SKIP_VERIFY === "1";
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const supabase = (SUPABASE_URL && SERVICE_KEY) ? createClient(SUPABASE_URL, SERVICE_KEY) : null;
 
-function readRaw(req) {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (c) => { data += c; });
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
+// Read the raw body robustly across Vercel parsing behaviours.
+async function readRaw(req) {
+  if (Buffer.isBuffer(req.body)) return { raw: req.body.toString("utf8"), src: "buffer" };
+  if (typeof req.body === "string") return { raw: req.body, src: "string" };
+  try {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    const raw = Buffer.concat(chunks).toString("utf8");
+    if (raw) return { raw, src: "stream" };
+  } catch (e) { /* fall through */ }
+  if (req.body && typeof req.body === "object") return { raw: JSON.stringify(req.body), src: "json-fallback" };
+  return { raw: "", src: "empty" };
 }
 
-// Pull a plain-text body out of the retrieved email (prefer text; strip HTML if not).
+// Verify the Svix signature with HMAC-SHA256 (no external library).
+function verifySvix(raw, headers, secret) {
+  const id = headers["svix-id"] || headers["webhook-id"];
+  const ts = headers["svix-timestamp"] || headers["webhook-timestamp"];
+  const sigHeader = headers["svix-signature"] || headers["webhook-signature"];
+  if (!secret) return { ok: false, reason: "no webhook secret configured" };
+  if (!id || !ts || !sigHeader) return { ok: false, reason: "missing svix headers" };
+  const key = secret.startsWith("whsec_") ? secret.slice(6) : secret;
+  let secretBytes;
+  try { secretBytes = Buffer.from(key, "base64"); } catch { return { ok: false, reason: "secret not base64" }; }
+  const expected = crypto.createHmac("sha256", secretBytes).update(`${id}.${ts}.${raw}`).digest("base64");
+  const provided = String(sigHeader).split(" ").map((p) => (p.includes(",") ? p.split(",")[1] : p));
+  const ok = provided.some((p) => {
+    try { return p.length === expected.length && crypto.timingSafeEqual(Buffer.from(p), Buffer.from(expected)); }
+    catch { return false; }
+  });
+  return { ok, reason: ok ? "ok" : "signature mismatch" };
+}
+
+// Retrieve the full parsed inbound email (the webhook payload is metadata only).
+async function getEmail(emailId) {
+  try {
+    const r = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
+    });
+    if (r.ok) { const j = await r.json(); return j && j.data ? j.data : j; }
+    console.warn("api/inbound: receiving GET status", r.status);
+  } catch (e) {
+    console.warn("api/inbound: receiving GET failed", e && e.message);
+  }
+  return null;
+}
+
+// Plain-text body from the email (prefer text; strip HTML if that's all there is).
 function bodyText(email) {
   if (email && typeof email.text === "string" && email.text.trim()) return email.text;
   const html = (email && email.html) || "";
@@ -60,7 +102,6 @@ function bodyText(email) {
 }
 
 // Extract our capture token from any recipient address: q-<token>@<domain>.
-// Handles a "to" field that's a string, an array of strings, or an array of objects.
 function extractToken(toField) {
   const list = Array.isArray(toField) ? toField : [toField];
   for (const entry of list) {
@@ -73,68 +114,61 @@ function extractToken(toField) {
   return null;
 }
 
+async function forwardCopy(inbox, supName, fromAddr, subject, replyText) {
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "ProQure <quotes@proqure.co.uk>",
+        to: [inbox],
+        reply_to: fromAddr,
+        subject: `[ProQure] Supplier reply: ${subject || supName || "quote"}`,
+        text: `${supName || fromAddr} has replied to your quote request. It's been added to the quote box in ProQure.\n\n${replyText || ""}`,
+      }),
+    });
+  } catch (e) { console.warn("api/inbound: forward failed (non-fatal)", e && e.message); }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  let raw = "";
-  try { raw = await readRaw(req); } catch { return res.status(400).json({ error: "No body" }); }
+  const { raw, src } = await readRaw(req);
+  console.log("api/inbound: POST received | rawLen", raw.length, "| src", src);
 
-  // Verify the webhook is genuinely from Resend (svix signature). If no secret is
-  // configured yet (early testing), proceed but log a warning.
   let event;
-  if (process.env.RESEND_WEBHOOK_SECRET) {
-    try {
-      event = resend.webhooks.verify({
-        payload: raw,
-        headers: {
-          "svix-id": req.headers["svix-id"],
-          "svix-timestamp": req.headers["svix-timestamp"],
-          "svix-signature": req.headers["svix-signature"],
-        },
-        secret: process.env.RESEND_WEBHOOK_SECRET,
-      });
-    } catch (e) {
-      return res.status(401).json({ error: "Invalid signature" });
+  try { event = JSON.parse(raw); } catch { console.error("api/inbound: bad JSON | rawLen", raw.length, "| src", src); return res.status(400).json({ error: "Bad JSON" }); }
+
+  if (!SKIP_VERIFY) {
+    const v = verifySvix(raw, req.headers, WEBHOOK_SECRET);
+    if (!v.ok) {
+      console.error("api/inbound: signature verify FAILED -", v.reason, "| rawLen", raw.length, "| src", src);
+      return res.status(401).json({ error: "Invalid signature", reason: v.reason });
     }
+    console.log("api/inbound: signature verified ok");
   } else {
-    try { event = JSON.parse(raw); } catch { return res.status(400).json({ error: "Bad JSON" }); }
-    console.warn("api/inbound: RESEND_WEBHOOK_SECRET not set - skipping signature verification");
+    console.warn("api/inbound: INBOUND_SKIP_VERIFY=1 - processing WITHOUT signature verification");
   }
 
-  // Only act on inbound emails; acknowledge everything else so Resend doesn't retry.
-  if (!event || event.type !== "email.received") return res.status(200).json({ ok: true });
+  if (!event || event.type !== "email.received") return res.status(200).json({ ok: true, note: "ignored type" });
 
   try {
     const data = event.data || {};
     const emailId = data.email_id || data.id;
-    if (!emailId) return res.status(200).json({ ok: true, note: "no email id" });
-
-    // The webhook is metadata-only; fetch the full parsed email for its body.
-    let email;
-    try {
-      const got = await resend.emails.receiving.get(emailId);
-      email = (got && got.data) ? got.data : got;
-    } catch (e) {
-      email = data; // fall back to whatever metadata the event carried
-    }
+    let email = emailId ? await getEmail(emailId) : null;
+    if (!email) email = data;
 
     const token = extractToken((email && email.to) || data.to);
+    console.log("api/inbound: emailId", emailId, "| token", token);
     if (!token) return res.status(200).json({ ok: true, note: "no capture token" });
-
-    if (!supabase) {
-      console.error("api/inbound: Supabase not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)");
-      return res.status(200).json({ ok: true, note: "storage not configured" });
-    }
+    if (!supabase) { console.error("api/inbound: Supabase not configured (URL / SERVICE key)"); return res.status(200).json({ ok: true, note: "storage not configured" }); }
 
     const replyText = bodyText(email);
+    console.log("api/inbound: bodyTextLen", (replyText || "").length);
     const fromAddr = (email && email.from) || data.from || "supplier";
     const subject = (email && email.subject) || data.subject || "";
 
-    // Find which user's requests contain a supplier with this reply token.
-    const { data: rows, error } = await supabase
-      .from("proqure_data")
-      .select("user_id,value")
-      .eq("store_key", "piq_requests");
+    const { data: rows, error } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_requests");
     if (error) { console.error("api/inbound: load error", error.message); return res.status(200).json({ ok: true }); }
 
     let target = null;
@@ -147,10 +181,8 @@ export default async function handler(req, res) {
       }
       if (target) break;
     }
+    if (!target) { console.warn("api/inbound: token not matched -", token); return res.status(200).json({ ok: true, note: "token not matched" }); }
 
-    if (!target) return res.status(200).json({ ok: true, note: "token not matched" });
-
-    // Append the reply into that supplier's quote box and mark it received.
     const { userId, requests, ri, si } = target;
     const sup = requests[ri].sentTo[si];
     const stamp = new Date().toISOString();
@@ -164,38 +196,20 @@ export default async function handler(req, res) {
       { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box`, user: "Inbound" },
     ];
 
-    const { error: upErr } = await supabase
-      .from("proqure_data")
-      .upsert({ user_id: userId, store_key: "piq_requests", value: requests, updated_at: stamp }, { onConflict: "user_id,store_key" });
+    const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: requests, updated_at: stamp }, { onConflict: "user_id,store_key" });
     if (upErr) { console.error("api/inbound: save error", upErr.message); return res.status(200).json({ ok: true }); }
+    console.log("api/inbound: MATCHED & SAVED | user", userId, "| req", ri, "| supplier", si);
 
-    // Best-effort: forward a copy to the user's own inbox so they still see replies.
     try {
-      const { data: sRows } = await supabase
-        .from("proqure_data")
-        .select("value")
-        .eq("store_key", "piq_settings")
-        .eq("user_id", userId)
-        .limit(1);
+      const { data: sRows } = await supabase.from("proqure_data").select("value").eq("store_key", "piq_settings").eq("user_id", userId).limit(1);
       const settings = (sRows && sRows[0]) ? sRows[0].value : null;
       const inbox = settings && (settings.replyToEmail || settings.fromEmail);
-      if (inbox) {
-        await resend.emails.send({
-          from: "ProQure <quotes@proqure.co.uk>",
-          to: [inbox],
-          reply_to: fromAddr,
-          subject: `[ProQure] Supplier reply: ${subject || sup.name || "quote"}`,
-          text: `${sup.name || fromAddr} has replied to your quote request. It's been added to the quote box in ProQure.\n\n${replyText || ""}`,
-        });
-      }
-    } catch (e) {
-      console.warn("api/inbound: forward failed (non-fatal)", e && e.message);
-    }
+      if (inbox) await forwardCopy(inbox, sup.name, fromAddr, subject, replyText);
+    } catch (e) { console.warn("api/inbound: forward lookup failed", e && e.message); }
 
     return res.status(200).json({ ok: true, matched: true });
   } catch (e) {
     console.error("api/inbound: handler error", e && e.message);
-    // Still ack with 200 so Resend doesn't hammer retries on a transient bug - logged above.
     return res.status(200).json({ ok: true });
   }
 }
