@@ -101,6 +101,29 @@ function bodyText(email) {
     .trim();
 }
 
+// Trim the quoted original email from a reply, keeping only the supplier's new text.
+// Conservative: only cuts at a confident divider; if none is found it returns the text
+// unchanged, so a genuine reply is never lost. Also won't over-cut to near-nothing.
+function stripQuotedReply(text) {
+  if (!text) return text;
+  const lines = text.split("\n");
+  const markers = [
+    /^_{5,}\s*$/,                              // Outlook underscore divider
+    /^\s*-{2,}\s*Original Message\s*-{2,}/i,   // "-----Original Message-----"
+    /^\s*On\b.+\bwrote:/i,                     // Gmail/Apple "On <date> <name> wrote:"
+    /^\s*From:\s.*@/i,                         // quoted header block "From: name <a@b>"
+    /^\s*Sent with ProQure\b/i,                // our own footer (safety net)
+    /^\s*\[ProQure-Ref:/i,                     // our hidden ref (safety net)
+  ];
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (markers.some((re) => re.test(lines[i]))) { cut = i; break; }
+  }
+  if (cut === -1) return text.trim();
+  const kept = lines.slice(0, cut).join("\n").trim();
+  return kept.length >= 3 ? kept : text.trim();
+}
+
 // Extract our capture token from any recipient address: q-<token>@<domain>.
 function extractToken(toField) {
   const list = Array.isArray(toField) ? toField : [toField];
@@ -163,7 +186,7 @@ export default async function handler(req, res) {
     if (!token) return res.status(200).json({ ok: true, note: "no capture token" });
     if (!supabase) { console.error("api/inbound: Supabase not configured (URL / SERVICE key)"); return res.status(200).json({ ok: true, note: "storage not configured" }); }
 
-    const replyText = bodyText(email);
+    const replyText = stripQuotedReply(bodyText(email));
     console.log("api/inbound: bodyTextLen", (replyText || "").length);
     const fromAddr = (email && email.from) || data.from || "supplier";
     const subject = (email && email.subject) || data.subject || "";
