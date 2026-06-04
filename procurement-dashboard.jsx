@@ -2240,7 +2240,7 @@ function ProQureApp({ session }) {
 COMPLETE FEATURE REFERENCE (you can explain how to do all of these):
 
 CREATING A REQUEST (New request page, 3 steps):
-- Three ways to add materials: (1) Voice - tap the mic and speak your list, it transcribes live then you review and tap Parse with AI; (2) Type the list in plain English and tap Parse with AI; (3) Scan a document - photograph a scope of works, delivery note or handwritten list, or upload a PDF/image; vision AI extracts the items. (4) Import a materials spreadsheet - upload a CSV with description/quantity/unit columns and it imports instantly with no AI needed.
+- Three ways to add materials: (1) Voice - tap the mic and speak your list, it transcribes live then you review and tap Proceed; (2) Type the list in plain English and tap Proceed; (3) Scan a document - photograph a scope of works, delivery note or handwritten list, or upload a PDF/image; vision AI extracts the items. (4) Import a materials spreadsheet - upload a CSV with description/quantity/unit columns and it imports instantly with no AI needed.
 - After parsing, every item is editable (description, quantity, unit, category). Add/remove rows freely.
 - Step 2: set an optional response deadline, choose delivery method, add request notes, set an optional budget for the job, and pick which suppliers to send to (filtered by trade). You can also load a saved template.
 - Duplicate detection warns if a similar request for the same job already exists.
@@ -2604,7 +2604,7 @@ ${settings.company||""}`;
       {q:"Can I edit the parsed list?", a:"Yes. Every field is editable - description, quantity, unit, category, and notes. You can also add or remove items before sending."},
       {q:"What are templates?", a:"Templates save common material lists for instant reuse. They are grouped by trade so you can find them quickly."},
       {q:"Can I set a response deadline?", a:"Yes. In Step 2 there is a response deadline date picker. The date appears in the RFQ email and as a countdown on the dashboard."},
-      {q:"How do I scan a document or photo?", a:"On Step 1, tap 'Take a photo or upload a document'. On mobile this opens your camera. Photograph a scope of works, delivery note or handwritten list - the vision AI reads it and extracts the items. PDFs and images both work. Review the extracted list, then tap Parse with AI."},
+      {q:"How do I scan a document or photo?", a:"On Step 1, tap 'Take a photo or upload a document'. On mobile this opens your camera. Photograph a scope of works, delivery note or handwritten list - the vision AI reads it and extracts the items. PDFs and images both work. Review the extracted list, then tap Proceed."},
       {q:"Can I import a spreadsheet?", a:"Yes. On Step 1 use 'Import a materials spreadsheet'. Upload a CSV with description, quantity and unit columns and it imports instantly - no AI needed, no waiting. It auto-detects your column headers."},
       {q:"Can I set a budget for a job?", a:"Yes. On Step 2 there is an optional Budget field. Once set, the dashboard shows a progress bar of actual approved spend against your budget, turning amber near the limit and red if you go over."},
       {q:"What are request notes?", a:"An optional field on Step 2 for access instructions or special requirements. Notes are stored with the request and shown in the All Requests list."},
@@ -2757,7 +2757,7 @@ ${settings.company||""}`;
         setRawInput(text);
         setScanning(false);
         setLoading(false);
-        showToast("Document loaded. Review, then tap Parse with AI");
+        showToast("Document loaded. Review, then tap Proceed");
         return;
       }
 
@@ -2816,7 +2816,7 @@ Rules:
       setScanning(false);
       setLoading(false);
       const itemCount = extracted.trim().split("\n").filter(Boolean).length;
-      showToast(`Document scanned - ${itemCount} item${itemCount!==1?"s":""} found. Review, then Parse with AI`);
+      showToast(`Document scanned - ${itemCount} item${itemCount!==1?"s":""} found. Review, then Proceed`);
 
     } catch(err) {
       setScanning(false);
@@ -3085,7 +3085,7 @@ Rules:
       <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1}} className="main-content">
 
         {view==="dashboard"&&(
-          <div style={{animation:"fadeIn 0.25s ease",maxWidth:1000}}>
+          <div style={{animation:"fadeIn 0.25s ease",maxWidth:1280}}>
 
             {/* Buyer notification: lists issued by engineers, awaiting action */}
             {can.sendRFQ(myRole)&&liveRequests.filter(r=>r.status==="awaiting-buyer").length>0&&(
@@ -3209,7 +3209,7 @@ Rules:
             {expiringQuotes.length>0&&(
               <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:14,padding:"14px 20px",marginBottom:20}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#9A3412",marginBottom:8}}>
-                  ⏰ {expiringQuotes.length} quote{expiringQuotes.length!==1?"s":""} expiring soon
+                  {expiringQuotes.length} quote{expiringQuotes.length!==1?"s":""} expiring soon
                 </div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                   {expiringQuotes.map(q=>{
@@ -3387,7 +3387,7 @@ Rules:
 
             {requests.length===0&&(
               <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
-                <div style={{marginBottom:16,display:"flex",justifyContent:"center"}}><Icon name="rocket" size={40} color="var(--green-dark)"/></div>
+                <div style={{marginBottom:16,display:"flex",justifyContent:"center"}}><svg width="40" height="40" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="var(--green-dark)"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="var(--green-dark)"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="var(--green-dark)"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="var(--green)"/><circle cx="16.5" cy="15.5" r="2" fill="var(--green-dark)"/></svg></div>
                 <div style={{fontSize:16,fontWeight:600,color:"var(--text-primary)",marginBottom:8}}>Ready to get started</div>
                 <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Create your first material request to start procuring with AI</div>
                 <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-md)",padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Create first request</button>
@@ -3440,13 +3440,13 @@ Rules:
                       ?<svg width="28" height="28" viewBox="0 0 24 24" fill="var(--red)" stroke="var(--red)" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                       :<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
                   <div style={{fontSize:14,fontWeight:600,color:listening?"var(--red)":"var(--green-deep)"}}>{listening?"Listening - tap to stop":"Tap to speak your material list"}</div>
-                  <div style={{fontSize:12,color:listening?"var(--red)":"var(--green-dark)",marginTop:4}}>{listening?"Speak now - your words appear below. Review, then tap Parse with AI":"Or type your list below"}</div>
+                  <div style={{fontSize:12,color:listening?"var(--red)":"var(--green-dark)",marginTop:4}}>{listening?"Speak now - your words appear below. Review, then tap Proceed":"Or type your list below"}</div>
                   {listening&&interim&&(
                     <div style={{fontSize:13,color:"var(--text-primary)",marginTop:10,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,fontStyle:"italic",border:"1px solid var(--border)"}}>"{interim}"</div>
                   )}
                 </div>
 
-                <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)} placeholder="e.g. 20 metres of 22mm copper pipe, 12 compression elbows, 6 isolation valves and 4 rolls of PTFE tape..." style={{width:"100%",height:100,padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,marginBottom:16}}></textarea>
+                <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)} placeholder="Type or dictate your materials, e.g. 10 sheets of 18mm OSB, 25 metres of 4mm twin and earth, 5L matt emulsion, 2 boxes of 100mm screws..." style={{width:"100%",height:100,padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,marginBottom:16}}></textarea>
 
                 {/* Scan document button */}
                 <div style={{marginBottom:14}}>
@@ -3490,7 +3490,7 @@ Rules:
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Load template</button>
                   <Btn onClick={handleParse} disabled={!rawInput.trim()||loading||scanning} color="#15824F">
-                    {loading||scanning?loadMsg||"Processing...":"Parse with AI"}
+                    {loading||scanning?loadMsg||"Processing...":"Proceed"}
                   </Btn>
                 </div>
               </div>
@@ -3568,19 +3568,11 @@ Rules:
                   </button>
                 </div>
 
-                {/* Request notes + budget */}
-                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"2fr 1fr",gap:12,marginBottom:12}}>
+                {/* Request notes */}
+                <div style={{marginBottom:12}}>
                   <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
                     <div style={{fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:8}}>Request notes (optional)</div>
                     <textarea value={requestNotes} onChange={e=>setRequestNotes(e.target.value)} placeholder="Any special instructions, access notes, or additional context for suppliers..." style={{width:"100%",height:60,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"none",fontFamily:"inherit",lineHeight:1.6}}></textarea>
-                  </div>
-                  <div style={{background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
-                    <div style={{fontSize:12,fontWeight:700,color:"var(--green-deep)",marginBottom:8}}>Budget (optional)</div>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      <span style={{fontSize:16,fontWeight:700,color:"var(--green-deep)"}}>£</span>
-                      <input type="number" min="0" value={requestBudget} onChange={e=>setRequestBudget(e.target.value)} placeholder="0.00" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",fontFamily:"monospace"}}/>
-                    </div>
-                    <div style={{fontSize:10,color:"var(--green-dark)",marginTop:6,lineHeight:1.4}}>Track actual spend against this on the dashboard</div>
                   </div>
                 </div>
 
