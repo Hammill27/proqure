@@ -817,6 +817,10 @@ function buildEmailHtml(bodyText, settings, optsOrToken={}) {
   const paras = esc(bodyText).trim().replace(/\n{3,}/g,"\n\n").split(/\n\n/);
   const safeBody = paras.map(p => `<p style="margin:0 0 12px;font-size:14px;line-height:1.55;color:${ink}">${p.replace(/\n/g,"<br/>")}</p>`).join("");
 
+  // Reply nudge: a short, branded line asking the supplier to reply to this email, so
+  // their quote is captured automatically against the right job. Always present.
+  const replyNudge = `<div style="margin:14px 0;padding:10px 14px;background:#F0F7F3;border-left:3px solid ${accent};border-radius:6px;font-size:13px;line-height:1.5;color:${ink}">Please <strong>reply to this email</strong> with your quotation - it keeps everything tracked against this enquiry.</div>`;
+
   // Site / delivery address block, if provided.
   const addr = esc(settings.siteAddress||"");
   const addressBlock = addr
@@ -871,6 +875,7 @@ function buildEmailHtml(bodyText, settings, optsOrToken={}) {
         <tr><td style="padding:26px 32px 28px 32px">
           ${greeting}
           ${safeBody}
+          ${replyNudge}
           ${addressBlock}
           ${terms}
           ${signature}
