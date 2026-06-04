@@ -126,6 +126,34 @@ const DEFAULT_SUPPLIERS = [
   { id:4, name:"City Electrical Factors", categories:["Electrical"],                    email:"quotes@cef.co.uk" },
   { id:5, name:"Graham",                  categories:["HVAC","Plumbing","Ventilation"], email:"rfq@grahamplumbingheating.co.uk" },
 ];
+
+// Short, collision-resistant id for contacts/branches.
+function genId(prefix="ID"){ return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`; }
+
+// Normalise a supplier to the current shape. A supplier now holds:
+//   contacts: [{ id, name, email, branch }]   - multiple named people, each their own email
+//   branches: ["Leeds","Geldard Road", ...]   - named branches/depots
+// Legacy suppliers stored a single `email`; we migrate that into one (unnamed) contact.
+// We also keep a top-level `email` mirrored to the first contact for any older code path.
+// This runs on load (covering both localStorage and cloud-pulled data, since cloud pull
+// writes into localStorage before the app reads it), so existing suppliers are preserved.
+function normSupplier(s){
+  if(!s || typeof s!=="object") return s;
+  const branches = Array.isArray(s.branches)
+    ? s.branches.map(b=>typeof b==="string"?b:((b&&b.name)||"")).map(b=>String(b).trim()).filter(Boolean)
+    : [];
+  let contacts = Array.isArray(s.contacts) ? s.contacts : null;
+  if(!contacts){ contacts = s.email ? [{ id:genId("C"), name:"", email:String(s.email).trim(), branch:"" }] : []; }
+  contacts = contacts.filter(c=>c && typeof c==="object").map(c=>({
+    id: c.id||genId("C"),
+    name: (c.name||"").toString(),
+    email: (c.email||"").toString().trim(),
+    branch: (c.branch||"").toString()
+  }));
+  const primaryEmail = (contacts.find(c=>c.email)||{}).email || (s.email||"").toString().trim() || "";
+  return { ...s, branches, contacts, email: primaryEmail };
+}
+function normSuppliers(list){ return Array.isArray(list) ? list.map(normSupplier) : list; }
 const STATUS = {
   draft:    { bg:"var(--amber-light)",   text:"#854D0E",         label:"Draft" },
   "awaiting-buyer":    { bg:"var(--indigo-light)", text:"var(--indigo)", label:"With buyer" },
@@ -971,7 +999,7 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
           reply_to: replyTo,
           subject,
           text: body,
-          html: buildEmailHtml(body, settings, { supplierName: s.name, jobToken: token })
+          html: buildEmailHtml(body, settings, { supplierName: s.contactName || s.name, jobToken: token })
         })
       });
       const d = await res.json();
@@ -1259,7 +1287,7 @@ function ProQureApp({ session }) {
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
   });
   const [suppliers, setSuppliers] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("piq_suppliers")||"null")||DEFAULT_SUPPLIERS; } catch { return DEFAULT_SUPPLIERS; }
+    try { return normSuppliers(JSON.parse(localStorage.getItem("piq_suppliers")||"null")||DEFAULT_SUPPLIERS); } catch { return normSuppliers(DEFAULT_SUPPLIERS); }
   });
   // Global activity logger — records everything across the app
   const logActivity = (action, detail, meta={}) => {
@@ -1397,6 +1425,8 @@ function ProQureApp({ session }) {
   const [trade,    setTrade]    = useState("Plumbing");
   const [rfqEmail, setRfqEmail] = useState("");
   const [selSup,   setSelSup]   = useState([]);
+  const [contactSel, setContactSel] = useState({}); // { [supplierId]: contactId } - which contact an RFQ goes to
+  const [supSearch, setSupSearch] = useState("");    // searchable supplier picker (wizard)
   const [loading,  setLoading]  = useState(false);
   const [loadMsg,  setLoadMsg]  = useState("");
   const [emailRes, setEmailRes] = useState(null);
@@ -1565,6 +1595,7 @@ function ProQureApp({ session }) {
   const [newSup, setNewSup] = useState({name:"",email:"",categories:""});
   const [quickSup, setQuickSup] = useState({name:"",email:""});
   const [showQuickSup, setShowQuickSup] = useState(false);
+  const [editSup, setEditSup] = useState(null); // working copy of the supplier being edited (Suppliers page)
 
   // Voice
   const { listening, supported:voiceOk, start:micStart, stop:micStop } = useSpeechRecognition({
@@ -1592,6 +1623,10 @@ function ProQureApp({ session }) {
 
   const _tradeSup = suppliers.filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
   const filteredSup = _tradeSup.length ? _tradeSup : suppliers;
+  // Searchable picker: when there's a search term, search across ALL suppliers
+  // (name, trade, or any contact name/email); otherwise show the trade-filtered list.
+  const supMatch = (s,q)=> (s.name||"").toLowerCase().includes(q) || (s.categories||[]).some(c=>(c||"").toLowerCase().includes(q)) || (s.contacts||[]).some(c=>(c.name||"").toLowerCase().includes(q)||(c.email||"").toLowerCase().includes(q));
+  const pickList = (()=>{ const q=supSearch.trim().toLowerCase(); return q ? suppliers.filter(s=>supMatch(s,q)) : filteredSup; })();
 
   function logToRequest(reqId, action, detail="") {
     const entry = { ts: new Date().toISOString(), action, detail, user: settings.contactName||"You" };
@@ -1774,7 +1809,7 @@ function ProQureApp({ session }) {
     let supplier = null;
     let supplierId = form.supplierId;
     if (form.newSupplier && (form.newSupplierName||"").trim()) {
-      const ns = {
+      const ns = normSupplier({
         id: `SUP-${Date.now()}`,
         name: form.newSupplierName.trim(),
         email: (form.newSupplierEmail||"").trim(),
@@ -1783,7 +1818,7 @@ function ProQureApp({ session }) {
         useCount: 0,
         addedVia: "quick-po",
         addedAt: new Date().toISOString(),
-      };
+      });
       const updated = [...suppliers, ns];
       saveSuppliers(updated);
       supplier = ns; supplierId = ns.id;
@@ -1860,7 +1895,7 @@ function ProQureApp({ session }) {
     const ref = `HIRE-${Date.now().toString().slice(-6)}`;
     let supplier = form.supplierId ? suppliers.find(s=>String(s.id)===String(form.supplierId)) : null;
     if (form.newSupplier && (form.newSupplierName||"").trim()) {
-      const ns = { id:`SUP-${Date.now()}`, name:form.newSupplierName.trim(), email:(form.newSupplierEmail||"").trim(), categories:["Hire"], tier:"ad-hoc", useCount:0, addedVia:"hire", addedAt:new Date().toISOString() };
+      const ns = normSupplier({ id:`SUP-${Date.now()}`, name:form.newSupplierName.trim(), email:(form.newSupplierEmail||"").trim(), categories:["Hire"], tier:"ad-hoc", useCount:0, addedVia:"hire", addedAt:new Date().toISOString() });
       saveSuppliers([...suppliers, ns]); supplier = ns;
     }
     const hire = {
@@ -1998,8 +2033,16 @@ function ProQureApp({ session }) {
 
   async function handleSendEmails() {
     if (!EMAIL_VIA_SERVER && !settings.resendKey) { showToast("Email is temporarily unavailable. Please try again shortly.","warn"); return; }
+    // Resolve each selected supplier to its chosen contact (the dropdown in the wizard).
+    // Falls back to the supplier's first contact, then to the legacy top-level email.
+    const toSend = suppliers.filter(s=>selSup.includes(s.id)).map(s=>{
+      const cid = contactSel[s.id] || (s.contacts && s.contacts[0] && s.contacts[0].id);
+      const contact = (s.contacts||[]).find(c=>c.id===cid) || (s.contacts||[])[0] || null;
+      return { ...s, email:(contact&&contact.email)||s.email||"", contactName:(contact&&contact.name)||"" };
+    });
+    const missing = toSend.filter(s=>!s.email);
+    if (missing.length){ showToast(`No contact email for: ${missing.map(s=>s.name).join(", ")} - add one on the Suppliers page`,"warn"); return; }
     setLoading(true); setLoadMsg("Sending to suppliers...");
-    const toSend = suppliers.filter(s=>selSup.includes(s.id));
     const subject = `Request for Quotation - ${jobRef||parsed?.jobRef||"TBC"}`;
     let results;
     try {
@@ -2012,7 +2055,7 @@ function ProQureApp({ session }) {
     setLoading(false);
     const ok = results.filter(r=>r.success).length;
     if (ok > 0) {
-      const sentSuppliers = toSend.map((s,i)=>({ id:s.id, name:s.name, email:s.email, quote:"", saved:false, replyToken: results[i]?.replyToken || null }));
+      const sentSuppliers = toSend.map((s,i)=>({ id:s.id, name:s.name, email:s.email, contactName:s.contactName||"", quote:"", saved:false, replyToken: results[i]?.replyToken || null }));
       // Count each supplier the RFQ goes to as a "use" (for ad-hoc promotion tracking)
       toSend.forEach(s=>bumpSupplierUse(s.id));
       const newId = `RFQ-${Date.now().toString().slice(-6)}`;
@@ -2041,7 +2084,7 @@ function ProQureApp({ session }) {
         // Full reset - ready for next request
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
-        setRfqEmail(""); setEmailRes(null); setSelSup([]);
+        setRfqEmail(""); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
         setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
       }, 1800);
@@ -2090,7 +2133,7 @@ function ProQureApp({ session }) {
 
   function resetNewRequest() {
     setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
-    setRfqEmail(""); setEmailRes(null); setSelSup([]);
+    setRfqEmail(""); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
     setInterim(""); setScanning(false);
     setLoading(false); setLoadMsg("");
@@ -2205,6 +2248,10 @@ function ProQureApp({ session }) {
       return;
     }
     const sup = suppliers.find(s=>s.name===analysis?.supplierName) || suppliers[0];
+    // Prefer the exact contact this quote came in from (the one we emailed the RFQ to),
+    // so the PO goes back to the right person; fall back to the supplier's primary email.
+    const _sentEntry = (activeReq?.sentTo||[]).find(st=>st.name===(analysis?.supplierName||sup?.name));
+    const poEmail = (_sentEntry&&_sentEntry.email) || sup?.email || "";
     const poNum = `PO-${Date.now().toString().slice(-6)}`;
     const dateStr = new Date().toLocaleDateString("en-GB");
 
@@ -2227,7 +2274,7 @@ function ProQureApp({ session }) {
 
     await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:dateStr });
 
-    const doc = { id:poNum, type:"generated", label:`PO ${poNum}`, supplier:sup?.name||"", supplierEmail:sup?.email||"", date:dateStr, status:"approved" };
+    const doc = { id:poNum, type:"generated", label:`PO ${poNum}`, supplier:sup?.name||"", supplierEmail:poEmail, date:dateStr, status:"approved" };
     const poEntry = {
       ts:new Date().toISOString(),
       action:"PO approved & generated",
@@ -2248,7 +2295,7 @@ function ProQureApp({ session }) {
     const order = {
       id:poNum, reqId:activeReq.id,
       jobRef:activeReq?.jobRef||"TBC", site:activeReq?.site||"", trade:activeReq?.trade||"",
-      supplier:sup?.name||"", supplierEmail:sup?.email||"",
+      supplier:sup?.name||"", supplierEmail:poEmail,
       items:activeReq?.items||[], analysis, poNumber:poNum, poDate:dateStr,
       estimatedTotal: analysis?.estimatedTotal || analysis?.subtotal || "",
       status:"pending-send", type:"generated", label:`PO ${poNum}`,
@@ -2296,7 +2343,7 @@ COMPLETE FEATURE REFERENCE (you can explain how to do all of these):
 CREATING A REQUEST (New request page, 3 steps):
 - Three ways to add materials: (1) Voice - tap the mic and speak your list, it transcribes live then you review and tap Proceed; (2) Type the list in plain English and tap Proceed; (3) Scan a document - photograph a scope of works, delivery note or handwritten list, or upload a PDF/image; vision AI extracts the items. (4) Import a materials spreadsheet - upload a CSV with description/quantity/unit columns and it imports instantly with no AI needed.
 - After parsing, every item is editable (description, quantity, unit, category). Add/remove rows freely.
-- Step 2: set an optional response deadline, choose delivery method, add request notes, and pick which suppliers to send to (filtered by trade). You can also load a saved template.
+- Step 2: set an optional response deadline, choose delivery method (if 'Collect', name the branch to collect from, e.g. "Plumb Centre, Geldard Road"), add request notes, and pick which suppliers to send to. The trade is auto-detected from the items and pre-selects matching suppliers; there is a search box for long supplier lists, and for any supplier with several contacts you choose which contact the request goes to. You can also load a saved template.
 - Duplicate detection warns if a similar request for the same job already exists.
 - Step 3: review the auto-generated RFQ email and send it to all selected suppliers at once.
 
@@ -2326,7 +2373,7 @@ LIBRARY: every non-approved quote auto-saves here with a 30-day expiry (configur
 SUPPLIERS: manage supplier accounts; each shows RFQ count, response rate, average completeness and PO win count.
 
 SAVED QUOTES: the Quotes page keeps every analysis you run as a saved collapsible card (like the Orders page). After you approve a quote and the order is created, that analysis moves into the saved list automatically; you can re-open any past analysis in full at any time, and it survives a page refresh. When pasting a supplier quote into a box, it turns green and shows 'Quote entered'.
-ACTIVITY LOG: the dashboard shows a Recent activity feed logging every action across the app - RFQs sent, quotes analysed, POs approved, orders sent/confirmed/delivered, confirmations uploaded, suppliers added, library changes. Each request also keeps its own activity history (open it from All Requests). DASHBOARD CHARTS: a Spend by trade bar chart appears automatically once you have orders. SUPPLIER QUICK-ADD: on the request wizard supplier step you can add a new supplier inline with '+ Add a supplier' without leaving the page. LIBRARY: you can remove a quote from the library with the bin icon on its row.
+ACTIVITY LOG: the dashboard shows a Recent activity feed logging every action across the app - RFQs sent, quotes analysed, POs approved, orders sent/confirmed/delivered, confirmations uploaded, suppliers added, library changes. Each request also keeps its own activity history (open it from All Requests). DASHBOARD CHARTS: a Spend by trade bar chart appears automatically once you have orders. SUPPLIER QUICK-ADD: on the request wizard supplier step you can add a new supplier inline with '+ Add a supplier' without leaving the page. SUPPLIERS PAGE: each supplier can hold multiple named contacts (each with their own email address) and named branches/depots. Tap Edit on a supplier card to add or change its contacts and branches. When you send an RFQ you choose which contact it goes to, and the supplier picker has a search box for long lists. LIBRARY: you can remove a quote from the library with the bin icon on its row.
 OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D dashboard, S settings, H help, ? shows the shortcut list); company branding (logo upload, default PO terms, quote validity days) in Settings - the logo appears on HTML emails; quote expiry warnings on the dashboard; CSV export on library/orders/requests; All Requests has search and status/trade filters; click the ProQure logo to return to the dashboard.
 
 SETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
@@ -2383,6 +2430,8 @@ If asked about something ProQure does not do, say so clearly and mention if it i
   function handleCreateOrderFromDoc(doc, req) {
     if (!doc||!req) return;
     const sup = suppliers.find(s=>req.sentTo?.some(st=>st.name===s.name))||{name:doc.supplier||"Supplier",email:""};
+    const _sentEntry = (req.sentTo||[]).find(st=>st.name===(doc.supplier||sup.name)) || (req.sentTo||[]).find(st=>st.name===sup.name);
+    const supplierEmail = (_sentEntry&&_sentEntry.email) || sup.email || "";
     const order = {
       id: doc.id,
       reqId: req.id,
@@ -2390,7 +2439,7 @@ If asked about something ProQure does not do, say so clearly and mention if it i
       site: req.site||"",
       trade: req.trade||"",
       supplier: doc.supplier||sup.name||"",
-      supplierEmail: sup.email||"",
+      supplierEmail: supplierEmail,
       items: req.items||[],
       poNumber: doc.id,
       poDate: doc.date,
@@ -2501,6 +2550,7 @@ ${settings.company||""}`;
   // -- Persist to localStorage --
   useEffect(()=>{ try{localStorage.setItem("piq_requests",JSON.stringify(requests))}catch{} },[requests]);
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
+  useEffect(()=>{ try{localStorage.setItem("piq_suppliers",JSON.stringify(suppliers))}catch{} },[suppliers]);
   useEffect(()=>{ try{localStorage.setItem("piq_hires",JSON.stringify(hires))}catch{} },[hires]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
@@ -2702,6 +2752,7 @@ ${settings.company||""}`;
       {q:"Where can I see everything that has happened?", a:"The dashboard has a Recent activity feed that logs every action across the app - RFQs sent, quotes analysed, POs approved, orders sent, confirmed and delivered, confirmations uploaded, suppliers added and library changes. Each individual request also keeps its own activity history, which you can open from the All Requests page."},
       {q:"What charts does the dashboard show?", a:"Once you have approved orders, a Spend by trade bar chart appears, breaking your spend down by trade so you can see where the money goes."},
       {q:"Can I add a supplier while creating a request?", a:"Yes. On the supplier step of the request wizard, tap '+ Add a supplier' to add one inline - it is saved and auto-selected without leaving the page."},
+      {q:"Can a supplier have several contacts or branches?", a:"Yes. On the Suppliers page, tap Edit on a supplier to add multiple named contacts - each with their own email - and to add branches/depots (and tag each contact with theirs). When you send an RFQ you pick which contact it goes to, and the supplier list has a search box for long lists."},
       {q:"Can I remove a quote from the library?", a:"Yes. Each row in the Quote Library has a bin icon to remove that quote. The removal is logged in the activity feed."},
     ]},
     {cat:"Settings & troubleshooting", qs:[
@@ -3675,15 +3726,38 @@ Rules:
                 <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px",marginBottom:16}}>
                   <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"var(--text-secondary)",fontWeight:400}}>({trade})</span></div>
                   {!can.sendRFQ(myRole)&&<div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,padding:"8px 12px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)"}}>As an engineer you don't need to pick suppliers - just raise the list and your buyer will request the quotes. You can skip this section.</div>}
-                  <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                    {filteredSup.map(s=>(
-                      <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",background:selSup.includes(s.id)?"var(--green-mint)":"var(--bg-card-solid)",border:`1px solid ${selSup.includes(s.id)?"var(--green-dark)":"var(--border)"}`,borderRadius:"var(--radius-sm)",padding:"8px 14px",transition:"all 0.15s"}}>
-                        <input type="checkbox" checked={selSup.includes(s.id)} onChange={e=>setSelSup(p=>e.target.checked?[...p,s.id]:p.filter(id=>id!==s.id))} style={{accentColor:"var(--green-dark)"}}/>
-                        <span style={{fontWeight:600,color:"var(--text-primary)"}}>{s.name}</span>
-                        <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{s.email}</span>
-                      </label>
-                    ))}
-                    {filteredSup.length===0&&<div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:8}}>No {trade} suppliers yet - add one below</div>}
+                  {suppliers.length>6&&(
+                    <input value={supSearch} onChange={e=>setSupSearch(e.target.value)} placeholder="Search suppliers by name, trade or contact..." style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:10}}/>
+                  )}
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {pickList.map(s=>{
+                      const sel=selSup.includes(s.id);
+                      const contacts=s.contacts||[];
+                      const chosenId=contactSel[s.id]||contacts[0]?.id;
+                      return (
+                      <div key={s.id} style={{background:sel?"var(--green-mint)":"var(--bg-card-solid)",border:`1px solid ${sel?"var(--green-dark)":"var(--border)"}`,borderRadius:"var(--radius-sm)",padding:"10px 14px",transition:"all 0.15s"}}>
+                        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
+                          <input type="checkbox" checked={sel} onChange={e=>{ setSelSup(p=>e.target.checked?[...p,s.id]:p.filter(id=>id!==s.id)); if(e.target.checked&&!contactSel[s.id]&&contacts[0]) setContactSel(p=>({...p,[s.id]:contacts[0].id})); }} style={{accentColor:"var(--green-dark)"}}/>
+                          <span style={{fontWeight:600,color:"var(--text-primary)"}}>{s.name}</span>
+                          {contacts.length===0&&<span style={{fontSize:11,color:"var(--amber)"}}>no contact - add on Suppliers page</span>}
+                          {contacts.length>0&&!sel&&<span style={{fontSize:11,color:"var(--text-tertiary)"}}>{contacts.length===1?(contacts[0].email):`${contacts.length} contacts`}</span>}
+                        </label>
+                        {sel&&contacts.length>0&&(
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,paddingLeft:26}}>
+                            <span style={{fontSize:11,color:"var(--text-secondary)"}}>Send to:</span>
+                            {contacts.length===1?(
+                              <span style={{fontSize:12,color:"var(--text-primary)"}}>{contacts[0].name?`${contacts[0].name} · ${contacts[0].email}`:contacts[0].email}</span>
+                            ):(
+                              <select value={chosenId} onChange={e=>setContactSel(p=>({...p,[s.id]:e.target.value}))} style={{flex:1,maxWidth:320,padding:"6px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",background:"var(--bg-card-solid)"}}>
+                                {contacts.map(c=><option key={c.id} value={c.id}>{c.name?`${c.name} - ${c.email}`:c.email}{c.branch?` (${c.branch})`:""}</option>)}
+                              </select>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      );
+                    })}
+                    {pickList.length===0&&<div style={{fontSize:13,color:"var(--text-tertiary)"}}>{supSearch.trim()?`No suppliers match "${supSearch}"`:`No ${trade} suppliers yet - add one below`}</div>}
                   </div>
                   {/* Quick-add supplier inline */}
                   {showQuickSup?(
@@ -3694,10 +3768,11 @@ Rules:
                         <input value={quickSup.email} onChange={e=>setQuickSup(p=>({...p,email:e.target.value}))} placeholder="quotes@supplier.co.uk" style={{flex:"1 1 180px",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                         <Btn onClick={()=>{
                           if(!quickSup.name.trim()||!quickSup.email.trim()){showToast("Enter a name and email","warn");return;}
-                          const ns={id:`SUP-${Date.now()}`,name:quickSup.name.trim(),email:quickSup.email.trim(),categories:[trade]};
+                          const ns=normSupplier({id:`SUP-${Date.now()}`,name:quickSup.name.trim(),email:quickSup.email.trim(),categories:[trade]});
                           const updated=[...suppliers,ns];
                           saveSuppliers(updated);
                           setSelSup(p=>[...p,ns.id]);
+                          setContactSel(p=>({...p,[ns.id]:ns.contacts[0]?.id}));
                           logActivity("Supplier added",`${ns.name} added from request wizard`,{entity:"supplier"});
                           setQuickSup({name:"",email:""});setShowQuickSup(false);
                           showToast(`${ns.name} added and selected`);
@@ -3731,7 +3806,7 @@ Rules:
                     <iframe
                       title="Email preview"
                       style={{width:"100%",height:420,border:"none",display:"block",background:"#F4F4F1"}}
-                      srcDoc={buildEmailHtml(rfqEmail, settings, { supplierName: (suppliers.find(s=>selSup.includes(s.id))?.name)||"" })}
+                      srcDoc={buildEmailHtml(rfqEmail, settings, { supplierName: (()=>{ const s=suppliers.find(x=>selSup.includes(x.id)); if(!s) return ""; const c=(s.contacts||[]).find(c=>c.id===(contactSel[s.id]||s.contacts[0]?.id))||(s.contacts||[])[0]; return (c&&c.name)||s.name; })() })}
                     />
                   </div>
                   <details style={{marginBottom:16}}>
@@ -3743,9 +3818,13 @@ Rules:
                     <div style={{marginBottom:14}}>
                       <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Will be sent to:</div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                        {suppliers.filter(s=>selSup.includes(s.id)).map(s=>(
-                          <span key={s.id} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-light)",padding:"3px 10px",borderRadius:99}}>{s.name}</span>
-                        ))}
+                        {suppliers.filter(s=>selSup.includes(s.id)).map(s=>{
+                          const c=(s.contacts||[]).find(c=>c.id===(contactSel[s.id]||s.contacts[0]?.id))||(s.contacts||[])[0];
+                          const to=c?(c.name?`${c.name} · ${c.email}`:c.email):(s.email||"no contact email");
+                          return (
+                          <span key={s.id} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-light)",padding:"3px 10px",borderRadius:99}}>{s.name} <span style={{opacity:0.7}}>→ {to}</span></span>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -3947,7 +4026,7 @@ Rules:
                               <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,var(--indigo),#4A4AB8)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:14,flexShrink:0}}>{(sup.name||"?")[0]}</div>
                               <div style={{flex:1}}>
                                 <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{sup.name}</div>
-                                <div style={{fontSize:11,color:"var(--text-tertiary)"}}>{sup.email}</div>
+                                <div style={{fontSize:11,color:"var(--text-tertiary)"}}>{sup.contactName?`${sup.contactName} · ${sup.email}`:sup.email}</div>
                               </div>
                               {(sup.saved||(sup.quote&&sup.quote.trim()))&&<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)",display:"inline-flex",alignItems:"center",gap:4}}><Icon name="check" size={10} color="var(--green-deep)" strokeWidth={3}/>Quote entered</span>}
                             </div>
@@ -4644,8 +4723,11 @@ Rules:
               {suppliers.map(s=>(
                 <Card key={s.id}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                    <div style={{width:40,height:40,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:16,flexShrink:0}}>{s.name[0]}</div>
-                    <button onClick={()=>{ if(!can.deleteItems(myRole)){showToast("Only a Manager can remove suppliers.","warn");return;} logActivity("Supplier removed",`${s.name} removed from suppliers`,{entity:"supplier"}); setSuppliers(p=>p.filter(x=>x.id!==s.id)); showToast("Supplier removed"); }} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
+                    <div style={{width:40,height:40,background:"linear-gradient(135deg,var(--green),var(--green-dark))",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:16,flexShrink:0}}>{(s.name||"?")[0]}</div>
+                    <div style={{display:"flex",gap:6}}>
+                      <button onClick={()=>{ const n=normSupplier(s); setEditSup({ ...n, branches:[...n.branches], contacts:n.contacts.map(c=>({...c})) }); }} style={{fontSize:11,color:"var(--green-dark)",background:"var(--green-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer",fontWeight:600}}>Edit</button>
+                      <button onClick={()=>{ if(!can.deleteItems(myRole)){showToast("Only a Manager can remove suppliers.","warn");return;} logActivity("Supplier removed",`${s.name} removed from suppliers`,{entity:"supplier"}); setSuppliers(p=>p.filter(x=>x.id!==s.id)); showToast("Supplier removed"); }} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Remove</button>
+                    </div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3,flexWrap:"wrap"}}>
                     <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{s.name}</div>
@@ -4653,7 +4735,23 @@ Rules:
                       ? <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--amber-light)",color:"var(--amber)",textTransform:"uppercase",letterSpacing:"0.03em"}}>Ad-hoc</span>
                       : <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)",textTransform:"uppercase",letterSpacing:"0.03em"}}>Approved</span>}
                   </div>
-                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:8}}>{s.email}</div>
+                  {(s.contacts&&s.contacts.length)?(
+                    <div style={{marginBottom:8}}>
+                      {s.contacts.slice(0,3).map(c=>(
+                        <div key={c.id} style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.5}}>
+                          {c.name&&<strong style={{color:"var(--text-primary)",fontWeight:600}}>{c.name}</strong>}{c.name&&" · "}{c.email||<span style={{color:"var(--amber)"}}>no email</span>}{c.branch&&<span style={{color:"var(--text-tertiary)"}}> ({c.branch})</span>}
+                        </div>
+                      ))}
+                      {s.contacts.length>3&&<div style={{fontSize:11,color:"var(--text-tertiary)"}}>+{s.contacts.length-3} more contact{s.contacts.length-3!==1?"s":""}</div>}
+                    </div>
+                  ):(
+                    <div style={{fontSize:12,color:"var(--amber)",marginBottom:8}}>No contact yet - tap Edit to add one</div>
+                  )}
+                  {(s.branches&&s.branches.length>0)&&(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+                      {s.branches.map(b=><span key={b} style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--bg-subtle2)",color:"var(--text-tertiary)"}}>{b}</span>)}
+                    </div>
+                  )}
                   <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
                     {(s.categories||[]).map(cat=><Badge key={cat} bg="var(--green-light)" text="var(--green-deep)">{cat}</Badge>)}
                   </div>
@@ -4700,10 +4798,11 @@ Rules:
                 ))}
                 <Btn onClick={()=>{
                   if(!newSup.name?.trim()||!newSup.email?.trim()){showToast("Name and email required","warn");return;}
-                  const ns={id:Date.now(),name:newSup.name.trim(),email:newSup.email.trim(),categories:(newSup.categories||"General").split(",").map(s=>s.trim()).filter(Boolean)};
+                  const ns=normSupplier({id:Date.now(),name:newSup.name.trim(),email:newSup.email.trim(),categories:(newSup.categories||"General").split(",").map(s=>s.trim()).filter(Boolean)});
                   setSuppliers(p=>[...p,ns]);setNewSup({name:"",email:"",categories:""});showToast(`${ns.name} added`);
                 }} color="#15824F">Add</Btn>
               </div>
+              <div style={{fontSize:11,color:"var(--text-muted)",marginTop:10}}>Tip: after adding, tap Edit on a supplier to add more named contacts (each with their own email) and branches.</div>
             </Card>
           </div>
         )}
@@ -5497,6 +5596,69 @@ Rules:
           onClose={()=>setQuickPO(null)}
           onAiFill={aiParseQuickPO}
         />
+      )}
+
+      {editSup&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1002,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setEditSup(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",width:"100%",maxWidth:560,maxHeight:"86vh",overflowY:"auto",boxShadow:"var(--shadow-lg)"}}>
+            <div style={{fontSize:18,fontWeight:800,color:"var(--text-primary)",marginBottom:16,letterSpacing:"-0.02em"}}>Edit supplier</div>
+
+            <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Company name</label>
+            <input value={editSup.name||""} onChange={e=>setEditSup(p=>({...p,name:e.target.value}))} style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:16}}/>
+
+            <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trades <span style={{textTransform:"none",fontWeight:400,color:"var(--text-tertiary)"}}>(comma-separated)</span></label>
+            <input value={(editSup.categories||[]).join(", ")} onChange={e=>setEditSup(p=>({...p,categories:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)}))} placeholder="Plumbing, HVAC" style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:16}}/>
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Branches</label>
+              <button onClick={()=>setEditSup(p=>({...p,branches:[...(p.branches||[]),""]}))} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>+ Add branch</button>
+            </div>
+            {(editSup.branches||[]).length===0&&<div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:12}}>No branches yet. Add depots like "Leeds" or "Geldard Road" - you can then tag each contact with theirs.</div>}
+            {(editSup.branches||[]).map((b,bi)=>(
+              <div key={bi} style={{display:"flex",gap:8,marginBottom:8}}>
+                <input value={b} onChange={e=>setEditSup(p=>{const br=[...(p.branches||[])];br[bi]=e.target.value;return{...p,branches:br};})} placeholder="Branch name" style={{flex:1,boxSizing:"border-box",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                <button onClick={()=>setEditSup(p=>({...p,branches:(p.branches||[]).filter((_,i)=>i!==bi)}))} style={{fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>Remove</button>
+              </div>
+            ))}
+
+            <div style={{height:1,background:"var(--border)",margin:"16px 0"}}/>
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Contacts</label>
+              <button onClick={()=>setEditSup(p=>({...p,contacts:[...(p.contacts||[]),{id:genId("C"),name:"",email:"",branch:""}]}))} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>+ Add contact</button>
+            </div>
+            {(editSup.contacts||[]).length===0&&<div style={{fontSize:12,color:"var(--amber)",marginBottom:12}}>Add at least one contact with an email so you can send this supplier RFQs.</div>}
+            {(editSup.contacts||[]).map((c)=>(
+              <div key={c.id} style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"12px",marginBottom:8}}>
+                <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                  <input value={c.name} onChange={e=>setEditSup(p=>({...p,contacts:p.contacts.map(x=>x.id===c.id?{...x,name:e.target.value}:x)}))} placeholder="Contact name (optional)" style={{flex:"1 1 140px",boxSizing:"border-box",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  <input value={c.email} onChange={e=>setEditSup(p=>({...p,contacts:p.contacts.map(x=>x.id===c.id?{...x,email:e.target.value}:x)}))} placeholder="email@supplier.co.uk" style={{flex:"1 1 180px",boxSizing:"border-box",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  {(editSup.branches||[]).filter(Boolean).length>0&&(
+                    <select value={c.branch||""} onChange={e=>setEditSup(p=>({...p,contacts:p.contacts.map(x=>x.id===c.id?{...x,branch:e.target.value}:x)}))} style={{padding:"7px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",background:"var(--bg-card-solid)"}}>
+                      <option value="">No branch</option>
+                      {(editSup.branches||[]).filter(Boolean).map((b,i)=><option key={i} value={b}>{b}</option>)}
+                    </select>
+                  )}
+                  <button onClick={()=>setEditSup(p=>({...p,contacts:p.contacts.filter(x=>x.id!==c.id)}))} style={{marginLeft:"auto",fontSize:11,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>Remove contact</button>
+                </div>
+              </div>
+            ))}
+
+            <div style={{display:"flex",gap:10,marginTop:18}}>
+              <Btn outline onClick={()=>setEditSup(null)}>Cancel</Btn>
+              <Btn onClick={()=>{
+                if(!editSup.name||!editSup.name.trim()){showToast("Company name required","warn");return;}
+                const clean={...editSup,name:editSup.name.trim(),branches:(editSup.branches||[]).map(b=>(b||"").trim()).filter(Boolean),contacts:(editSup.contacts||[]).map(c=>({...c,name:(c.name||"").trim(),email:(c.email||"").trim()})).filter(c=>c.email||c.name)};
+                const norm=normSupplier(clean);
+                setSuppliers(p=>p.map(x=>x.id===norm.id?norm:x));
+                logActivity("Supplier updated",`${norm.name} updated (${norm.contacts.length} contact${norm.contacts.length!==1?"s":""})`,{entity:"supplier"});
+                setEditSup(null); showToast("Supplier updated");
+              }} color="#15824F">Save changes</Btn>
+            </div>
+          </div>
+        </div>
       )}
 
       {promotePrompt&&(
