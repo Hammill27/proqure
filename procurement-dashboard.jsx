@@ -118,7 +118,7 @@ function useSpeechRecognition({ onTranscript, onFinal }) {
 // --- Constants ----------------------------------------------------------------
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 const RESEND_API    = "https://api.resend.com/emails";
-const TRADES = ["Plumbing","HVAC","Electrical","Ventilation","Mechanical"];
+const TRADES = ["Plumbing","Heating & Gas","Electrical","HVAC","Ventilation","Mechanical","Joinery & Carpentry","Bricklaying","Groundworks","Roofing","Plastering & Drylining","Decorating","Flooring & Tiling","Drainage","Steel & Fabrication","Landscaping","General"];
 const DEFAULT_SUPPLIERS = [
   { id:1, name:"Travis Perkins",         categories:["Plumbing","HVAC","Electrical"],  email:"quotes@travisperkins.co.uk" },
   { id:2, name:"Wolseley UK",             categories:["Plumbing","HVAC"],               email:"rfq@wolseley.co.uk" },
@@ -184,8 +184,9 @@ async function callAI(system, user, history=[], temperature=0.1) {
   throw new Error("No models available: "+lastErr);
 }
 async function parseMaterialList(raw) {
-  const sys = `You are a procurement assistant for UK plumbing, HVAC, and electrical trades. Parse a material request into structured JSON. Return ONLY valid JSON, no markdown.
-Format: {"items":[{"id":1,"description":"...","quantity":N,"unit":"...","category":"Plumbing|HVAC|Electrical|Ventilation|Mechanical","notes":"..."}],"jobRef":"...","urgency":"standard|urgent|next-day"}`;
+  const sys = `You are a procurement assistant for UK building and trades contractors across all disciplines. Parse a material request into structured JSON. Return ONLY valid JSON, no markdown.
+Each item's "category" must be the single best-fit trade from this list: ${TRADES.join("|")}.
+Format: {"items":[{"id":1,"description":"...","quantity":N,"unit":"...","category":"...","notes":"..."}],"jobRef":"...","urgency":"standard|urgent|next-day"}`;
   const txt = await callAI(sys, `Parse this material request: ${raw}`);
   try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
 }
@@ -258,14 +259,14 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
   } catch { return null; }
 }
 
-async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, siteAddress) {
+async function generateRFQ(items, jobRef, company, contactName, fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, siteAddress, collectFrom) {
   const sys = `You are a professional procurement system for a UK trades company. Generate a professional RFQ email body. Return ONLY the plain text email body, no subject line, no markdown.
 IMPORTANT: Do NOT start with a greeting or salutation (no "Dear ...", no "Hello") - the greeting is added separately. Begin directly with the request itself (e.g. "We are requesting a quotation for the following materials..."). Do NOT add a sign-off, "Kind regards", or contact details at the end - a signature is added separately. Just the core request body.`;
   const list = items.map(i=>`- ${i.quantity} ${i.unit} ${i.description}`).join("\n");
   const deliveryLabels = {
     direct: "Delivery direct to site",
     alternative: `Delivery to alternative address: ${altAddress||"to be confirmed"}`,
-    collect: "Collection from branch",
+    collect: `Collection${collectFrom?` from ${collectFrom}`:" from branch"}`,
     tbc: "Delivery method to be confirmed"
   };
   const deliveryStr = deliveryLabels[deliveryMethod]||deliveryMethod;
@@ -1402,6 +1403,7 @@ function ProQureApp({ session }) {
   const [deliveryMethod, setDeliveryMethod] = useState("direct");
   const [deliveryDate,   setDeliveryDate]   = useState("");
   const [altAddress,     setAltAddress]     = useState("");
+  const [collectFrom,    setCollectFrom]    = useState("");
   const [requestNotes,   setRequestNotes]   = useState("");
   const [requestBudget,  setRequestBudget]  = useState("");
 
@@ -1588,7 +1590,8 @@ function ProQureApp({ session }) {
     approved: visibleRequests.filter(r=>r.status==="approved").length,
   };
 
-  const filteredSup = suppliers.filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
+  const _tradeSup = suppliers.filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()));
+  const filteredSup = _tradeSup.length ? _tradeSup : suppliers;
 
   function logToRequest(reqId, action, detail="") {
     const entry = { ts: new Date().toISOString(), action, detail, user: settings.contactName||"You" };
@@ -1688,16 +1691,28 @@ function ProQureApp({ session }) {
       }
       setParsed(data);
       if (data?.jobRef && !jobRef) setJobRef(data.jobRef);
+      // Auto-detect the trade from the parsed items (majority item category) so the
+      // engineer doesn't have to set it. It still powers supplier filtering and the
+      // spend-by-trade chart, and can be overridden on Step 2.
+      let effectiveTrade = trade;
+      const cats = (data.items||[]).map(i=>(i.category||"").trim()).filter(Boolean);
+      if (cats.length) {
+        const counts = {};
+        cats.forEach(c=>{ const m = TRADES.find(t=>t.toLowerCase()===c.toLowerCase()); const key = m||c; counts[key]=(counts[key]||0)+1; });
+        const top = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+        if (TRADES.includes(top)) { effectiveTrade = top; setTrade(top); }
+      }
       // Duplicate detection
       if (jobRef) {
-        const dupe = requests.find(r=>r.jobRef&&r.jobRef.toLowerCase()===jobRef.toLowerCase()&&r.trade===trade&&(Date.now()-new Date(r.created||Date.now()).getTime())<30*24*3600000);
+        const dupe = requests.find(r=>r.jobRef&&r.jobRef.toLowerCase()===jobRef.toLowerCase()&&r.trade===effectiveTrade&&(Date.now()-new Date(r.created||Date.now()).getTime())<30*24*3600000);
         if (dupe) showToast(`Heads up: similar request ${dupe.id} already exists for ${jobRef}`,"warn");
       }
-      // Auto-select all suppliers matching the current trade
+      // Pre-select suppliers matching the detected trade; if none match, select all so
+      // the list is never empty.
       const matchingIds = suppliers
-        .filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===trade.trim().toLowerCase()))
+        .filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===effectiveTrade.trim().toLowerCase()))
         .map(s=>s.id);
-      setSelSup(matchingIds);
+      setSelSup(matchingIds.length ? matchingIds : suppliers.map(s=>s.id));
       setStep(2);
     } catch(e) {
       showToast("AI error: "+e.message,"warn");
@@ -1711,7 +1726,7 @@ function ProQureApp({ session }) {
     if (!can.sendRFQ(myRole)) { handleIssueToBuyer(); return; }
     setLoading(true); setLoadMsg("Generating RFQ email...");
     try {
-      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress);
+      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress, collectFrom);
       setRfqEmail(email);
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
@@ -1969,7 +1984,7 @@ function ProQureApp({ session }) {
       buyerNote: requestNotes,
       created: new Date().toISOString().split("T")[0],
       items: parsed.items,
-      deliveryMethod, deliveryDate, altAddress, rfqDeadline,
+      deliveryMethod, deliveryDate, altAddress, collectFrom, rfqDeadline,
       sentTo: [],
       activity: [{ ts:new Date().toISOString(), action:"List raised", detail:`Materials list raised and issued to the buyer by ${myEmail}`, user:myEmail }],
     };
@@ -2004,7 +2019,7 @@ function ProQureApp({ session }) {
         buyerNote: isEngineer ? requestNotes : "",
         created: new Date().toISOString().split("T")[0],
         items: parsed.items,
-        deliveryMethod, deliveryDate, altAddress, rfqDeadline,
+        deliveryMethod, deliveryDate, altAddress, collectFrom, rfqDeadline,
         sentTo: isEngineer ? [] : sentSuppliers,
         activity:[
           { ts:new Date().toISOString(), action:"Request created", detail:`Job: ${jobRef||"TBC"} · Site: ${site||"TBC"} · Trade: ${trade} · ${parsed.items.length} items`, user:settings.contactName||"You" },
@@ -2020,7 +2035,7 @@ function ProQureApp({ session }) {
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
         setRfqEmail(""); setEmailRes(null); setSelSup([]);
-        setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
+        setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
       }, 1800);
       setEmailRes(results); // show brief success UI
@@ -2036,7 +2051,7 @@ function ProQureApp({ session }) {
     setTrade(r.trade||"Plumbing");
     setDeliveryMethod(r.deliveryMethod||"direct");
     setDeliveryDate(r.deliveryDate||"");
-    setAltAddress(r.altAddress||"");
+    setAltAddress(r.altAddress||""); setCollectFrom(r.collectFrom||"");
     // Rebuild raw input from items
     const raw = (r.items||[]).map(i=>`${i.quantity} ${i.unit} of ${i.description}${i.notes?` (${i.notes})`:""}`).join(", ");
     setRawInput(raw);
@@ -2069,7 +2084,7 @@ function ProQureApp({ session }) {
   function resetNewRequest() {
     setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
     setRfqEmail(""); setEmailRes(null); setSelSup([]);
-    setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setRfqDeadline("");
+    setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
     setInterim(""); setScanning(false);
     setLoading(false); setLoadMsg("");
     setAllAnalyses([]); setExpandedQuote(null);
@@ -2230,7 +2245,7 @@ function ProQureApp({ session }) {
       items:activeReq?.items||[], analysis, poNumber:poNum, poDate:dateStr,
       estimatedTotal: analysis?.estimatedTotal || analysis?.subtotal || "",
       status:"pending-send", type:"generated", label:`PO ${poNum}`,
-      deliveryMethod:activeReq?.deliveryMethod||"", deliveryDate:activeReq?.deliveryDate||"",
+      deliveryMethod:activeReq?.deliveryMethod||"", deliveryDate:activeReq?.deliveryDate||"", collectFrom:activeReq?.collectFrom||"",
       notes:"",
       activity:[{ ts:new Date().toISOString(), action:"Order created", detail:`PO ${poNum} approved - ${sup?.name||"supplier"} - ${analysis?.estimatedTotal||"-"}`, user:settings.contactName||"You" }]
     };
@@ -2391,7 +2406,7 @@ If asked about something ProQure does not do, say so clearly and mention if it i
     setSendingOrder(order.id);
     const note = orderNote[order.id]||"";
     const subject = `Purchase Order ${order.poNumber} - ${order.jobRef}`;
-    const deliveryLabels = { direct:"Delivery direct to site", alternative:"Delivery to alternative address", collect:"Collection from branch", tbc:"Delivery method to be confirmed" };
+    const deliveryLabels = { direct:"Delivery direct to site", alternative:"Delivery to alternative address", collect:`Collection${order.collectFrom?` from ${order.collectFrom}`:" from branch"}`, tbc:"Delivery method to be confirmed" };
     const body = `Dear ${order.supplier},
 
 Please find attached Purchase Order ${order.poNumber} for job reference ${order.jobRef}.
@@ -3463,7 +3478,7 @@ Rules:
                     <input value={site} onChange={e=>setSite(e.target.value)} placeholder="e.g. Unit 4, High Street" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                   </div>
                   <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trade</label>
+                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trade <span style={{textTransform:"none",fontWeight:400,color:"var(--text-tertiary)"}}>· auto-detected, change if needed</span></label>
                     <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}>
                       {TRADES.map(t=><option key={t} value={t}>{t}</option>)}
                     </select>
@@ -3637,6 +3652,9 @@ Rules:
                   </div>
                   {deliveryMethod==="alternative"&&(
                     <input value={altAddress} onChange={e=>setAltAddress(e.target.value)} placeholder="Enter alternative delivery address" style={{width:"100%",marginTop:10,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                  )}
+                  {deliveryMethod==="collect"&&(
+                    <input value={collectFrom} onChange={e=>setCollectFrom(e.target.value)} placeholder="Collect from (e.g. Plumb Centre, Geldard Road)" style={{width:"100%",marginTop:10,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                   )}
                   <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap"}}>
                     <div>
