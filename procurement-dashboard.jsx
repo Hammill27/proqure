@@ -7669,12 +7669,8 @@ function LoginScreen({ onLoggedIn }) {
           </div>
         )}
 
-        <div style={{textAlign:"center",fontSize:12.5,color:t.sub}}>
-          {mode==="signup" ? "Already have a login? " : "Need an account? "}
-          <button onClick={()=>{setMode(mode==="signup"?"signin":"signup");setMsg("");}}
-            style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:700,cursor:"pointer",fontSize:12.5}}>
-            {mode==="signup"?"Sign in":"Create one"}
-          </button>
+        <div style={{textAlign:"center",fontSize:12,color:t.sub,lineHeight:1.5}}>
+          Access to ProQure is by invitation only. If you&rsquo;ve been invited, use the link in your email to set a password. Need access? Ask your manager to add you.
         </div>
       </div>
     </div>
