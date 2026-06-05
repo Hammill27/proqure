@@ -10,6 +10,12 @@ const SB_URL = (import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\
 // because Row Level Security is enabled on the table.
 const SB_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 const cloudEnabled = !!(SB_URL && SB_KEY);
+// Platform super-user(s): full cross-company access for setup/support. Remove before go-live.
+const PLATFORM_ADMINS = ["proqureadmin@proqure.co.uk"];
+const isPlatformAdmin = (email) => PLATFORM_ADMINS.includes((email || "").toLowerCase());
+// Captured before Supabase consumes the URL, so we can tell when someone arrives via
+// an invite or password-reset link and needs to set a password.
+const INITIAL_HASH = (typeof window !== "undefined" ? (window.location.hash || "") : "");
 // Central AI: the OpenRouter key now lives in the /api/ai server function, so the
 // app no longer requires the user to supply one. We assume the server route is
 // available; callAI still falls back to a user key if present, and surfaces a
@@ -76,6 +82,35 @@ async function cloudPush(userId, storeKey, valueObj) {
   if (error) { console.warn("cloudPush failed", storeKey, error); throw error; }
 }
 
+// Resolve the signed-in user to their COMPANY scope, so an entire team shares one
+// dataset instead of each person having a private silo. The first user of a brand-new
+// account becomes the Manager of a new company (company id = their own user id);
+// users invited by a Manager are pre-registered in `members` and join that company on
+// first sign-in. If the `members` table isn't set up yet (or the lookup fails) this
+// returns null and the caller falls back to per-user scope - so nothing breaks before
+// the database step is applied.
+async function resolveCompany(session) {
+  if (!supabase || !session || !session.user) return null;
+  const email = (session.user.email || "").toLowerCase();
+  const uid = session.user.id;
+  try {
+    const { data: rows, error } = await supabase.from("members").select("company_id,role,user_id").eq("email", email).limit(1);
+    if (error) { console.warn("resolveCompany: members lookup failed - falling back to per-user", error.message); return null; }
+    if (rows && rows.length && rows[0].company_id) {
+      // First sign-in: stamp their user id + join time so a Manager can see they're Active.
+      if (!rows[0].user_id) {
+        supabase.from("members").update({ user_id: uid, joined_at: new Date().toISOString() }).eq("email", email)
+          .then(({ error: uErr }) => { if (uErr) console.warn("resolveCompany: activate failed", uErr.message); });
+      }
+      return { companyId: rows[0].company_id, role: rows[0].role || "engineer" };
+    }
+    // No membership yet: brand-new account = first Manager of a new company.
+    const { error: insErr } = await supabase.from("members").insert({ email, company_id: uid, role: "manager", user_id: uid });
+    if (insErr) { console.warn("resolveCompany: bootstrap insert failed - falling back", insErr.message); return null; }
+    return { companyId: uid, role: "manager" };
+  } catch (e) { console.warn("resolveCompany failed", e); return null; }
+}
+
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(typeof window!=="undefined"?window.innerWidth<768:false);
@@ -90,6 +125,7 @@ function useIsMobile() {
 // --- Speech recognition hook -------------------------------------------------
 function useSpeechRecognition({ onTranscript, onFinal }) {
   const recRef = useRef(null);
+  const wantRef = useRef(false);
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(false);
   useEffect(() => {
@@ -106,12 +142,25 @@ function useSpeechRecognition({ onTranscript, onFinal }) {
       }
       if (final) onFinal(final); else onTranscript(interim);
     };
-    rec.onerror = () => setListening(false);
-    rec.onend   = () => setListening(false);
+    rec.onerror = (e) => {
+      // Transient Android errors (no-speech, aborted, network) shouldn't end the
+      // session - let onend decide. Only a hard permission/device error stops us.
+      const err = e && e.error;
+      if (err === "not-allowed" || err === "service-not-allowed" || err === "audio-capture") {
+        wantRef.current = false; setListening(false);
+      }
+    };
+    rec.onend = () => {
+      // Android Chrome fires onend after every pause even in continuous mode. If the
+      // user still wants to dictate, restart automatically so it doesn't cut out.
+      if (wantRef.current) { try { rec.start(); } catch (e) { /* already starting */ } }
+      else { setListening(false); }
+    };
     recRef.current = rec;
+    return () => { wantRef.current = false; try { rec.stop(); } catch (e) {} };
   }, []);
-  const start = () => { if (recRef.current) { recRef.current.start(); setListening(true); } };
-  const stop  = () => { if (recRef.current) { recRef.current.stop();  setListening(false); } };
+  const start = () => { if (recRef.current && !wantRef.current) { wantRef.current = true; try { recRef.current.start(); } catch (e) {} setListening(true); } };
+  const stop  = () => { wantRef.current = false; if (recRef.current) { try { recRef.current.stop(); } catch (e) {} } setListening(false); };
   return { listening, supported, start, stop };
 }
 
@@ -1836,7 +1885,7 @@ const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) 
 };
 
 // --- App ----------------------------------------------------------------------
-function ProQureApp({ session }) {
+function ProQureApp({ session, companyId }) {
   // Settings persisted to localStorage
   const [settings, setSettings] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
@@ -1940,7 +1989,7 @@ function ProQureApp({ session }) {
   const myMember = team.find(m => (m.email||"").toLowerCase() === myEmail) || null;
   // Defensive: treat the retired "owner" role (or any unknown role) as manager / engineer sensibly.
   const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
-  const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
+  const myRole = isPlatformAdmin(myEmail) ? "manager" : (normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager"));
   // If the user is on a view their role can't access, send them to the dashboard.
   // Guard against transient demotion: during a background cloud sync the team list
   // can momentarily be empty/re-loading, which would briefly resolve myRole to the
@@ -1956,16 +2005,62 @@ function ProQureApp({ session }) {
   }, [view, myRole, team, myMember]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("engineer");
-  function handleInviteMember() {
+  const [inviteName, setInviteName] = useState("");
+  const [inviteEmployment, setInviteEmployment] = useState("subcontractor");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [memberStatus, setMemberStatus] = useState({});
+  // Reflect who has signed in (Active) vs is still invited (Pending) on the Team list.
+  useEffect(() => {
+    if (view !== "team" || !cloudEnabled || !supabase || !cloudUserId) return;
+    let on = true;
+    supabase.from("members").select("email,user_id,joined_at").eq("company_id", cloudUserId).then(({ data, error }) => {
+      if (!on || error || !data) return;
+      const map = {};
+      data.forEach(r => { map[(r.email||"").toLowerCase()] = { active: !!r.user_id, joinedAt: r.joined_at }; });
+      setMemberStatus(map);
+    });
+    return () => { on = false; };
+  }, [view, cloudUserId]);
+  async function handleInviteMember() {
     if (!can.manageTeam(myRole)) { showToast("Only a Manager can add members.","warn"); return; }
     const email = inviteEmail.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast("Enter a valid email address.","warn"); return; }
     if (team.some(m => (m.email||"").toLowerCase() === email)) { showToast("That person is already on the team.","warn"); return; }
     if (roleRank(inviteRole) > roleRank(myRole)) { showToast("You can only assign roles up to your own level.","warn"); return; }
-    setTeam(prev => [...prev, { email, name:"", role: inviteRole, addedAt: new Date().toISOString(), active: true }]);
-    logActivity("Team member added", `${email} added as ${ROLES[inviteRole]?.label||inviteRole}`, { entity:"team" });
-    setInviteEmail(""); setInviteRole("engineer");
-    showToast(`${email} added. They can sign in with this email to join.`);
+    if (inviteBusy) return;
+    setInviteBusy(true);
+    const member = { email, name: inviteName.trim(), role: inviteRole, employment: inviteEmployment, addedAt: new Date().toISOString(), active: true };
+    try {
+      let emailed = false;
+      if (cloudEnabled && supabase) {
+        try {
+          const { data: sess } = await supabase.auth.getSession();
+          const token = sess?.session?.access_token;
+          if (token) {
+            const res = await fetch("/api/admin", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+              body: JSON.stringify({ action: "invite", email, name: inviteName.trim(), role: inviteRole, employment: inviteEmployment }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (res.ok && d.ok) { emailed = true; showToast(d.message || `Invite emailed to ${email}.`); }
+            else if (res.status !== 404) { showToast(d.error || "Could not email the invite - added to the team; they can use 'Forgot password' to set one.", "warn"); }
+          }
+        } catch (e) { /* fall through to the local fallback */ }
+        // Fallback (server function not deployed yet): register the membership so the
+        // person still joins this company when they sign in / reset their password.
+        if (!emailed && cloudUserId) {
+          supabase.from("members").upsert({ email, company_id: cloudUserId, role: inviteRole, employment: inviteEmployment, user_id: null }, { onConflict: "email" })
+            .then(({ error }) => { if (error) console.warn("invite: members upsert failed", error.message); });
+          showToast(`${email} added. They can sign in with this email to join.`);
+        }
+      } else {
+        showToast(`${email} added.`);
+      }
+      setTeam(prev => [...prev, member]);
+      logActivity("Team member added", `${email} added as ${ROLES[inviteRole]?.label||inviteRole}`, { entity:"team" });
+      setInviteEmail(""); setInviteName(""); setInviteRole("engineer"); setInviteEmployment("subcontractor");
+    } finally { setInviteBusy(false); }
   }
   function handleChangeRole(email, newRole) {
     if (!can.manageTeam(myRole)) { showToast("Only a Manager can change roles.","warn"); return; }
@@ -1977,6 +2072,10 @@ function ProQureApp({ session }) {
       showToast("There must be at least one Manager. Promote someone else first.","warn"); return;
     }
     setTeam(prev => prev.map(m => (m.email||"").toLowerCase() === target ? { ...m, role: newRole } : m));
+    if (cloudEnabled && supabase && cloudUserId) {
+      supabase.from("members").update({ role: newRole }).eq("email", target).eq("company_id", cloudUserId)
+        .then(({ error }) => { if (error) console.warn("role change: members update failed", error.message); });
+    }
     logActivity("Role changed", `${email} is now ${ROLES[newRole]?.label||newRole}`, { entity:"team" });
     showToast("Role updated.");
   }
@@ -2326,12 +2425,13 @@ function ProQureApp({ session }) {
         const dupe = requests.find(r=>r.jobRef&&r.jobRef.toLowerCase()===jobRef.toLowerCase()&&r.trade===effectiveTrade&&(Date.now()-new Date(r.created||Date.now()).getTime())<30*24*3600000);
         if (dupe) showToast(`Heads up: similar request ${dupe.id} already exists for ${jobRef}`,"warn");
       }
-      // Pre-select suppliers matching the detected trade; if none match, select all so
-      // the list is never empty.
+      // Pre-tick only the suppliers matching the detected trade as a convenience; if
+      // none match, start with NONE selected so the user chooses who to send to
+      // (rather than everyone being auto-selected).
       const matchingIds = suppliers
         .filter(s=>(s.categories||[]).some(cat=>cat.trim().toLowerCase()===effectiveTrade.trim().toLowerCase()))
         .map(s=>s.id);
-      setSelSup(matchingIds.length ? matchingIds : suppliers.map(s=>s.id));
+      setSelSup(matchingIds);
       setStep(2);
     } catch(e) {
       showToast("AI error: "+e.message,"warn");
@@ -3203,7 +3303,9 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_team",JSON.stringify(team))}catch{} },[team]);
 
   // --- Cloud push: mirror changes up to Supabase (debounced) ----------------
-  const cloudUserId = session?.user?.id || null;
+  // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
+  // user id (sole trader / pre-migration fallback). All sync reads/writes use this.
+  const cloudUserId = companyId || session?.user?.id || null;
   const pushTimers = useRef({});
   const queueCloudPush = useCallback((key, valueObj) => {
     if (!cloudEnabled || !cloudUserId) return;
@@ -4374,7 +4476,7 @@ Rules:
                 <div style={{marginBottom:14}}>
                   <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Or scan a document</div>
                   <label style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",background:scanning?"var(--indigo-light)":"var(--bg-subtle)",border:scanning?"2px solid var(--indigo)":"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:scanning?"not-allowed":"pointer",transition:"all 0.2s"}}>
-                    <input type="file" accept="image/*,.pdf,capture=camera" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
+                    <input type="file" accept="image/*,.pdf" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
                     <div style={{width:40,height:40,borderRadius:12,background:scanning?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 4px 12px rgba(99,102,241,0.3)"}}>
                       {scanning
                         ?<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke="white"/></svg>
@@ -6223,17 +6325,24 @@ Rules:
             {can.manageTeam(myRole) && (
               <Card>
                 <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Invite someone</div>
-                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14}}>Add a colleague by email and choose their role. They sign in with that email to join.</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14}}>Add a colleague by name and email and choose their role - we email them a link to set a password and join. Subcontractor vs internal is a label only; it does not change what they can see.</div>
                 <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <input value={inviteName} onChange={e=>setInviteName(e.target.value)} placeholder="Name (optional)" type="text"
+                    style={{flex:"1 1 140px",padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                   <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} placeholder="colleague@company.co.uk" type="email"
-                    style={{flex:"1 1 240px",padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    style={{flex:"1 1 220px",padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                   <select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}
                     style={{padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}>
                     {Object.keys(ROLES).filter(r=>roleRank(r)<=roleRank(myRole)).sort((a,b)=>roleRank(a)-roleRank(b)).map(r=>(
                       <option key={r} value={r}>{ROLES[r].label}</option>
                     ))}
                   </select>
-                  <Btn color="#15824F" onClick={handleInviteMember}>Add member</Btn>
+                  <select value={inviteEmployment} onChange={e=>setInviteEmployment(e.target.value)}
+                    style={{padding:"10px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}>
+                    <option value="subcontractor">Subcontractor</option>
+                    <option value="internal">Internal</option>
+                  </select>
+                  <Btn color="#15824F" onClick={handleInviteMember}>{inviteBusy ? "Sending..." : "Create account & invite"}</Btn>
                 </div>
                 <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:10,lineHeight:1.5}}>Engineers raise the materials list and sign off deliveries. Buyers send RFQs, handle quotes and raise purchase orders. Managers manage the team and have full access.</div>
               </Card>
@@ -6244,6 +6353,7 @@ Rules:
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {team.map((m,mi)=>{
                   const isMe = (m.email||"").toLowerCase()===myEmail;
+                  const memStat = memberStatus[(m.email||"").toLowerCase()];
                   return (
                     <div key={m.email||mi} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",flexWrap:"wrap"}}>
                       <div style={{width:38,height:38,borderRadius:"50%",background:ROLES[m.role]?.bg||"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:700,color:ROLES[m.role]?.color||"var(--green-dark)",fontSize:15}}>
@@ -6252,9 +6362,12 @@ Rules:
                       <div style={{flex:"1 1 200px",minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.email}{isMe&&<span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:400}}> (you)</span>}</div>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2,flexWrap:"wrap"}}>
-                          {roleRank(m.role)>=2
+                          {(((m.employment) || (roleRank(m.role)>=2 ? "internal" : "subcontractor")) === "internal")
                             ? <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Internal</span>
                             : <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",padding:"2px 8px",borderRadius:99,background:"#FBF3E8",color:"#9A5B16"}}>Subcontractor</span>}
+                          {cloudEnabled && !isMe && ((memStat && memStat.active)
+                            ? <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Active</span>
+                            : <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",padding:"2px 8px",borderRadius:99,background:"#FBF3E8",color:"#9A5B16"}} title="Invited - hasn't signed in yet">Pending</span>)}
                           <span style={{fontSize:11,color:"var(--text-secondary)"}}>{ROLES[m.role]?.desc||""}</span>
                         </div>
                       </div>
@@ -7453,6 +7566,11 @@ function LoginScreen({ onLoggedIn }) {
     try { document.body.style.background = bg; document.documentElement.style.background = bg; } catch {}
   }, [dark]);
 
+  const forgot = async () => {
+    if (!email.trim()) { setMsg("Enter your email above first, then tap reset."); return; }
+    try { await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin }); setMsg("If that email has an account, a reset link is on its way."); }
+    catch (e) { setMsg("Couldn't send a reset link just now - please try again shortly."); }
+  };
   const submit = async () => {
     if (!email.trim() || !password) { setMsg("Enter an email and password."); return; }
     setBusy(true); setMsg("");
@@ -7537,6 +7655,11 @@ function LoginScreen({ onLoggedIn }) {
           style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?0.7:1,marginBottom:14}}>
           {busy ? "Please wait..." : (mode==="signup"?"Create account":"Sign in")}
         </button>
+        {mode==="signin" && (
+          <div style={{textAlign:"center",marginBottom:12}}>
+            <button onClick={forgot} style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:600,cursor:"pointer",fontSize:12.5}}>Forgot password?</button>
+          </div>
+        )}
 
         <div style={{textAlign:"center",fontSize:12.5,color:t.sub}}>
           {mode==="signup" ? "Already have a login? " : "Need an account? "}
@@ -7613,8 +7736,36 @@ function SiteGate({ onUnlock }) {
   );
 }
 
+function SetPassword({ onDone }) {
+  const [pw, setPw] = useState(""); const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
+  const save = async () => {
+    if (pw.length < 8) { setMsg("Use at least 8 characters."); return; }
+    if (pw !== pw2) { setMsg("The two passwords don't match."); return; }
+    setBusy(true); setMsg("");
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pw });
+      if (error) { setMsg(error.message); setBusy(false); return; }
+      onDone();
+    } catch (e) { setMsg("Something went wrong. Please try again."); setBusy(false); }
+  };
+  const wrap = {position:"fixed",inset:0,minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)",fontFamily:"'Plus Jakarta Sans',sans-serif",padding:20};
+  const card = {background:"#fff",borderRadius:18,padding:"34px 30px",width:"100%",maxWidth:380,boxShadow:"0 24px 60px rgba(0,0,0,0.4)"};
+  const inp = {width:"100%",boxSizing:"border-box",padding:"12px 14px",border:"1px solid #E2E0D9",borderRadius:10,fontSize:14,marginBottom:12,outline:"none"};
+  return (<div style={wrap}><div style={card}>
+    <div style={{fontSize:18,fontWeight:800,color:"#101013",marginBottom:4}}>Set your password</div>
+    <div style={{fontSize:13,color:"#5C5B54",marginBottom:18,lineHeight:1.5}}>Choose a password to finish setting up your ProQure account.</div>
+    <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setMsg("");}} placeholder="New password (min 8 characters)" autoFocus style={inp}/>
+    <input type="password" value={pw2} onChange={e=>{setPw2(e.target.value);setMsg("");}} placeholder="Confirm password" onKeyDown={e=>{if(e.key==="Enter")save();}} style={inp}/>
+    {msg && <div style={{fontSize:12.5,color:"#9A5B16",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:"9px 12px",marginBottom:12}}>{msg}</div>}
+    <button onClick={save} disabled={busy} style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?0.7:1}}>{busy?"Saving...":"Save password & continue"}</button>
+  </div></div>);
+}
+
 function AppInner() {
   const [session, setSession] = useState(null);
+  const [companyId, setCompanyId] = useState(null);
+  const [needPassword, setNeedPassword] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
   const [gateOk, setGateOk] = useState(() => {
@@ -7645,14 +7796,30 @@ function AppInner() {
     return () => { active = false; sub?.subscription?.unsubscribe(); };
   }, []);
 
+  // Detect arrival via an invite or password-reset link, so we can prompt for a new password.
+  useEffect(() => {
+    if (!supabase) return;
+    if (/type=(recovery|invite)/.test(INITIAL_HASH)) setNeedPassword(true);
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") setNeedPassword(true);
+    });
+    return () => { sub?.subscription?.unsubscribe(); };
+  }, []);
+
   // When a session appears, pull cloud data into localStorage before showing the app
   useEffect(() => {
     let active = true;
     if (session?.user?.id) {
       setReady(false);
-      cloudPull(session.user.id).then(() => { if (active) setReady(true); });
+      (async () => {
+        const co = await resolveCompany(session);
+        const scope = (co && co.companyId) || session.user.id; // fallback: per-user scope
+        if (active) setCompanyId(scope);
+        await cloudPull(scope);
+        if (active) setReady(true);
+      })();
     } else {
-      setReady(false);
+      setReady(false); setCompanyId(null);
     }
     return () => { active = false; };
   }, [session]);
@@ -7665,10 +7832,11 @@ function AppInner() {
     return <div style={loadStyle}>Loading...</div>;
   }
   if (!session) return <LoginScreen onLoggedIn={setSession} />;
+  if (needPassword) return <SetPassword onDone={() => { setNeedPassword(false); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} }} />;
   if (!ready) {
     return <div style={loadStyle}>Syncing your data...</div>;
   }
-  return <ProQureApp session={session} />;
+  return <ProQureApp session={session} companyId={companyId} />;
 }
 
 export default function App() {
