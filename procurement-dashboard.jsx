@@ -935,6 +935,12 @@ const SENDING_DOMAIN = "proqure.co.uk"; // later: `${instanceSlug}.proqure.co.uk
 // each supplier's reply is addressed to a unique q-<token>@<domain> address that
 // api/inbound.js matches back to the right supplier + request.
 const INBOUND_CAPTURE_DOMAIN = (import.meta.env.VITE_INBOUND_CAPTURE_DOMAIN || "").trim();
+// Support/feedback destination. HARDWIRE the ProQure support mailbox here once it
+// exists in Exchange Online (e.g. "support@proqure.co.uk") - Resend will then send
+// each submission straight to it for a person to read and reply to. While this is
+// blank, the contact form stays fully usable and simply shows a friendly
+// confirmation without sending anything. Flip it on by setting this one string.
+const FEEDBACK_EMAIL = "";
 function buildSender(kind, settings={}) {
   // kind: "quotes" (RFQs) or "orders" (POs)
   const localPart = kind === "orders" ? "orders" : "quotes";
@@ -1446,6 +1452,7 @@ function ProQureApp({ session }) {
   // Contact form
   const [contactForm, setContactForm] = useState({name:"",email:"",category:"Bug report",priority:"Normal",description:""});
   const [contactSent, setContactSent] = useState(false);
+  const [contactBusy, setContactBusy] = useState(false);
 
   // Keyboard shortcuts
   useEffect(()=>{
@@ -2674,6 +2681,26 @@ ${settings.company||""}`;
   })();
   const maxTradeSpend = spendByTrade.length ? Math.max(...spendByTrade.map(s=>s.total)) : 0;
 
+  // Dashboard: procurement-pipeline donut (where live requests sit right now)
+  const pipeline = [
+    { label:"Awaiting quotes", value:stats.pending,  color:"#C77D2E" },
+    { label:"Quotes in",       value:stats.received, color:"#7E6DD6" },
+    { label:"Approved",        value:stats.approved, color:"#1E9E63" },
+  ].filter(p=>p.value>0);
+  const pipelineTotal = pipeline.reduce((s,p)=>s+p.value,0);
+
+  // Dashboard: activity over the last 7 days (one bar per day)
+  const activityWeek = (()=>{
+    const days=[];
+    for(let i=6;i>=0;i--){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-i);
+      days.push({ start:d.getTime(), label:d.toLocaleDateString("en-GB",{weekday:"narrow"}), count:0 }); }
+    (activityLog||[]).forEach(a=>{ const t=new Date(a.ts).getTime(); if(isNaN(t)) return;
+      const day=days.find(x=>t>=x.start && t<x.start+86400000); if(day) day.count++; });
+    return days;
+  })();
+  const activityWeekMax = Math.max(1, ...activityWeek.map(d=>d.count));
+  const activityWeekTotal = activityWeek.reduce((s,d)=>s+d.count,0);
+
   // Budget tracking: jobs with a budget set, vs actual approved spend
   const budgetJobs = requests
     .filter(r => r.budget && parseFloat(r.budget) > 0)
@@ -3151,6 +3178,8 @@ Rules:
       .skeleton{background:linear-gradient(90deg,var(--bg-subtle) 25%,var(--bg-subtle2) 50%,var(--bg-subtle) 75%);background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite;border-radius:8px}
       @keyframes typingDot{0%,60%,100%{opacity:0.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
       .stagger-in{animation:slideUp 0.5s cubic-bezier(0.16,1,0.3,1) backwards}
+      @keyframes donutSeg{from{stroke-dasharray:0 9999}to{stroke-dasharray:var(--len) var(--gap)}}
+      @keyframes barGrow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
       ::-webkit-scrollbar{width:8px;height:8px}
       ::-webkit-scrollbar-track{background:transparent}
       ::-webkit-scrollbar-thumb{background:var(--bg-subtle2);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
@@ -3475,6 +3504,60 @@ Rules:
                 </button>
               ))}
             </div>
+
+            {/* Insights: pipeline donut + activity trend */}
+            {(pipelineTotal>0 || activityWeekTotal>0) && (
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:isMobile?12:16,marginBottom:isMobile?18:24}}>
+                {pipelineTotal>0 && (
+                  <div className="stagger-in" style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"20px 24px",boxShadow:"var(--shadow-sm)",animationDelay:"0.1s"}}>
+                    <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>Procurement pipeline</div>
+                    <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginBottom:14}}>Where your live requests sit right now</div>
+                    <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+                      <div style={{position:"relative",width:132,height:132,flexShrink:0}}>
+                        <svg width="132" height="132" viewBox="0 0 120 120" style={{transform:"rotate(-90deg)"}}>
+                          <circle cx="60" cy="60" r="44" fill="none" stroke="var(--bg-subtle2)" strokeWidth="15"/>
+                          {(()=>{ const C=2*Math.PI*44; let acc=0; return pipeline.map((p,i)=>{ const len=p.value/pipelineTotal*C; const off=acc; acc+=len; return (
+                            <circle key={p.label} cx="60" cy="60" r="44" fill="none" stroke={p.color} strokeWidth="15" strokeLinecap="butt"
+                              strokeDasharray="0 9999" strokeDashoffset={-off}
+                              style={{"--len":`${len}px`,"--gap":`${C-len}px`,animation:`donutSeg 0.85s cubic-bezier(0.16,1,0.3,1) ${0.15+i*0.12}s forwards`}}/>
+                          ); }); })()}
+                        </svg>
+                        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+                          <div style={{fontSize:26,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-primary)",lineHeight:1}} className="num"><CountUp value={pipelineTotal}/></div>
+                          <div style={{fontSize:9,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.1em",marginTop:3}}>live</div>
+                        </div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:10,flex:1,minWidth:120}}>
+                        {pipeline.map(p=>(
+                          <div key={p.label} style={{display:"flex",alignItems:"center",gap:9}}>
+                            <span style={{width:10,height:10,borderRadius:3,background:p.color,flexShrink:0}}/>
+                            <span style={{fontSize:12.5,color:"var(--text-secondary)",flex:1}}>{p.label}</span>
+                            <span style={{fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-primary)"}}>{p.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {activityWeekTotal>0 && (
+                  <div className="stagger-in" style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"20px 24px",boxShadow:"var(--shadow-sm)",animationDelay:"0.15s"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                      <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>Activity this week</div>
+                      <div style={{fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)"}}>{activityWeekTotal}</div>
+                    </div>
+                    <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginBottom:16}}>Actions across the last 7 days</div>
+                    <div style={{display:"flex",alignItems:"flex-end",gap:isMobile?6:9,height:96}}>
+                      {activityWeek.map((d,i)=>{ const h=Math.round(d.count/activityWeekMax*100); const today=i===6; return (
+                        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:7,height:"100%",justifyContent:"flex-end"}}>
+                          <div title={`${d.count} event${d.count!==1?"s":""}`} style={{width:"100%",maxWidth:34,height:`${d.count>0?Math.max(14,h):4}%`,background:d.count>0?(today?"linear-gradient(180deg,#1E9E63,#15824F)":"rgba(30,158,99,0.45)"):"var(--bg-subtle2)",borderRadius:6,transformOrigin:"bottom",animation:`barGrow 0.55s cubic-bezier(0.16,1,0.3,1) ${0.2+i*0.06}s backwards`}}/>
+                          <span style={{fontSize:10,color:today?"var(--green-dark)":"var(--text-muted)",fontWeight:today?700:500}}>{d.label}</span>
+                        </div>
+                      ); })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Quick actions */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:isMobile?8:12,marginBottom:isMobile?18:24}}>
@@ -5306,7 +5389,7 @@ Rules:
             </div>
             {contactSent?(
               <Card style={{textAlign:"center",padding:"48px 40px"}}>
-                <div style={{fontSize:36,marginBottom:16}}>ok</div>
+                <div style={{width:60,height:60,borderRadius:"50%",background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Icon name="check_circle" size={30} color="var(--green-dark)"/></div>
                 <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request sent</div>
                 <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Thank you for getting in touch. We will respond as soon as possible.</div>
                 <div style={{display:"flex",gap:10,justifyContent:"center"}}>
@@ -5346,15 +5429,43 @@ Rules:
                   <textarea value={contactForm.description} onChange={e=>setContactForm(p=>({...p,description:e.target.value}))} placeholder="Please describe your issue in as much detail as possible..." style={{width:"100%",height:120,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6}}></textarea>
                 </div>
                 <button
-                  onClick={()=>{
+                  onClick={async ()=>{
+                    if(!contactForm.name.trim()||!contactForm.email.trim()){showToast("Please add your name and email","warn");return;}
                     if(!contactForm.description.trim()){showToast("Please add a description","warn");return;}
-                    showToast("Support request submitted");
-                    setContactSent(true);
-                    setContactForm(p=>({...p,description:""}));
+                    // No support mailbox wired yet: keep the form fully usable and just confirm.
+                    if(!FEEDBACK_EMAIL){
+                      showToast("Thanks - we've got it");
+                      setContactSent(true);
+                      setContactForm(p=>({...p,description:""}));
+                      return;
+                    }
+                    setContactBusy(true);
+                    try {
+                      const sender = buildSender("quotes", settings);
+                      const subject = `[ProQure] ${contactForm.category} (${contactForm.priority}) - ${contactForm.name||"User"}`;
+                      const body = [
+                        `Category: ${contactForm.category}`,
+                        `Priority: ${contactForm.priority}`,
+                        `From: ${contactForm.name} <${contactForm.email}>`,
+                        session?.user?.email ? `Account: ${session.user.email}` : "",
+                        `Company: ${settings.company||"-"}`,
+                        `Sent: ${new Date().toLocaleString("en-GB")}`,
+                        "",
+                        contactForm.description.trim(),
+                      ].filter(Boolean).join("\n");
+                      const res = await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json"},
+                        body: JSON.stringify({ from:sender.from, to:[FEEDBACK_EMAIL], reply_to:contactForm.email||undefined, subject, text:body })});
+                      if(!res.ok) throw new Error("send failed");
+                      showToast("Support request sent");
+                      setContactSent(true);
+                      setContactForm(p=>({...p,description:""}));
+                    } catch(e) {
+                      showToast("Couldn't send right now - please try again","warn");
+                    } finally { setContactBusy(false); }
                   }}
-                  disabled={!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim()}
-                  style={{background:"linear-gradient(135deg,#5B5BD6,#4A4AB8)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:"pointer",opacity:(!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
-                  Submit request
+                  disabled={contactBusy||!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim()}
+                  style={{background:"linear-gradient(135deg,#5B5BD6,#4A4AB8)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:contactBusy?"wait":"pointer",opacity:(contactBusy||!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
+                  {contactBusy?"Sending...":"Submit request"}
                 </button>
               </Card>
             )}
@@ -5364,7 +5475,7 @@ Rules:
         {view==="settings"&&(
           <div className="stagger-in" style={{maxWidth:720}}>
             <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Settings</h1>
-            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Configure your company details and API keys</p>
+            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Configure your company details, branding and preferences</p>
             {session && cloudEnabled && (
               <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"18px 22px",marginBottom:20,boxShadow:"var(--shadow-sm)",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -6394,14 +6505,15 @@ function SignatureEditor({ value, onChange }) {
           onPaste={handlePaste}
           onInput={sync}
           onBlur={sync}
-          style={{minHeight:90,height:"auto",overflowX:"hidden",width:"100%",boxSizing:"border-box",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",lineHeight:1.5,wordBreak:"break-word"}}
+          style={{minHeight:90,height:"auto",overflowX:"hidden",width:"100%",boxSizing:"border-box",padding:"10px 12px",border:"1px solid #d8d8d0",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"#ffffff",color:"#1a1a17",lineHeight:1.5,wordBreak:"break-word"}}
         />
         {empty&&(
-          <div style={{position:"absolute",top:10,left:13,fontSize:13,color:"var(--text-muted)",pointerEvents:"none"}}>
+          <div style={{position:"absolute",top:10,left:13,fontSize:13,color:"#9a9a90",pointerEvents:"none"}}>
             Paste your signature here (copy it straight from Outlook or Gmail)
           </div>
         )}
       </div>
+      <div style={{fontSize:10.5,color:"var(--text-muted)",marginTop:6,lineHeight:1.4}}>Shown on white &mdash; exactly how it appears at the bottom of your emails.</div>
       {warn && <div style={{fontSize:11,color:"var(--amber)",marginTop:6,lineHeight:1.5}}>{warn}</div>}
       {!empty && (
         <button onClick={()=>{ if(ref.current) ref.current.innerHTML=""; onChange(""); setEmpty(true); setWarn(""); }}
