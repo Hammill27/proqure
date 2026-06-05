@@ -1198,6 +1198,493 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.save(`PO-${poNumber}.pdf`);
 }
 
+// ============================================================================
+// O&M FILE GENERATOR
+// Per project (jobRef), turns the procured materials into a presented O&M pack:
+// equipment schedule + manufacturer literature + planned maintenance (PPM).
+// ============================================================================
+
+// Web-search-enabled AI call (used to locate manufacturer datasheets online).
+// Returns { text, citations:[{url,title}] }. Falls back to a user key if the
+// server key isn't configured. Web search is metered, so only used on demand.
+async function callAIWeb(system, user, maxResults = 4) {
+  const messages = [{ role: "system", content: system }, { role: "user", content: user }];
+  try {
+    const res = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, web: true, maxResults, temperature: 0 }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.text) return { text: d.text, citations: d.citations || [] };
+      if (d.error && !d.error.includes("not configured")) throw new Error(d.error);
+    }
+  } catch (e) { /* fall through */ }
+  // No web fallback on the user-key path (kept simple): return empty.
+  return { text: "", citations: [] };
+}
+
+// Collect procured line items for a job, de-duplicated by product name.
+function omGatherMaterials(orders, jobRef) {
+  const rows = [];
+  (orders || []).filter(o => o.jobRef === jobRef && o.status !== "cancelled").forEach(o => {
+    (o.items || []).forEach(it => {
+      const name = (it.product || it.description || it.rawText || "").trim();
+      if (!name) return;
+      rows.push({
+        product: name,
+        qty: it.qty ?? it.requestedQty ?? it.quantity ?? null,
+        supplier: o.supplier || "",
+        trade: o.trade || it.category || "",
+      });
+    });
+  });
+  const map = new Map();
+  rows.forEach(m => {
+    const k = m.product.toLowerCase();
+    if (map.has(k)) { const e = map.get(k); if (m.qty) e.qty = (e.qty || 0) + m.qty; }
+    else map.set(k, { ...m });
+  });
+  return [...map.values()];
+}
+
+function omStripFences(t) {
+  return (t || "").replace(/```json/gi, "").replace(/```/g, "").trim();
+}
+
+// One AI call: classify each material, infer manufacturer/model, group into an
+// equipment schedule, draft a literature list and PPM schedules. Defensive — on
+// any failure it falls back to a basic structure built from the raw names.
+async function omBuildData(materials) {
+  const list = materials.slice(0, 80).map((m, i) =>
+    `${i + 1}. ${m.product}${m.qty ? ` (qty ${m.qty})` : ""}${m.trade ? ` [${m.trade}]` : ""}`
+  ).join("\n");
+
+  const sys = `You are compiling an Operations & Maintenance (O&M) manual for a UK building services contractor, from a list of materials that were procured for one project. For EACH item, infer the likely manufacturer and model/range where you reasonably can (leave blank if unknown — never invent a precise model number you are unsure of). Group items into sensible building-services systems (e.g. Electrical Distribution, Lighting, Fire & Security, Ventilation & AC, Water Services, Drainage, etc.). Also draft a Planned Preventative Maintenance (PPM) schedule for the equipment types present, split into Electrical and Mechanical, using realistic UK frequencies (Monthly/Quarterly/6 Monthly/Annually) and standards (BS 7671, BS 5266, BS 5839, F-Gas) where relevant.
+Return ONLY valid JSON, no markdown, in exactly this shape:
+{"equipment":[{"category":"...","items":[{"item":"...","manufacturer":"...","model":"...","rating":"..."}]}],
+ "literature":[{"item":"...","manufacturer":"...","model":"...","query":"manufacturer model datasheet pdf"}],
+ "ppm":{"electrical":[{"title":"...","rows":[{"freq":"Monthly","activity":"..."}]}],
+        "mechanical":[{"title":"...","rows":[{"freq":"Quarterly","activity":"..."}]}]}}
+Keep "literature" to the distinct equipment products only (not consumables like cable, fixings, sealant). Every PPM activity must be a real maintenance task. All schedules are drafts for the contractor to sign off.`;
+
+  let data = null;
+  try {
+    const txt = await callAI(sys, `Materials procured for this project:\n${list}`, [], 0.1);
+    data = JSON.parse(omStripFences(txt));
+  } catch (e) { data = null; }
+
+  if (!data || !data.equipment) {
+    // Fallback: list everything under one heading, no PPM beyond a generic note.
+    data = {
+      equipment: [{
+        category: "Procured materials",
+        items: materials.map(m => ({ item: m.product, manufacturer: "", model: "", rating: m.qty ? `qty ${m.qty}` : "" })),
+      }],
+      literature: materials.slice(0, 40).map(m => ({ item: m.product, manufacturer: "", model: "", query: `${m.product} datasheet pdf` })),
+      ppm: { electrical: [], mechanical: [] },
+      _fallback: true,
+    };
+  }
+  data.equipment = data.equipment || [];
+  data.literature = data.literature || [];
+  data.ppm = data.ppm || { electrical: [], mechanical: [] };
+  data.ppm.electrical = data.ppm.electrical || [];
+  data.ppm.mechanical = data.ppm.mechanical || [];
+  return data;
+}
+
+// For each literature item, find a direct manufacturer datasheet URL via web
+// search. Mutates each item to add .url (and .source). Batched + capped to keep
+// cost/latency sane. Silently leaves .url empty on failure.
+async function omFindDatasheets(literature, onProgress) {
+  const items = (literature || []).slice(0, 24);
+  const batchSize = 4;
+  let done = 0;
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (lit) => {
+      const q = lit.query || `${lit.manufacturer || ""} ${lit.model || lit.item} datasheet pdf`.trim();
+      const sys = `You find the official manufacturer datasheet or product-literature page for a building-services product. Reply with ONLY the single best direct URL (prefer the manufacturer's own domain and a PDF if available). If you cannot find a credible source, reply exactly NONE. No other words.`;
+      try {
+        const { text, citations } = await callAIWeb(sys, `Find the datasheet for: ${q}`, 4);
+        let url = "";
+        const m = (text || "").match(/https?:\/\/[^\s)>"']+/);
+        if (m) url = m[0];
+        if (!url && citations && citations.length) url = citations[0].url;
+        if (url && !/^NONE$/i.test(text.trim())) {
+          lit.url = url;
+          try { lit.source = new URL(url).hostname.replace(/^www\./, ""); } catch { lit.source = ""; }
+        }
+      } catch (e) { /* leave blank */ }
+      done++; if (onProgress) onProgress(done, items.length);
+    }));
+  }
+  return literature;
+}
+
+// ---- jsPDF document builder -------------------------------------------------
+const OM_C = {
+  green: [21, 130, 79], greenD: [15, 94, 57], dark: [16, 16, 19],
+  ink: [35, 35, 31], mute: [107, 107, 99], faint: [144, 143, 134],
+  line: [231, 230, 224], wash: [246, 246, 243], greenW: [234, 243, 238],
+  amber: [138, 90, 18], amberW: [251, 241, 224], white: [255, 255, 255],
+};
+
+async function omLoadJsPDF() {
+  if (!window.jspdf) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+      s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    });
+  }
+  return window.jspdf.jsPDF;
+}
+
+function omFooter(doc, project) {
+  const W = 210, H = 297, M = 16;
+  const n = doc.getNumberOfPages();
+  for (let p = 1; p <= n; p++) {
+    doc.setPage(p);
+    if (p === 1) continue; // skip cover
+    doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.3); doc.line(M, H - 14, W - M, H - 14);
+    doc.setFont("courier", "normal"); doc.setFontSize(7); doc.setTextColor(...OM_C.faint);
+    doc.text("PROQURE", M, H - 9);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(...OM_C.mute);
+    doc.text(`O&M Manual · ${project.name || project.jobRef} · v1.0`, W / 2, H - 9, { align: "center" });
+    doc.text(`Page ${p}`, W - M, H - 9, { align: "right" });
+  }
+}
+
+// cursor helper: ensures there's room, else new page. ctx = {doc, y}
+function omEnsure(ctx, need) {
+  if (ctx.y + need > 297 - 20) { ctx.doc.addPage(); ctx.y = 22; }
+}
+
+function omSectionTitle(ctx, num, title, sub) {
+  const { doc } = ctx; const M = 16, W = 210;
+  omEnsure(ctx, 26);
+  doc.setFont("courier", "normal"); doc.setFontSize(9); doc.setTextColor(...OM_C.green);
+  doc.text(num, M, ctx.y);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(...OM_C.dark);
+  doc.text(title, M + 12, ctx.y);
+  ctx.y += 4;
+  doc.setDrawColor(...OM_C.green); doc.setLineWidth(1.1); doc.line(M, ctx.y, W - M, ctx.y);
+  doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.3); doc.line(M, ctx.y + 1.6, W - M, ctx.y + 1.6);
+  ctx.y += 6;
+  if (sub) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...OM_C.mute);
+    doc.text(sub, M, ctx.y); ctx.y += 5;
+  }
+  ctx.y += 2;
+}
+
+function omPill(ctx, text, fg, bg) {
+  const { doc } = ctx; const M = 16;
+  doc.setFont("courier", "normal"); doc.setFontSize(7.2);
+  const w = doc.getTextWidth(text) + 7;
+  doc.setFillColor(...bg); doc.roundedRect(M, ctx.y - 4, w, 6, 3, 3, "F");
+  doc.setTextColor(...fg); doc.text(text, M + 3.5, ctx.y);
+  ctx.y += 7;
+}
+
+// Draw a table. cols: [{header, width, mono?, align?}], rows: array of arrays.
+function omTable(ctx, cols, rows, headColor) {
+  const { doc } = ctx; const M = 16; const lh = 4.2;
+  const head = headColor || OM_C.green;
+  const drawHeader = () => {
+    omEnsure(ctx, 12);
+    doc.setFillColor(...head); doc.rect(M, ctx.y - 4.5, cols.reduce((a, c) => a + c.width, 0), 7, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.setTextColor(...OM_C.white);
+    let x = M;
+    cols.forEach(c => { doc.text(c.header, x + 2, ctx.y); x += c.width; });
+    ctx.y += 5;
+  };
+  drawHeader();
+  rows.forEach((r, ri) => {
+    // measure wrapped height
+    const cells = cols.map((c, ci) => {
+      doc.setFont(c.mono ? "courier" : "helvetica", "normal"); doc.setFontSize(c.mono ? 7 : 7.8);
+      return doc.splitTextToSize(String(r[ci] == null ? "" : r[ci]), c.width - 4);
+    });
+    const lines = Math.max(...cells.map(c => c.length), 1);
+    const rowH = lines * lh + 2.5;
+    if (ctx.y + rowH > 297 - 20) { ctx.doc.addPage(); ctx.y = 22; drawHeader(); }
+    if (ri % 2 === 1) { doc.setFillColor(...OM_C.wash); doc.rect(M, ctx.y - 4.2, cols.reduce((a, c) => a + c.width, 0), rowH, "F"); }
+    let x = M;
+    cols.forEach((c, ci) => {
+      doc.setFont(c.mono ? "courier" : "helvetica", "normal"); doc.setFontSize(c.mono ? 7 : 7.8);
+      doc.setTextColor(...(c.color || OM_C.ink));
+      const tx = c.align === "right" ? x + c.width - 2 : x + 2;
+      doc.text(cells[ci], tx, ctx.y, { align: c.align === "right" ? "right" : "left" });
+      x += c.width;
+    });
+    doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.2);
+    doc.line(M, ctx.y + rowH - 4.2, M + cols.reduce((a, c) => a + c.width, 0), ctx.y + rowH - 4.2);
+    ctx.y += rowH;
+  });
+  ctx.y += 5;
+}
+
+// Render the cover onto the current (first) page.
+function omCover(doc, project, settings) {
+  const W = 210, M = 16;
+  doc.setFillColor(...OM_C.dark); doc.rect(0, 0, W, 118, "F");
+  doc.setFillColor(...OM_C.green); doc.rect(0, 116, W, 2, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...OM_C.white);
+  doc.text(settings.company || "ProQure", M, 26);
+  doc.setFont("courier", "normal"); doc.setFontSize(8); doc.setTextColor(159, 183, 171);
+  doc.text("OPERATIONS & MAINTENANCE MANUAL", M, 54);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(26); doc.setTextColor(...OM_C.white);
+  doc.text(doc.splitTextToSize(project.name || project.jobRef, W - 2 * M), M, 68);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(199, 199, 194);
+  if (project.site) doc.text(doc.splitTextToSize(project.site, W - 2 * M), M, 80);
+  doc.setFontSize(10); doc.setTextColor(154, 154, 147);
+  doc.text(settings.company || "", M, 96);
+  // meta cards
+  const y = 132, cw = (W - 2 * M - 3 * 4) / 4;
+  const cards = [["JOB REF", project.jobRef || "-"], ["REVISION", "v1.0"],
+  ["DATE", project.date], ["ITEMS", String(project.items || "-")]];
+  cards.forEach(([k, v], i) => {
+    const x = M + i * (cw + 4);
+    doc.setFillColor(...OM_C.wash); doc.roundedRect(x, y, cw, 20, 2, 2, "F");
+    doc.setFillColor(...OM_C.green); doc.rect(x, y, 1.5, 20, "F");
+    doc.setFont("courier", "normal"); doc.setFontSize(6.4); doc.setTextColor(...OM_C.faint);
+    doc.text(k, x + 4, y + 7);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...OM_C.dark);
+    doc.text(doc.splitTextToSize(v, cw - 6), x + 4, y + 14);
+  });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...OM_C.mute);
+  doc.text("Compiled automatically by ProQure from the project procurement record.", M, 270);
+  doc.setFont("courier", "normal"); doc.setFontSize(7); doc.setTextColor(...OM_C.faint);
+  doc.text(`GENERATED ${(project.date || "").toUpperCase()}`, M, 277);
+}
+
+// Body sections, each draws into ctx starting at ctx.y.
+function omRenderEquipment(ctx, data) {
+  omSectionTitle(ctx, "01", "Equipment schedule", "Items procured for this project, grouped by system.");
+  data.equipment.forEach(group => {
+    omEnsure(ctx, 14);
+    ctx.doc.setFont("helvetica", "bold"); ctx.doc.setFontSize(9.5); ctx.doc.setTextColor(...OM_C.greenD);
+    ctx.doc.text(group.category || "Other", 16, ctx.y); ctx.y += 5.5;
+    const rows = (group.items || []).map(it => [it.item || "", it.manufacturer || "", it.model || "", it.rating || ""]);
+    omTable(ctx, [
+      { header: "Item", width: 78 }, { header: "Manufacturer", width: 38 },
+      { header: "Model", width: 38, mono: true }, { header: "Rating / Qty", width: 24, color: OM_C.mute },
+    ], rows);
+  });
+}
+
+function omRenderLiterature(ctx, data, web) {
+  omSectionTitle(ctx, "02", "Operating manuals & literature", "Manufacturer datasheets and product literature for each item.");
+  omPill(ctx, web ? "AUTO-SOURCED FROM MANUFACTURER" : "MANUFACTURER & MODEL — LINKS ON REQUEST", OM_C.greenD, OM_C.greenW);
+  ctx.doc.setFont("helvetica", "normal"); ctx.doc.setFontSize(8); ctx.doc.setTextColor(...OM_C.mute);
+  const note = web
+    ? "Each link resolves to the manufacturer datasheet located online for the model installed."
+    : "Turn on 'find datasheet links online' when generating to attach direct manufacturer links.";
+  ctx.doc.text(ctx.doc.splitTextToSize(note, 178), 16, ctx.y); ctx.y += 6;
+  const { doc } = ctx; const M = 16; const lh = 4.2;
+  const cols = [{ header: "Item", width: 56 }, { header: "Manufacturer", width: 40 },
+  { header: "Model", width: 36, mono: true }, { header: "Literature", width: 46 }];
+  // custom table to support links in the last column
+  const drawHead = () => {
+    omEnsure(ctx, 12);
+    doc.setFillColor(...OM_C.green); doc.rect(M, ctx.y - 4.5, 178, 7, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.setTextColor(...OM_C.white);
+    let x = M; cols.forEach(c => { doc.text(c.header, x + 2, ctx.y); x += c.width; }); ctx.y += 5;
+  };
+  drawHead();
+  (data.literature || []).forEach((lit, ri) => {
+    const itemLines = doc.splitTextToSize(lit.item || "", cols[0].width - 4);
+    const rowH = Math.max(itemLines.length, 1) * lh + 2.5;
+    if (ctx.y + rowH > 297 - 20) { doc.addPage(); ctx.y = 22; drawHead(); }
+    if (ri % 2 === 1) { doc.setFillColor(...OM_C.wash); doc.rect(M, ctx.y - 4.2, 178, rowH, "F"); }
+    let x = M;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.8); doc.setTextColor(...OM_C.ink);
+    doc.text(itemLines, x + 2, ctx.y); x += cols[0].width;
+    doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(lit.manufacturer || "—", cols[1].width - 4), x + 2, ctx.y); x += cols[1].width;
+    doc.setFont("courier", "normal"); doc.setFontSize(7); doc.text(lit.model || "—", x + 2, ctx.y); x += cols[2].width;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.6); doc.setTextColor(...OM_C.green);
+    if (lit.url) { doc.textWithLink("View datasheet \u203A", x + 2, ctx.y, { url: lit.url }); }
+    else {
+      const q = encodeURIComponent(lit.query || `${lit.manufacturer || ""} ${lit.model || lit.item} datasheet`);
+      doc.textWithLink("Search \u203A", x + 2, ctx.y, { url: `https://www.google.com/search?q=${q}` });
+    }
+    doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.2); doc.line(M, ctx.y + rowH - 4.2, M + 178, ctx.y + rowH - 4.2);
+    ctx.y += rowH;
+  });
+  ctx.y += 5;
+}
+
+function omRenderPPM(ctx, data) {
+  omSectionTitle(ctx, "03", "Maintenance schedules (PPM)", "Planned preventative maintenance for the installed equipment.");
+  omPill(ctx, "AI-DRAFTED \u2014 FOR YOUR SIGN-OFF", OM_C.amber, OM_C.amberW);
+  ctx.y += 1;
+  [["ELECTRICAL", data.ppm.electrical], ["MECHANICAL", data.ppm.mechanical]].forEach(([label, groups]) => {
+    if (!groups || !groups.length) return;
+    omEnsure(ctx, 12);
+    ctx.doc.setFont("courier", "normal"); ctx.doc.setFontSize(8); ctx.doc.setTextColor(...OM_C.green);
+    ctx.doc.text(label, 16, ctx.y); ctx.y += 2;
+    ctx.doc.setDrawColor(...OM_C.line); ctx.doc.setLineWidth(0.3); ctx.doc.line(16, ctx.y, 194, ctx.y); ctx.y += 5;
+    groups.forEach(g => {
+      omEnsure(ctx, 14);
+      ctx.doc.setFont("helvetica", "bold"); ctx.doc.setFontSize(9.5); ctx.doc.setTextColor(...OM_C.dark);
+      ctx.doc.text(g.title || "Equipment", 16, ctx.y); ctx.y += 5.5;
+      const rows = (g.rows || []).map(r => [r.freq || "", r.activity || ""]);
+      omTable(ctx, [{ header: "Frequency", width: 30, color: OM_C.greenD }, { header: "Maintenance activity", width: 148 }], rows);
+    });
+    ctx.y += 2;
+  });
+}
+
+function omContents(ctx, project, settings) {
+  omSectionTitle(ctx, "00", "Contents & document control");
+  const { doc } = ctx; const M = 16;
+  const toc = [["1", "Equipment schedule"], ["2", "Operating manuals & literature"], ["3", "Maintenance schedules (PPM)"]];
+  toc.forEach(([n, t]) => {
+    doc.setFont("courier", "normal"); doc.setFontSize(8); doc.setTextColor(...OM_C.mute); doc.text(n, M, ctx.y);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...OM_C.ink); doc.text(t, M + 12, ctx.y);
+    doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.2); doc.line(M, ctx.y + 2, 194, ctx.y + 2); ctx.y += 8;
+  });
+  ctx.y += 4;
+  doc.setFont("courier", "normal"); doc.setFontSize(7.5); doc.setTextColor(...OM_C.faint); doc.text("VERSION HISTORY", M, ctx.y); ctx.y += 4;
+  omTable(ctx, [{ header: "Version", width: 24 }, { header: "Date", width: 34 }, { header: "Prepared by", width: 60 }, { header: "Reason", width: 60 }],
+    [["1.0", project.date, (settings.company || "ProQure") + " (auto)", "First issue"]]);
+}
+
+// Build the full pack. opts:{split,web}. Downloads the PDF(s).
+async function omGeneratePdf(data, project, settings, opts = {}) {
+  const jsPDF = await omLoadJsPDF();
+  const fname = (project.jobRef || "project").replace(/[^a-z0-9\-]+/gi, "-");
+
+  const buildCombined = () => {
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    omCover(doc, project, settings);
+    doc.addPage(); const ctx = { doc, y: 22 };
+    omContents(ctx, project, settings);
+    doc.addPage(); ctx.y = 22; omRenderEquipment(ctx, data);
+    doc.addPage(); ctx.y = 22; omRenderLiterature(ctx, data, opts.web);
+    doc.addPage(); ctx.y = 22; omRenderPPM(ctx, data);
+    omFooter(doc, project);
+    return doc;
+  };
+  buildCombined().save(`OM-${fname}.pdf`);
+
+  if (opts.split) {
+    // Literature only
+    const litDoc = new jsPDF({ unit: "mm", format: "a4" });
+    const lc = { doc: litDoc, y: 22 }; omRenderLiterature(lc, data, opts.web); omFooter(litDoc, project);
+    litDoc.save(`OM-${fname}-Literature.pdf`);
+    // Maintenance only
+    const ppmDoc = new jsPDF({ unit: "mm", format: "a4" });
+    const pc = { doc: ppmDoc, y: 22 }; omRenderPPM(pc, data); omFooter(ppmDoc, project);
+    ppmDoc.save(`OM-${fname}-Maintenance.pdf`);
+  }
+}
+
+
+// ============================================================================
+// REPORTING + MEASURING TOOL helpers
+// ============================================================================
+
+// Best-effort monetary total for an order (POs store prices as strings).
+function orderTotal(o) {
+  let sum = 0, found = false;
+  (o.items || []).forEach(it => {
+    let lt = parsePrice(it.lineTotal);
+    if (lt == null) {
+      const up = parsePrice(it.unitPrice);
+      const q = Number(it.qty ?? it.quantity ?? it.requestedQty);
+      if (up != null && q) lt = up * q;
+    }
+    if (lt != null) { sum += lt; found = true; }
+  });
+  if (!found) { const e = parsePrice(o.estimatedTotal ?? o.total); if (e != null) return e; }
+  return sum;
+}
+
+// Robust order date (POs may store en-GB "DD/MM/YYYY", or ISO, or none).
+function orderDate(o) {
+  const s = o.poDate;
+  if (s && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
+    const [d, m, y] = s.split("/").map(Number); return new Date(y, m - 1, d);
+  }
+  let t = s ? Date.parse(s) : NaN;
+  if (isNaN(t) && o.activity && o.activity[0] && o.activity[0].ts) t = Date.parse(o.activity[0].ts);
+  return isNaN(t) ? null : new Date(t);
+}
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Aggregate live orders into spend breakdowns by trade / supplier / job / month.
+function repBuild(orders) {
+  const live = (orders || []).filter(o => o.status !== "cancelled");
+  const groupBy = (keyFn) => {
+    const m = new Map();
+    live.forEach(o => {
+      const k = (keyFn(o) || "").toString().trim() || "Unspecified";
+      const e = m.get(k) || { label: k, value: 0, count: 0 };
+      e.value += orderTotal(o); e.count++; m.set(k, e);
+    });
+    return [...m.values()].sort((a, b) => b.value - a.value);
+  };
+  const byTrade = groupBy(o => o.trade);
+  const bySupplier = groupBy(o => o.supplier);
+  const byJob = groupBy(o => o.jobRef);
+  const mm = new Map();
+  live.forEach(o => {
+    const d = orderDate(o);
+    const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : "9999-99";
+    const label = d ? `${MONTHS_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(2)}` : "Undated";
+    const e = mm.get(key) || { key, label, value: 0, count: 0 };
+    e.value += orderTotal(o); e.count++; mm.set(key, e);
+  });
+  const byMonth = [...mm.values()].sort((a, b) => a.key < b.key ? -1 : 1);
+  const total = live.reduce((s, o) => s + orderTotal(o), 0);
+  return { byTrade, bySupplier, byJob, byMonth, total, count: live.length, projects: byJob.length, suppliers: bySupplier.length };
+}
+
+// Per-project cross-trade breakdown (the buyer/manager "boss view").
+function repProject(orders, jobRef) {
+  const live = (orders || []).filter(o => o.status !== "cancelled" && o.jobRef === jobRef);
+  const byTrade = {}, bySupplier = {};
+  let total = 0, site = "";
+  live.forEach(o => {
+    const t = orderTotal(o); total += t;
+    const tr = (o.trade || "Unspecified").trim() || "Unspecified";
+    byTrade[tr] = (byTrade[tr] || 0) + t;
+    const sup = o.supplier || "Unknown";
+    bySupplier[sup] = (bySupplier[sup] || 0) + t;
+    if (!site && o.site) site = o.site;
+  });
+  const toArr = (obj) => Object.entries(obj).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  return { jobRef, site, total, orders: live.length, byTrade: toArr(byTrade), bySupplier: toArr(bySupplier) };
+}
+
+function gbp(n) {
+  return "£" + (Math.round(n || 0)).toLocaleString("en-GB");
+}
+
+// ---- Measuring tool (manual-input phase) ------------------------------------
+// Cross-references the material against standard UK coverage rates to give a
+// quantity to order. Camera walk-around and scaled-drawing upload come later.
+async function measureCompute(material, inputs) {
+  const sys = `You are a UK building-materials estimator. Given a material and measurements, work out the quantity to order using standard UK coverage/spec rates, applying the stated wastage allowance. State the coverage rate you used. Return ONLY valid JSON, no markdown:
+{"quantity":number,"unit":"e.g. litres / m2 / bricks / bags","packsNeeded":number or null,"packSize":"e.g. 10L tub / pack of 50 / 25kg bag or null","coverageBasis":"the rate you assumed, e.g. 12 m2/L per coat","assumptions":["..."],"notes":"one short line"}
+Be realistic and conservative. Round packsNeeded up to whole packs. Never omit the JSON.`;
+  const u = `Material: ${material}\nInputs: ${JSON.stringify(inputs)}`;
+  try {
+    const txt = await callAI(sys, u, [], 0);
+    const data = JSON.parse(omStripFences(txt));
+    if (typeof data.quantity !== "number") throw new Error("bad");
+    return data;
+  } catch (e) {
+    return { error: "Couldn't calculate that one — try rephrasing the material or check the dimensions." };
+  }
+}
+
 // --- Tiny shared components ---------------------------------------------------
 const Btn = ({ onClick, disabled, color="#15824F", outline=false, children }) => (
   <button onClick={onClick} disabled={disabled} style={{
@@ -1329,6 +1816,21 @@ function ProQureApp({ session }) {
   // Requests
   const [requests, setRequests] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_requests")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
+  const [omJob, setOmJob] = useState(null);       // jobRef being generated
+  const [omBusy, setOmBusy] = useState(false);
+  const [omStage, setOmStage] = useState("");
+  const [omWeb, setOmWeb] = useState(false);       // find datasheet links online (metered)
+  const [omSplit, setOmSplit] = useState(false);   // also export sections separately
+  const [repMode, setRepMode] = useState("overview");
+  const [repOpen, setRepOpen] = useState(null);    // expanded project in reports
+  const [mMaterial, setMMaterial] = useState("Emulsion paint");
+  const [mLength, setMLength] = useState("");
+  const [mHeight, setMHeight] = useState("");
+  const [mArea, setMArea] = useState("");
+  const [mCoats, setMCoats] = useState("2");
+  const [mWastage, setMWastage] = useState("10");
+  const [mBusy, setMBusy] = useState(false);
+  const [mResult, setMResult] = useState(null);
   const [hires,    setHires]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_hires")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
@@ -2734,12 +3236,55 @@ ${settings.company||""}`;
   });
   const templateCurrentTrade = trade||"Plumbing";
 
+  // Generate an O&M pack for one project (jobRef).
+  const runOM = async (proj) => {
+    if (omBusy) return;
+    setOmJob(proj.jobRef); setOmBusy(true);
+    try {
+      setOmStage("Collecting procured materials\u2026");
+      const mats = omGatherMaterials(orders, proj.jobRef);
+      if (!mats.length) { showToast("No procured items found for this project yet.","warn"); return; }
+      setOmStage("Compiling equipment & maintenance schedules\u2026");
+      const data = await omBuildData(mats);
+      if (omWeb) {
+        setOmStage("Searching manufacturers for datasheets\u2026");
+        await omFindDatasheets(data.literature, (d,t)=>setOmStage(`Finding datasheets \u2026 ${d}/${t}`));
+      }
+      setOmStage("Building the document\u2026");
+      const project = { jobRef: proj.jobRef, name: proj.jobRef, site: proj.site,
+        items: mats.length, date: new Date().toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}) };
+      await omGeneratePdf(data, project, settings, { split: omSplit, web: omWeb });
+      logActivity("O&M file generated", `O&M pack for ${proj.jobRef} (${mats.length} items)`, { entity:"order", jobRef: proj.jobRef });
+      showToast("O&M file generated and downloaded.");
+    } catch (e) {
+      showToast("Could not generate the O&M file: " + (e.message || "error"), "warn");
+    } finally {
+      setOmBusy(false); setOmStage(""); setOmJob(null);
+    }
+  };
+
+  const runMeasure = async () => {
+    if (mBusy) return;
+    setMBusy(true); setMResult(null);
+    try {
+      const area = mArea ? Number(mArea) : (mLength && mHeight ? Number(mLength) * Number(mHeight) : null);
+      if (!area || isNaN(area) || area <= 0) { showToast("Enter an area, or a length and height.", "warn"); return; }
+      const inputs = { area_m2: Math.round(area * 100) / 100, coats: Number(mCoats) || 1, wastage_percent: Number(mWastage) || 0 };
+      const res = await measureCompute(mMaterial, inputs);
+      setMResult({ ...res, area: inputs.area_m2 });
+    } catch (e) { showToast("Couldn't calculate: " + (e.message || "error"), "warn"); }
+    finally { setMBusy(false); }
+  };
+
   const navItems = [
           {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
           {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
           {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
           {id:"quotes",   label:"Quotes",         min:2, d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
+          {id:"om",       label:"O&M files",      min:2, d:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M8 13h8M8 17h5"},
+          {id:"reports",  label:"Reports",        min:2, d:"M3 3v18h18M7 16V9M12 16V5M17 16v-7"},
+          {id:"measure",  label:"Measure",        d:"M3 7l4-4 14 14-4 4zM7 7l2 2M11 11l2 2M15 15l2 2"},
           {id:"hire",     label:"Hire",           d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
           {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
@@ -2748,7 +3293,7 @@ ${settings.company||""}`;
           {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
           {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
   ];
-  const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, team:3, settings:3 };
+  const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, om:2, reports:2, team:3, settings:3 };
   const handleNav = (id) => {
     const need = VIEW_MIN_ROLE[id];
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
@@ -5175,6 +5720,203 @@ Rules:
           </div>
         )}
 
+        {view==="om"&&(()=>{
+          const projects = Object.values((orders||[]).filter(o=>o.status!=="cancelled").reduce((acc,o)=>{
+            const k=(o.jobRef||"").trim()||"(no job reference)";
+            if(!acc[k]) acc[k]={jobRef:k, site:o.site||"", pos:0, items:0};
+            acc[k].pos++; acc[k].items+=(o.items||[]).length;
+            if(!acc[k].site && o.site) acc[k].site=o.site;
+            return acc;
+          },{})).sort((a,b)=>b.items-a.items);
+          return (
+          <div style={{maxWidth:860,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
+            <div style={{marginBottom:6}}>
+              <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text)",letterSpacing:"-0.02em",margin:0}}>O&amp;M files</h1>
+              <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 0",maxWidth:620,lineHeight:1.5}}>
+                Turn a project&rsquo;s procured materials into a presented Operations &amp; Maintenance pack &mdash; equipment schedule, manufacturer literature, and planned maintenance schedules &mdash; in one PDF.
+              </p>
+            </div>
+
+            {/* Options */}
+            <div style={{display:"flex",flexDirection:isMobile?"column":"row",gap:10,margin:"18px 0 22px"}}>
+              <label style={{flex:1,display:"flex",gap:10,alignItems:"flex-start",padding:"13px 15px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
+                <input type="checkbox" checked={omWeb} disabled={omBusy} onChange={e=>setOmWeb(e.target.checked)} style={{marginTop:2,accentColor:"var(--green)",width:16,height:16}}/>
+                <span>
+                  <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--text)"}}>Find datasheet links online</span>
+                  <span style={{display:"block",fontSize:12,color:"var(--text-muted)",marginTop:2,lineHeight:1.45}}>Searches each manufacturer for the exact datasheet. Uses web search &mdash; a small per-use cost. Off = manufacturer &amp; model listed with a search link.</span>
+                </span>
+              </label>
+              <label style={{flex:1,display:"flex",gap:10,alignItems:"flex-start",padding:"13px 15px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
+                <input type="checkbox" checked={omSplit} disabled={omBusy} onChange={e=>setOmSplit(e.target.checked)} style={{marginTop:2,accentColor:"var(--green)",width:16,height:16}}/>
+                <span>
+                  <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--text)"}}>Also export sections separately</span>
+                  <span style={{display:"block",fontSize:12,color:"var(--text-muted)",marginTop:2,lineHeight:1.45}}>In addition to the combined pack, download Literature and Maintenance as their own PDFs.</span>
+                </span>
+              </label>
+            </div>
+
+            {projects.length===0 ? (
+              <div style={{textAlign:"center",padding:"60px 20px",background:"var(--bg-card)",border:"1px dashed var(--border)",borderRadius:"var(--radius-lg)"}}>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text)"}}>No projects to build from yet</div>
+                <div style={{fontSize:13,color:"var(--text-muted)",marginTop:6,maxWidth:420,marginLeft:"auto",marginRight:"auto",lineHeight:1.5}}>O&amp;M packs are built from materials you&rsquo;ve ordered. Once a project has orders against a job reference, it&rsquo;ll appear here.</div>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {projects.map(p=>{
+                  const active = omBusy && omJob===p.jobRef;
+                  return (
+                  <div key={p.jobRef} style={{display:"flex",flexDirection:isMobile?"column":"row",alignItems:isMobile?"stretch":"center",gap:14,padding:"15px 17px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:15,fontWeight:700,color:"var(--text)",letterSpacing:"-0.01em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.jobRef}</div>
+                      <div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:3}}>
+                        {p.site?`${p.site} · `:""}{p.items} item{p.items===1?"":"s"} across {p.pos} order{p.pos===1?"":"s"}
+                      </div>
+                      {active && <div style={{fontSize:12,color:"var(--green)",marginTop:7,fontWeight:600}}>{omStage||"Working\u2026"}</div>}
+                    </div>
+                    <button onClick={()=>runOM(p)} disabled={omBusy} style={{flexShrink:0,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8,padding:"10px 18px",background:active?"var(--bg-subtle2)":"var(--green)",color:active?"var(--text-muted)":"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:13.5,fontWeight:600,cursor:omBusy?"default":"pointer",opacity:omBusy&&!active?0.5:1,minWidth:isMobile?"100%":150}}>
+                      {active ? "Generating\u2026" : "Generate O&M"}
+                    </button>
+                  </div>);
+                })}
+              </div>
+            )}
+
+            <p style={{fontSize:11.5,color:"var(--text-muted)",marginTop:18,lineHeight:1.5}}>
+              Equipment details and maintenance schedules are AI-drafted from the procured materials and marked for your sign-off. Always review before issuing to a client.
+            </p>
+          </div>);
+        })()}
+        {view==="reports"&&(()=>{
+          const R = repBuild(orders);
+          const COLORS=["#15824F","#2E9E68","#46B97F","#5FA8D3","#E0A458","#C45D5D","#8A7CC2","#6B8E23"];
+          const barRow=(x,max,i)=>(
+            <div key={x.label} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 0"}}>
+              <div style={{width:isMobile?100:150,flexShrink:0,fontSize:12.5,color:"var(--text)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={x.label}>{x.label}</div>
+              <div style={{flex:1,background:"var(--bg-subtle2)",borderRadius:5,height:18,overflow:"hidden",position:"relative"}}>
+                <div style={{width:`${Math.max(2,(x.value/max)*100)}%`,height:"100%",background:COLORS[i%COLORS.length],borderRadius:5,transition:"width .5s cubic-bezier(0.16,1,0.3,1)"}}/>
+              </div>
+              <div style={{width:isMobile?72:96,flexShrink:0,textAlign:"right",fontSize:12.5,fontFamily:"'JetBrains Mono',monospace",color:"var(--text)",fontWeight:600}}>{gbp(x.value)}</div>
+            </div>);
+          const section=(title,arr)=>{ const max=Math.max(1,...arr.map(a=>a.value)); return (
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"18px 20px",marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:700,color:"var(--text)",marginBottom:10,letterSpacing:"-0.01em"}}>{title}</div>
+              {arr.length?arr.slice(0,12).map((x,i)=>barRow(x,max,i)):<div style={{fontSize:13,color:"var(--text-muted)"}}>No data yet.</div>}
+            </div>); };
+          const exportCsv=()=>{
+            const rows=[["Breakdown","Label","Spend (GBP)","Orders"]];
+            R.byTrade.forEach(x=>rows.push(["Trade",x.label,Math.round(x.value),x.count]));
+            R.bySupplier.forEach(x=>rows.push(["Supplier",x.label,Math.round(x.value),x.count]));
+            R.byJob.forEach(x=>rows.push(["Project",x.label,Math.round(x.value),x.count]));
+            R.byMonth.forEach(x=>rows.push(["Month",x.label,Math.round(x.value),x.count]));
+            const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+            const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob);
+            const a=document.createElement("a"); a.href=url; a.download="ProQure-spend-report.csv"; a.click(); URL.revokeObjectURL(url);
+          };
+          const kpis=[["Total spend",gbp(R.total)],["Orders",String(R.count)],["Projects",String(R.projects)],["Suppliers",String(R.suppliers)]];
+          return (
+          <div style={{maxWidth:920,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
+              <div>
+                <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text)",letterSpacing:"-0.02em",margin:0}}>Reports</h1>
+                <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 0"}}>Where the money&rsquo;s going &mdash; spend by trade, supplier, project and month.</p>
+              </div>
+              <button onClick={exportCsv} style={{flexShrink:0,padding:"9px 15px",background:"var(--bg-card)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Export CSV</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:10,marginBottom:18}}>
+              {kpis.map(([k,v])=>(
+                <div key={k} style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
+                  <div style={{fontSize:10.5,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>{k}</div>
+                  <div style={{fontSize:isMobile?20:24,fontWeight:800,color:"var(--text)",fontFamily:"'JetBrains Mono',monospace",marginTop:4,letterSpacing:"-1px"}}>{v}</div>
+                </div>))}
+            </div>
+            <div style={{display:"inline-flex",background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:3,marginBottom:16}}>
+              {[["overview","Overview"],["projects","By project"]].map(([id,lbl])=>(
+                <button key={id} onClick={()=>setRepMode(id)} style={{padding:"7px 16px",border:"none",borderRadius:6,background:repMode===id?"var(--bg-card)":"transparent",color:repMode===id?"var(--text)":"var(--text-muted)",fontWeight:600,fontSize:13,cursor:"pointer",boxShadow:repMode===id?"var(--shadow-sm)":"none"}}>{lbl}</button>))}
+            </div>
+            {repMode==="overview" ? (
+              <div>
+                {section("Spend by trade",R.byTrade)}
+                {section("Spend by supplier",R.bySupplier)}
+                {section("Spend by month",R.byMonth)}
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {R.byJob.length===0 && <div style={{fontSize:13,color:"var(--text-muted)",padding:"40px",textAlign:"center",background:"var(--bg-card)",border:"1px dashed var(--border)",borderRadius:"var(--radius-lg)"}}>No projects with orders yet.</div>}
+                {R.byJob.map(j=>{
+                  const open=repOpen===j.label; const P=open?repProject(orders,j.label):null;
+                  const tmax=P?Math.max(1,...P.byTrade.map(t=>t.value)):1;
+                  return (
+                  <div key={j.label} style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden"}}>
+                    <button onClick={()=>setRepOpen(open?null:j.label)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"14px 17px",background:"transparent",border:"none",cursor:"pointer",textAlign:"left"}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:14.5,fontWeight:700,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{j.label}</div>
+                        <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{j.count} order{j.count===1?"":"s"}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                        <span style={{fontSize:15,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",color:"var(--green)"}}>{gbp(j.value)}</span>
+                        <span style={{fontSize:12,color:"var(--text-muted)",transform:open?"rotate(180deg)":"none",transition:"transform .2s"}}>&#9660;</span>
+                      </div>
+                    </button>
+                    {open&&P&&(
+                      <div style={{padding:"4px 17px 16px",borderTop:"1px solid var(--border)"}}>
+                        {P.site&&<div style={{fontSize:12,color:"var(--text-muted)",margin:"10px 0 8px"}}>{P.site}</div>}
+                        <div style={{fontSize:11.5,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"6px 0 4px"}}>Cost across trades</div>
+                        {P.byTrade.map((t,i)=>barRow(t,tmax,i))}
+                        <div style={{fontSize:11.5,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"12px 0 4px"}}>By supplier</div>
+                        {P.bySupplier.map((t,i)=>barRow(t,Math.max(1,...P.bySupplier.map(x=>x.value)),i))}
+                      </div>)}
+                  </div>);
+                })}
+              </div>
+            )}
+          </div>);
+        })()}
+        {view==="measure"&&(()=>{
+          const materials=["Emulsion paint","Gloss / satinwood paint","Plaster (skim coat)","Bonding plaster","Plasterboard","Bricks","Concrete blocks","Tile adhesive","Floor screed","Self-levelling compound","Insulation board","Sand & cement render"];
+          return (
+          <div style={{maxWidth:720,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
+            <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text)",letterSpacing:"-0.02em",margin:0}}>Measure</h1>
+            <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 18px",maxWidth:560,lineHeight:1.5}}>Enter the area and ProQure works out how much material to order, cross-referencing standard UK coverage rates.</p>
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
+              <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Material</label>
+              <select value={mMaterial} onChange={e=>setMMaterial(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14,marginBottom:16}}>
+                {materials.map(m=><option key={m} value={m}>{m}</option>)}
+              </select>
+              <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Area</div>
+              <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                <input type="number" inputMode="decimal" placeholder="Area (m²)" value={mArea} onChange={e=>setMArea(e.target.value)} style={{flex:"1 1 120px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                <span style={{fontSize:12,color:"var(--text-muted)"}}>or</span>
+                <input type="number" inputMode="decimal" placeholder="Length (m)" value={mLength} onChange={e=>setMLength(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                <span style={{fontSize:13,color:"var(--text-muted)"}}>×</span>
+                <input type="number" inputMode="decimal" placeholder="Height (m)" value={mHeight} onChange={e=>setMHeight(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+              </div>
+              <div style={{display:"flex",gap:14,flexWrap:"wrap",margin:"14px 0 4px"}}>
+                <div style={{flex:"1 1 120px"}}>
+                  <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Coats</label>
+                  <input type="number" inputMode="numeric" value={mCoats} onChange={e=>setMCoats(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                </div>
+                <div style={{flex:"1 1 120px"}}>
+                  <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Wastage %</label>
+                  <input type="number" inputMode="numeric" value={mWastage} onChange={e=>setMWastage(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                </div>
+              </div>
+              <button onClick={runMeasure} disabled={mBusy} style={{marginTop:18,width:"100%",padding:"12px",background:"var(--green)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:mBusy?"default":"pointer",opacity:mBusy?0.6:1}}>{mBusy?"Calculating…":"Calculate quantity"}</button>
+            </div>
+            {mResult&&(mResult.error?(
+              <div style={{marginTop:14,padding:"14px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text)"}}>{mResult.error}</div>
+            ):(
+              <div style={{marginTop:14,background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
+                <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>You&rsquo;ll need (for ~{mResult.area} m²)</div>
+                <div style={{fontSize:isMobile?26:32,fontWeight:800,color:"var(--green)",fontFamily:"'JetBrains Mono',monospace",margin:"6px 0",letterSpacing:"-1px"}}>{mResult.quantity} {mResult.unit}</div>
+                {mResult.packsNeeded!=null&&<div style={{fontSize:14,color:"var(--text)",fontWeight:600}}>{mResult.packsNeeded} × {mResult.packSize||"pack"}</div>}
+                {mResult.coverageBasis&&<div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:8}}>Based on: {mResult.coverageBasis}</div>}
+                {Array.isArray(mResult.assumptions)&&mResult.assumptions.length>0&&(
+                  <ul style={{margin:"10px 0 0",paddingLeft:18,fontSize:12.5,color:"var(--text-muted)",lineHeight:1.6}}>{mResult.assumptions.map((a,i)=><li key={i}>{a}</li>)}</ul>)}
+                <div style={{marginTop:12,fontSize:11.5,color:"var(--text-muted)",fontStyle:"italic"}}>Estimate only — always sense-check before ordering.</div>
+              </div>))}
+            <p style={{fontSize:11.5,color:"var(--text-muted)",marginTop:16,lineHeight:1.5}}>Coming next: walk a room with the camera, or upload a scaled drawing, and have ProQure detect the area automatically.</p>
+          </div>);
+        })()}
         {view==="help"&&(
           <div className="stagger-in" style={{maxWidth:900}}>
             <div style={{background:"linear-gradient(135deg,#0A0F1E,#1a2744)",borderRadius:20,padding:"36px 40px",marginBottom:28,position:"relative",overflow:"hidden"}}>
