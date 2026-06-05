@@ -1668,20 +1668,80 @@ function gbp(n) {
 }
 
 // ---- Measuring tool (manual-input phase) ------------------------------------
-// Cross-references the material against standard UK coverage rates to give a
-// quantity to order. Camera walk-around and scaled-drawing upload come later.
-async function measureCompute(material, inputs) {
-  const sys = `You are a UK building-materials estimator. Given a material and measurements, work out the quantity to order using standard UK coverage/spec rates, applying the stated wastage allowance. State the coverage rate you used. Return ONLY valid JSON, no markdown:
+// Cross-references the material against coverage rates to give a quantity to
+// order. When a specific product/brand is given and useDatasheet is on, it first
+// web-searches the manufacturer's datasheet for the actual coverage rate, then
+// bases the quantity on that rather than a generic rate.
+async function measureCompute(material, inputs, opts = {}) {
+  const product = (opts.product || "").trim();
+  let datasheetNote = "";
+  let source = null;
+  if (opts.useDatasheet && product) {
+    try {
+      const dsSys = `You are a UK building-materials researcher. Find the manufacturer's published coverage/spread rate for the named product from its datasheet or official product page. Reply with ONE short line stating the coverage rate and units (e.g. "Dulux Trade Vinyl Matt: 16 m2/L per coat"). If you cannot find it, reply exactly "NONE".`;
+      const { text, citations } = await callAIWeb(dsSys, `Product: ${product}\nMaterial type: ${material}\nFind the datasheet coverage rate.`, 4);
+      if (text && !/^\s*none\s*$/i.test(text)) {
+        datasheetNote = text.trim();
+        if (citations && citations.length) source = citations[0].url || null;
+      }
+    } catch (e) { /* fall back to generic rates */ }
+  }
+  const sys = `You are a UK building-materials estimator. Given a material and measurements, work out the quantity to order, applying the stated wastage allowance. ${datasheetNote ? "Use this manufacturer coverage rate if relevant: " + datasheetNote + ". " : "Use standard UK coverage/spec rates. "}State the coverage rate you used. Return ONLY valid JSON, no markdown:
 {"quantity":number,"unit":"e.g. litres / m2 / bricks / bags","packsNeeded":number or null,"packSize":"e.g. 10L tub / pack of 50 / 25kg bag or null","coverageBasis":"the rate you assumed, e.g. 12 m2/L per coat","assumptions":["..."],"notes":"one short line"}
 Be realistic and conservative. Round packsNeeded up to whole packs. Never omit the JSON.`;
-  const u = `Material: ${material}\nInputs: ${JSON.stringify(inputs)}`;
+  const u = `Material: ${product ? product + " (" + material + ")" : material}\nInputs: ${JSON.stringify(inputs)}`;
   try {
     const txt = await callAI(sys, u, [], 0);
     const data = JSON.parse(omStripFences(txt));
     if (typeof data.quantity !== "number") throw new Error("bad");
+    if (datasheetNote) data.datasheet = datasheetNote;
+    if (source) data.source = source;
     return data;
   } catch (e) {
     return { error: "Couldn't calculate that one — try rephrasing the material or check the dimensions." };
+  }
+}
+
+// Reads an uploaded drawing (PDF or image) via the central AI and returns a
+// materials take-off — the items shown on the drawing. PDF/image only: a true
+// DWG/CAD file can't be read directly (export it to PDF first).
+async function takeoffFromDrawing(file) {
+  const sys = `You are a quantity surveyor doing a materials take-off from a construction drawing or specification. List the MATERIAL items shown, with quantities where they can reasonably be inferred from counts, schedules, legends or dimensions. Do NOT invent precise quantities you cannot see — use 1 and add a note if unsure. Ignore labour, prices and title-block text. Return ONLY valid JSON, no markdown:
+{"items":[{"description":"...","quantity":number,"unit":"e.g. no / m / m2 / each","category":"the trade, e.g. Electrical","notes":"short, e.g. 'counted from legend' or 'scale assumed'"}]}
+Always return the JSON, even if the list is short.`;
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
+    });
+    const isImage = (file.type || "").startsWith("image/");
+    const isPDF = (file.type || "") === "application/pdf";
+    if (!isImage && !isPDF) return { error: "Please upload a PDF or an image of the drawing — a DWG/CAD file can't be read, so export it to PDF first." };
+    const userContent = isImage
+      ? [{ type: "image_url", image_url: { url: `data:${file.type};base64,${base64}` } }, { type: "text", text: "Do a materials take-off from this drawing." }]
+      : `This is a scaled drawing/specification supplied as a base64 PDF. Do a materials take-off of the items shown. Base64 (truncated): ${base64.slice(0, 9000)}`;
+    const r = await fetch("/api/ai", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{ role: "system", content: sys }, { role: "user", content: userContent }],
+        models: [isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat"],
+        temperature: 0,
+      }),
+    });
+    if (!r.ok) return { error: "The AI couldn't read that drawing — try a clearer PDF or image." };
+    const d = await r.json();
+    const data = JSON.parse(omStripFences(d.text || ""));
+    if (!data.items || !Array.isArray(data.items) || !data.items.length) return { error: "No materials could be read from that drawing. Try a clearer copy, or a PDF export." };
+    const items = data.items.slice(0, 100).map((it, i) => ({
+      id: Date.now() + i,
+      description: String(it.description || "").trim() || "Item",
+      quantity: Number(it.quantity) > 0 ? Number(it.quantity) : 1,
+      unit: String(it.unit || "no").trim(),
+      category: String(it.category || "General").trim(),
+      notes: String(it.notes || "").trim(),
+    }));
+    return { items };
+  } catch (e) {
+    return { error: "Couldn't read that drawing — please try a clearer PDF or image." };
   }
 }
 
@@ -1833,6 +1893,13 @@ function ProQureApp({ session }) {
   const [mWastage, setMWastage] = useState("10");
   const [mBusy, setMBusy] = useState(false);
   const [mResult, setMResult] = useState(null);
+  const [mProduct, setMProduct] = useState("");
+  const [mUseDatasheet, setMUseDatasheet] = useState(false);
+  const [mMode, setMMode] = useState("dims"); // "dims" | "drawing"
+  const [mDrawBusy, setMDrawBusy] = useState(false);
+  const [mDrawName, setMDrawName] = useState("");
+  const [mTakeoff, setMTakeoff] = useState(null);
+  const [mDrawError, setMDrawError] = useState("");
   const [hires,    setHires]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_hires")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
@@ -2954,13 +3021,13 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 RFQ REVISIONS: a sent request can be revised and re-sent. On All Requests, tap 'Revise' on a sent request (Buyers/Managers) - it reopens in the wizard with everything pre-filled and the original suppliers/contacts selected. Edit anything, then re-send: it updates the SAME request (bumps the version, e.g. v2), re-sends to the chosen suppliers and resets their quote boxes for the new revision, rather than creating a duplicate.
 AUTOCOMPLETE: the Job reference and Site fields suggest values from your past requests as you type; the alternative-address field suggests past addresses; and the Collect-from field suggests your suppliers' branches plus places you've collected from before.
 
-O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule, manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. Walking a room with the camera and uploading a scaled drawing are coming next.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
+O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule, manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
 
 TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
 GETTING STARTED: brand-new users see a Welcome card on the dashboard with three quick steps (create a request, send to suppliers, analyse & approve) and a button to begin; it disappears once they have any activity. The app works on any device - on a phone it switches to a mobile layout with a bottom tab bar, and you can use the camera to scan documents on site. It has a polished dark and light mode, keyboard shortcuts, smooth animations, and is built to feel calm and professional throughout.
 
-If asked about something ProQure does not do, say so clearly and mention if it is on the roadmap. Already built and available now: cloud sync across devices, multi-user team accounts with roles and permissions, Quick PO for emergency orders, full plant/tool hire tracking with photos, automatic deadline/return reminders on the dashboard, automatic capture of supplier email replies straight into the quote box, per-project O&M manual generation, company-wide spend reporting (by trade, supplier, project and month) with a cross-trade project view, and a materials measuring tool. The current roadmap (not yet built): AI reading of hire delivery photos to auto-note condition; hire-vs-buy suggestions based on hire history; smart matching of stray supplier emails to the right job; and accounting integrations (Xero/Sage). If asked when these arrive, say they are planned for future updates. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
+If asked about something ProQure does not do, say so clearly and mention if it is on the roadmap. Already built and available now: cloud sync across devices, multi-user team accounts with roles and permissions, Quick PO for emergency orders, full plant/tool hire tracking with photos, automatic deadline/return reminders on the dashboard, automatic capture of supplier email replies straight into the quote box, per-project O&M manual generation, company-wide spend reporting (by trade, supplier, project and month) with a cross-trade project view, and a materials measuring tool that also reads a scaled PDF/image drawing into an editable materials take-off and can look up a specific product's datasheet coverage rate. The current roadmap (not yet built): a native mobile app with camera room-scanning for on-site measuring; AI reading of hire delivery photos to auto-note condition; hire-vs-buy suggestions based on hire history; smart matching of stray supplier emails to the right job; and accounting integrations (Xero/Sage). If asked when these arrive, say they are planned for future updates. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
     const history = [...helpMessages,userMsg].slice(-10).map(m=>({role:m.role,content:m.content}));
     try {
       const raw = await callAI(sys, question, history);
@@ -3272,10 +3339,38 @@ ${settings.company||""}`;
       const area = mArea ? Number(mArea) : (mLength && mHeight ? Number(mLength) * Number(mHeight) : null);
       if (!area || isNaN(area) || area <= 0) { showToast("Enter an area, or a length and height.", "warn"); return; }
       const inputs = { area_m2: Math.round(area * 100) / 100, coats: Number(mCoats) || 1, wastage_percent: Number(mWastage) || 0 };
-      const res = await measureCompute(mMaterial, inputs);
+      const res = await measureCompute(mMaterial, inputs, { product: mProduct, useDatasheet: mUseDatasheet });
       setMResult({ ...res, area: inputs.area_m2 });
     } catch (e) { showToast("Couldn't calculate: " + (e.message || "error"), "warn"); }
     finally { setMBusy(false); }
+  };
+
+  const runTakeoff = async (file) => {
+    if (!file || mDrawBusy) return;
+    setMDrawBusy(true); setMTakeoff(null); setMDrawError(""); setMDrawName(file.name || "drawing");
+    try {
+      const res = await takeoffFromDrawing(file);
+      if (res.error) { setMDrawError(res.error); }
+      else { setMTakeoff(res.items); showToast(`Take-off ready - ${res.items.length} item${res.items.length !== 1 ? "s" : ""}. Review before ordering.`); }
+    } catch (e) { setMDrawError("Couldn't read that drawing - please try a clearer PDF or image."); }
+    finally { setMDrawBusy(false); }
+  };
+
+  const takeoffToRequest = () => {
+    if (!mTakeoff || !mTakeoff.length) return;
+    let t = "General";
+    const cats = mTakeoff.map(i => (i.category || "").trim()).filter(Boolean);
+    if (cats.length) {
+      const counts = {};
+      cats.forEach(c => { const m = TRADES.find(x => x.toLowerCase() === c.toLowerCase()); const key = m || c; counts[key] = (counts[key] || 0) + 1; });
+      const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+      if (TRADES.includes(top)) t = top;
+    }
+    setTrade(t);
+    setParsed({ jobRef: "", trade: t, items: mTakeoff.map(i => ({ id: i.id, description: i.description, quantity: i.quantity, unit: i.unit, category: i.category || t, notes: i.notes || "" })) });
+    setStep(2);
+    setView("new");
+    showToast("Take-off loaded into a new request - review and send.");
   };
 
   const navItems = [
@@ -3403,7 +3498,7 @@ ${settings.company||""}`;
       {q:"Can I export my data?", a:"Yes. The Library, Orders and All Requests pages each have a CSV export button, so you can back up or share your data anytime."},
       {q:"Can I revise and re-send an RFQ?", a:"Yes. On All Requests, tap 'Revise' on a sent request (Buyers and Managers). It reopens in the wizard with everything pre-filled and the original suppliers and contacts already selected. Change whatever you need, then re-send - it updates the same request, bumps the version (v2, v3...), re-sends to your chosen suppliers and clears their quote boxes for the new revision, so you're not left with a duplicate request."},
       {q:"Does it remember my jobs and addresses?", a:"Yes. As you type, the Job reference and Site fields suggest values from your past requests, the alternative-address field suggests addresses you've used before, and the Collect-from field suggests your suppliers' branches plus places you've collected from - so recurring jobs and depots are a quick tap rather than retyping."},
-      {q:"What features are coming next?", a:"Recently added: trade auto-detect, multiple named contacts and branches per supplier, automatic capture of supplier email replies into the quote box, revise-and-re-send for RFQs, collect-from branch details, and job/site/branch autocomplete. Recently added: the O&M file generator, spend reporting (by trade, supplier, project and month) with a per-project cross-trade view, and a materials measuring tool. On the roadmap next: camera/drawing-based measuring, smart matching of stray supplier emails to the right job, AI that reads hire delivery photos to note condition automatically, hire-vs-buy suggestions based on your hire history, and accounting integrations like Xero and Sage."},
+      {q:"What features are coming next?", a:"Recently added: trade auto-detect, multiple named contacts and branches per supplier, automatic capture of supplier email replies into the quote box, revise-and-re-send for RFQs, collect-from branch details, and job/site/branch autocomplete. Recently added: the O&M file generator, spend reporting (by trade, supplier, project and month) with a per-project cross-trade view, and a materials measuring tool. Just added: a 'From a drawing' materials take-off (upload a scaled PDF/image and ProQure lists the materials to order, ready to edit) and manufacturer-datasheet coverage lookup in Measure. On the roadmap next: a native mobile app with camera room-scanning for on-site measuring, smart matching of stray supplier emails to the right job, AI that reads hire delivery photos to note condition automatically, hire-vs-buy suggestions based on your hire history, and accounting integrations like Xero and Sage."},
     ]},
     {cat:"O&M, reports & measure", qs:[
       {q:"What is the O&M file generator?", a:"On the 'O&M files' tab (Buyers and Managers) ProQure builds an Operations & Maintenance pack for a project from the materials you've ordered against it. Pick the project and tap Generate O&M - you get a presented PDF with a cover, contents, equipment schedule, manufacturer literature, and planned preventative maintenance (PPM) schedules. The equipment details and maintenance schedules are AI-drafted and marked for your sign-off, so review before issuing to a client."},
@@ -3411,7 +3506,9 @@ ${settings.company||""}`;
       {q:"Can I split the O&M into separate files?", a:"Yes. Tick 'also export sections separately' and ProQure downloads the Literature and Maintenance sections as their own PDFs in addition to the single combined pack."},
       {q:"What's in the Reports tab?", a:"Reports (Buyers and Managers) shows total spend, order count, projects and suppliers, with spend broken down by trade, by supplier and by month, and a CSV export. The 'By project' tab is the manager view: pick a project to see its total cost split across every trade and supplier on it."},
       {q:"How is spend worked out?", a:"From your orders. ProQure adds up the line totals on each PO (falling back to the PO's estimated total), and ignores cancelled orders. Trade comes from the request the order was raised from."},
-      {q:"What does the Measure tab do?", a:"Enter an area (or a length and height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and a wastage allowance, and shows the assumptions it used. It's an estimate - always sense-check before ordering. Camera and scaled-drawing measuring are coming next."},
+      {q:"What does the Measure tab do?", a:"Enter an area (or a length and height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and a wastage allowance, and shows the assumptions it used. It's an estimate - always sense-check before ordering. It can also look up a specific product's datasheet for the exact coverage rate, and the 'From a drawing' mode does a full materials take-off from an uploaded PDF/image drawing that you can edit and turn into a request. Camera room-scanning is coming with the native app."},
+      {q:"Can ProQure read a drawing and list the materials?", a:"Yes - that's the 'From a drawing' mode on the Measure tab. Upload a scaled PDF or image of the drawing and ProQure does a materials take-off of the items shown, then gives you an editable list you can adjust and turn straight into a request. It reads PDFs and images, not raw DWG/CAD files, so export a DWG to PDF first. The list is an AI draft - always check it against the drawing before ordering."},
+      {q:"Can Measure use a specific product's real coverage rate?", a:"Yes. In 'By dimensions', type the product or brand and tick 'look up the manufacturer's datasheet', and ProQure web-searches that product's datasheet for its published coverage rate and bases the quantity on it, with a source link. That option uses web search (a small per-use cost) so it's off by default; left off, it uses standard UK coverage rates."},
     ]},
   ];
 
@@ -3551,24 +3648,32 @@ Rules:
         content = `I have a PDF document. Here is the base64 content. Please extract all material items: ${base64.slice(0, 8000)}`;
       }
 
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + key,
-          "HTTP-Referer": "https://proqure.app",
-          "X-Title": "ProQure"
-        },
-        body: JSON.stringify({
-          model: isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user",   content: isImage ? content : (typeof content === "string" ? content : JSON.stringify(content)) }
-          ]
-        })
-      });
-      const data = await res.json();
-      const extracted = data.choices?.[0]?.message?.content || "";
+      const userMsg = { role: "user", content: isImage ? content : (typeof content === "string" ? content : JSON.stringify(content)) };
+      const scanModels = [ isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat" ];
+      let extracted = "";
+      // Preferred path: central server key via /api/ai (no user key needed).
+      try {
+        const sres = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: [{ role: "system", content: systemPrompt }, userMsg], models: scanModels, temperature: 0.1 })
+        });
+        if (sres.ok) {
+          const sd = await sres.json();
+          if (sd.text) extracted = sd.text;
+          else if (sd.error && !sd.error.includes("not configured")) throw new Error(sd.error);
+        }
+      } catch (e) { /* fall through to the user-key path */ }
+      // Fallback: user-provided key (legacy / if the server key isn't set up yet).
+      if (!extracted.trim() && key) {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key, "HTTP-Referer": "https://proqure.app", "X-Title": "ProQure" },
+          body: JSON.stringify({ model: scanModels[0], messages: [{ role: "system", content: systemPrompt }, userMsg] })
+        });
+        const data = await res.json();
+        extracted = data.choices?.[0]?.message?.content || "";
+      }
       if (!extracted.trim()) throw new Error("No items found in document");
 
       setRawInput(extracted.trim());
@@ -5883,48 +5988,100 @@ Rules:
         })()}
         {view==="measure"&&(()=>{
           const materials=["Emulsion paint","Gloss / satinwood paint","Plaster (skim coat)","Bonding plaster","Plasterboard","Bricks","Concrete blocks","Tile adhesive","Floor screed","Self-levelling compound","Insulation board","Sand & cement render"];
+          const tabBtn=(id,label)=>(
+            <button onClick={()=>setMMode(id)} style={{flex:1,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:mMode===id?"var(--green)":"var(--bg-card)",color:mMode===id?"white":"var(--text)"}}>{label}</button>
+          );
+          const updTake=(i,field,v)=>setMTakeoff(p=>p.map((it,ii)=>ii===i?{...it,[field]:v}:it));
           return (
-          <div style={{maxWidth:720,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
+          <div style={{maxWidth:760,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
             <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text)",letterSpacing:"-0.02em",margin:0}}>Measure</h1>
-            <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 18px",maxWidth:560,lineHeight:1.5}}>Enter the area and ProQure works out how much material to order, cross-referencing standard UK coverage rates.</p>
-            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
-              <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Material</label>
-              <select value={mMaterial} onChange={e=>setMMaterial(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14,marginBottom:16}}>
-                {materials.map(m=><option key={m} value={m}>{m}</option>)}
-              </select>
-              <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Area</div>
-              <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
-                <input type="number" inputMode="decimal" placeholder="Area (m²)" value={mArea} onChange={e=>setMArea(e.target.value)} style={{flex:"1 1 120px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
-                <span style={{fontSize:12,color:"var(--text-muted)"}}>or</span>
-                <input type="number" inputMode="decimal" placeholder="Length (m)" value={mLength} onChange={e=>setMLength(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
-                <span style={{fontSize:13,color:"var(--text-muted)"}}>×</span>
-                <input type="number" inputMode="decimal" placeholder="Height (m)" value={mHeight} onChange={e=>setMHeight(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
-              </div>
-              <div style={{display:"flex",gap:14,flexWrap:"wrap",margin:"14px 0 4px"}}>
-                <div style={{flex:"1 1 120px"}}>
-                  <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Coats</label>
-                  <input type="number" inputMode="numeric" value={mCoats} onChange={e=>setMCoats(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+            <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 18px",maxWidth:580,lineHeight:1.5}}>Work out what to order &mdash; from measurements, or from a drawing.</p>
+            <div style={{display:"flex",gap:8,marginBottom:18}}>{tabBtn("dims","By dimensions")}{tabBtn("drawing","From a drawing")}</div>
+
+            {mMode==="dims"&&(<>
+              <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
+                <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Material</label>
+                <select value={mMaterial} onChange={e=>setMMaterial(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14,marginBottom:14}}>
+                  {materials.map(m=><option key={m} value={m}>{m}</option>)}
+                </select>
+                <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Specific product / brand <span style={{color:"var(--text-muted)",fontWeight:400}}>(optional)</span></label>
+                <input type="text" placeholder="e.g. Dulux Trade Vinyl Matt" value={mProduct} onChange={e=>setMProduct(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14,marginBottom:10}}/>
+                <label style={{display:"flex",alignItems:"flex-start",gap:9,fontSize:12.5,color:"var(--text)",marginBottom:16,cursor:"pointer"}}>
+                  <input type="checkbox" checked={mUseDatasheet} onChange={e=>setMUseDatasheet(e.target.checked)} style={{marginTop:2}}/>
+                  <span>Look up the manufacturer&rsquo;s datasheet for the exact coverage rate <span style={{color:"var(--text-muted)"}}>(uses web search; needs a product/brand above)</span></span>
+                </label>
+                <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Area</div>
+                <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                  <input type="number" inputMode="decimal" placeholder="Area (m²)" value={mArea} onChange={e=>setMArea(e.target.value)} style={{flex:"1 1 120px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                  <span style={{fontSize:12,color:"var(--text-muted)"}}>or</span>
+                  <input type="number" inputMode="decimal" placeholder="Length (m)" value={mLength} onChange={e=>setMLength(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                  <span style={{fontSize:13,color:"var(--text-muted)"}}>×</span>
+                  <input type="number" inputMode="decimal" placeholder="Height (m)" value={mHeight} onChange={e=>setMHeight(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
                 </div>
-                <div style={{flex:"1 1 120px"}}>
-                  <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Wastage %</label>
-                  <input type="number" inputMode="numeric" value={mWastage} onChange={e=>setMWastage(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                <div style={{display:"flex",gap:14,flexWrap:"wrap",margin:"14px 0 4px"}}>
+                  <div style={{flex:"1 1 120px"}}>
+                    <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Coats</label>
+                    <input type="number" inputMode="numeric" value={mCoats} onChange={e=>setMCoats(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                  </div>
+                  <div style={{flex:"1 1 120px"}}>
+                    <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Wastage %</label>
+                    <input type="number" inputMode="numeric" value={mWastage} onChange={e=>setMWastage(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                  </div>
                 </div>
+                <button onClick={runMeasure} disabled={mBusy} style={{marginTop:18,width:"100%",padding:"12px",background:"var(--green)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:mBusy?"default":"pointer",opacity:mBusy?0.6:1}}>{mBusy?(mUseDatasheet?"Checking datasheet…":"Calculating…"):"Calculate quantity"}</button>
               </div>
-              <button onClick={runMeasure} disabled={mBusy} style={{marginTop:18,width:"100%",padding:"12px",background:"var(--green)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:mBusy?"default":"pointer",opacity:mBusy?0.6:1}}>{mBusy?"Calculating…":"Calculate quantity"}</button>
-            </div>
-            {mResult&&(mResult.error?(
-              <div style={{marginTop:14,padding:"14px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text)"}}>{mResult.error}</div>
-            ):(
-              <div style={{marginTop:14,background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
-                <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>You&rsquo;ll need (for ~{mResult.area} m²)</div>
-                <div style={{fontSize:isMobile?26:32,fontWeight:800,color:"var(--green)",fontFamily:"'JetBrains Mono',monospace",margin:"6px 0",letterSpacing:"-1px"}}>{mResult.quantity} {mResult.unit}</div>
-                {mResult.packsNeeded!=null&&<div style={{fontSize:14,color:"var(--text)",fontWeight:600}}>{mResult.packsNeeded} × {mResult.packSize||"pack"}</div>}
-                {mResult.coverageBasis&&<div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:8}}>Based on: {mResult.coverageBasis}</div>}
-                {Array.isArray(mResult.assumptions)&&mResult.assumptions.length>0&&(
-                  <ul style={{margin:"10px 0 0",paddingLeft:18,fontSize:12.5,color:"var(--text-muted)",lineHeight:1.6}}>{mResult.assumptions.map((a,i)=><li key={i}>{a}</li>)}</ul>)}
-                <div style={{marginTop:12,fontSize:11.5,color:"var(--text-muted)",fontStyle:"italic"}}>Estimate only — always sense-check before ordering.</div>
-              </div>))}
-            <p style={{fontSize:11.5,color:"var(--text-muted)",marginTop:16,lineHeight:1.5}}>Coming next: walk a room with the camera, or upload a scaled drawing, and have ProQure detect the area automatically.</p>
+              {mResult&&(mResult.error?(
+                <div style={{marginTop:14,padding:"14px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text)"}}>{mResult.error}</div>
+              ):(
+                <div style={{marginTop:14,background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
+                  <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>You&rsquo;ll need (for ~{mResult.area} m²)</div>
+                  <div style={{fontSize:isMobile?26:32,fontWeight:800,color:"var(--green)",fontFamily:"'JetBrains Mono',monospace",margin:"6px 0",letterSpacing:"-1px"}}>{mResult.quantity} {mResult.unit}</div>
+                  {mResult.packsNeeded!=null&&<div style={{fontSize:14,color:"var(--text)",fontWeight:600}}>{mResult.packsNeeded} × {mResult.packSize||"pack"}</div>}
+                  {mResult.coverageBasis&&<div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:8}}>Based on: {mResult.coverageBasis}</div>}
+                  {mResult.datasheet&&<div style={{fontSize:12,color:"var(--green-dark)",marginTop:6}}>Datasheet: {mResult.datasheet}{mResult.source&&<> &middot; <a href={mResult.source} target="_blank" rel="noreferrer" style={{color:"var(--green-dark)"}}>source</a></>}</div>}
+                  {Array.isArray(mResult.assumptions)&&mResult.assumptions.length>0&&(
+                    <ul style={{margin:"10px 0 0",paddingLeft:18,fontSize:12.5,color:"var(--text-muted)",lineHeight:1.6}}>{mResult.assumptions.map((a,i)=><li key={i}>{a}</li>)}</ul>)}
+                  <div style={{marginTop:12,fontSize:11.5,color:"var(--text-muted)",fontStyle:"italic"}}>Estimate only — always sense-check before ordering.</div>
+                </div>))}
+            </>)}
+
+            {mMode==="drawing"&&(<>
+              <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
+                <p style={{fontSize:13,color:"var(--text-muted)",margin:"0 0 14px",lineHeight:1.5}}>Upload a scaled drawing or specification (PDF or image) and ProQure does a materials take-off of the items shown. A true DWG/CAD file can&rsquo;t be read &mdash; export it to PDF first.</p>
+                <label style={{display:"flex",alignItems:"center",gap:12,padding:"16px",background:mDrawBusy?"var(--indigo-light)":"var(--bg-subtle)",border:mDrawBusy?"2px solid var(--indigo)":"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:mDrawBusy?"not-allowed":"pointer"}}>
+                  <input type="file" accept="image/*,.pdf" style={{display:"none"}} disabled={mDrawBusy} onChange={e=>{if(e.target.files[0])runTakeoff(e.target.files[0]);e.target.value="";}}/>
+                  <div style={{width:42,height:42,borderRadius:12,background:mDrawBusy?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"white"}}>
+                    {mDrawBusy?<Spinner/>:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>}
+                  </div>
+                  <div>
+                    <div style={{fontSize:13.5,fontWeight:600,color:mDrawBusy?"var(--indigo)":"var(--text)"}}>{mDrawBusy?"Reading the drawing…":(mDrawName?`Re-upload (last: ${mDrawName})`:"Upload a drawing (PDF or image)")}</div>
+                    <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>The AI lists what it can see &mdash; you review and edit before ordering.</div>
+                  </div>
+                </label>
+                {mDrawError&&<div style={{marginTop:12,padding:"12px 14px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text)"}}>{mDrawError}</div>}
+              </div>
+
+              {mTakeoff&&mTakeoff.length>0&&(
+                <div style={{marginTop:14,background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"14px":"18px 20px"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--text)",marginBottom:10}}>Materials take-off <span style={{color:"var(--text-muted)",fontWeight:400}}>({mTakeoff.length} items &mdash; AI draft, edit as needed)</span></div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {mTakeoff.map((it,i)=>(
+                      <div key={it.id||i} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                        <input type="number" inputMode="decimal" value={it.quantity} onChange={e=>updTake(i,"quantity",Number(e.target.value)||0)} style={{width:64,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:13}}/>
+                        <input type="text" value={it.unit} onChange={e=>updTake(i,"unit",e.target.value)} style={{width:64,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:13}}/>
+                        <input type="text" value={it.description} onChange={e=>updTake(i,"description",e.target.value)} style={{flex:"1 1 160px",padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:13}}/>
+                        <button onClick={()=>setMTakeoff(p=>p.filter((_,ii)=>ii!==i))} style={{background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",fontSize:18,lineHeight:1,padding:"0 4px"}} title="Remove">×</button>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={()=>setMTakeoff(p=>[...p,{id:Date.now(),description:"",quantity:1,unit:"no",category:"General",notes:""}])} style={{marginTop:10,background:"none",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",fontSize:12.5,color:"var(--text-secondary)",cursor:"pointer"}}>+ Add item</button>
+                  <button onClick={takeoffToRequest} style={{marginTop:14,width:"100%",padding:"12px",background:"var(--green)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Create a request from this take-off</button>
+                  <div style={{marginTop:10,fontSize:11.5,color:"var(--text-muted)",fontStyle:"italic"}}>AI-read from the drawing — always check against the drawing before sending to suppliers.</div>
+                </div>
+              )}
+            </>)}
+
+            <p style={{fontSize:11.5,color:"var(--text-muted)",marginTop:16,lineHeight:1.5}}>Coming with the native app: walk a room with the camera and have ProQure capture the area automatically.</p>
           </div>);
         })()}
         {view==="help"&&(
