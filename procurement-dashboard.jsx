@@ -1886,6 +1886,10 @@ const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) 
 
 // --- App ----------------------------------------------------------------------
 function ProQureApp({ session, companyId }) {
+  // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
+  // user id (sole trader / pre-migration fallback). Declared up here because effects
+  // and handlers below reference it - a const can't be used before its declaration.
+  const cloudUserId = companyId || session?.user?.id || null;
   // Settings persisted to localStorage
   const [settings, setSettings] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
@@ -3303,9 +3307,6 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_team",JSON.stringify(team))}catch{} },[team]);
 
   // --- Cloud push: mirror changes up to Supabase (debounced) ----------------
-  // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
-  // user id (sole trader / pre-migration fallback). All sync reads/writes use this.
-  const cloudUserId = companyId || session?.user?.id || null;
   const pushTimers = useRef({});
   const queueCloudPush = useCallback((key, valueObj) => {
     if (!cloudEnabled || !cloudUserId) return;
