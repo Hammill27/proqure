@@ -1343,12 +1343,12 @@ async function omLoadJsPDF() {
   return window.jspdf.jsPDF;
 }
 
-function omFooter(doc, project) {
+function omFooter(doc, project, hasCover = true) {
   const W = 210, H = 297, M = 16;
   const n = doc.getNumberOfPages();
   for (let p = 1; p <= n; p++) {
     doc.setPage(p);
-    if (p === 1) continue; // skip cover
+    if (p === 1 && hasCover) continue; // skip cover
     doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.3); doc.line(M, H - 14, W - M, H - 14);
     doc.setFont("courier", "normal"); doc.setFontSize(7); doc.setTextColor(...OM_C.faint);
     doc.text("PROQURE", M, H - 9);
@@ -1575,11 +1575,11 @@ async function omGeneratePdf(data, project, settings, opts = {}) {
   if (opts.split) {
     // Literature only
     const litDoc = new jsPDF({ unit: "mm", format: "a4" });
-    const lc = { doc: litDoc, y: 22 }; omRenderLiterature(lc, data, opts.web); omFooter(litDoc, project);
+    const lc = { doc: litDoc, y: 22 }; omRenderLiterature(lc, data, opts.web); omFooter(litDoc, project, false);
     litDoc.save(`OM-${fname}-Literature.pdf`);
     // Maintenance only
     const ppmDoc = new jsPDF({ unit: "mm", format: "a4" });
-    const pc = { doc: ppmDoc, y: 22 }; omRenderPPM(pc, data); omFooter(ppmDoc, project);
+    const pc = { doc: ppmDoc, y: 22 }; omRenderPPM(pc, data); omFooter(ppmDoc, project, false);
     ppmDoc.save(`OM-${fname}-Maintenance.pdf`);
   }
 }
@@ -1648,7 +1648,7 @@ function repBuild(orders) {
 
 // Per-project cross-trade breakdown (the buyer/manager "boss view").
 function repProject(orders, jobRef) {
-  const live = (orders || []).filter(o => o.status !== "cancelled" && o.jobRef === jobRef);
+  const live = (orders || []).filter(o => o.status !== "cancelled" && (((o.jobRef || "").toString().trim()) || "Unspecified") === jobRef);
   const byTrade = {}, bySupplier = {};
   let total = 0, site = "";
   live.forEach(o => {
@@ -1735,6 +1735,8 @@ const CountUp = ({ value, duration=650 }) => {
 
 // --- Icon system: clean line icons (replaces emojis) -------------------------
 const ICON_PATHS = {
+  bar_chart: '<path d="M3 3v18h18"/><path d="M7 16V9M12 16V5M17 16v-7"/>',
+  ruler: '<path d="M3 7l4-4 14 14-4 4z"/><path d="M7 7l2 2M11 11l2 2M15 15l2 2"/>',
   clipboard: '<path d="M9 2h6a1 1 0 011 1v1h1a2 2 0 012 2v13a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2h1V3a1 1 0 011-1z"/>',
   inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a1 1 0 01-1 1H3a1 1 0 01-1-1v-6z"/>',
   check_circle: '<circle cx="12" cy="12" r="9"/><polyline points="8.5 12 11 14.5 16 9"/>',
@@ -2952,13 +2954,13 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 RFQ REVISIONS: a sent request can be revised and re-sent. On All Requests, tap 'Revise' on a sent request (Buyers/Managers) - it reopens in the wizard with everything pre-filled and the original suppliers/contacts selected. Edit anything, then re-send: it updates the SAME request (bumps the version, e.g. v2), re-sends to the chosen suppliers and resets their quote boxes for the new revision, rather than creating a duplicate.
 AUTOCOMPLETE: the Job reference and Site fields suggest values from your past requests as you type; the alternative-address field suggests past addresses; and the Collect-from field suggests your suppliers' branches plus places you've collected from before.
 
-SETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
+O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule, manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. Walking a room with the camera and uploading a scaled drawing are coming next.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
 
 TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
 GETTING STARTED: brand-new users see a Welcome card on the dashboard with three quick steps (create a request, send to suppliers, analyse & approve) and a button to begin; it disappears once they have any activity. The app works on any device - on a phone it switches to a mobile layout with a bottom tab bar, and you can use the camera to scan documents on site. It has a polished dark and light mode, keyboard shortcuts, smooth animations, and is built to feel calm and professional throughout.
 
-If asked about something ProQure does not do, say so clearly and mention if it is on the roadmap. Already built and available now: cloud sync across devices, multi-user team accounts with roles and permissions, Quick PO for emergency orders, full plant/tool hire tracking with photos, automatic deadline/return reminders on the dashboard, and automatic capture of supplier email replies straight into the quote box. The current roadmap (not yet built): company-wide spend reporting across all jobs; AI reading of hire delivery photos to auto-note condition; hire-vs-buy suggestions based on hire history; smart matching of stray supplier emails to the right job; and accounting integrations (Xero/Sage). If asked when these arrive, say they are planned for future updates. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
+If asked about something ProQure does not do, say so clearly and mention if it is on the roadmap. Already built and available now: cloud sync across devices, multi-user team accounts with roles and permissions, Quick PO for emergency orders, full plant/tool hire tracking with photos, automatic deadline/return reminders on the dashboard, automatic capture of supplier email replies straight into the quote box, per-project O&M manual generation, company-wide spend reporting (by trade, supplier, project and month) with a cross-trade project view, and a materials measuring tool. The current roadmap (not yet built): AI reading of hire delivery photos to auto-note condition; hire-vs-buy suggestions based on hire history; smart matching of stray supplier emails to the right job; and accounting integrations (Xero/Sage). If asked when these arrive, say they are planned for future updates. Answer in 2-4 sentences unless a step-by-step is genuinely needed - then use short numbered steps.`;
     const history = [...helpMessages,userMsg].slice(-10).map(m=>({role:m.role,content:m.content}));
     try {
       const raw = await callAI(sys, question, history);
@@ -3401,7 +3403,15 @@ ${settings.company||""}`;
       {q:"Can I export my data?", a:"Yes. The Library, Orders and All Requests pages each have a CSV export button, so you can back up or share your data anytime."},
       {q:"Can I revise and re-send an RFQ?", a:"Yes. On All Requests, tap 'Revise' on a sent request (Buyers and Managers). It reopens in the wizard with everything pre-filled and the original suppliers and contacts already selected. Change whatever you need, then re-send - it updates the same request, bumps the version (v2, v3...), re-sends to your chosen suppliers and clears their quote boxes for the new revision, so you're not left with a duplicate request."},
       {q:"Does it remember my jobs and addresses?", a:"Yes. As you type, the Job reference and Site fields suggest values from your past requests, the alternative-address field suggests addresses you've used before, and the Collect-from field suggests your suppliers' branches plus places you've collected from - so recurring jobs and depots are a quick tap rather than retyping."},
-      {q:"What features are coming next?", a:"Recently added: trade auto-detect, multiple named contacts and branches per supplier, automatic capture of supplier email replies into the quote box, revise-and-re-send for RFQs, collect-from branch details, and job/site/branch autocomplete. On the roadmap next: company-wide spend reporting, smart matching of stray supplier emails to the right job, AI that reads hire delivery photos to note condition automatically, hire-vs-buy suggestions based on your hire history, and accounting integrations like Xero and Sage."},
+      {q:"What features are coming next?", a:"Recently added: trade auto-detect, multiple named contacts and branches per supplier, automatic capture of supplier email replies into the quote box, revise-and-re-send for RFQs, collect-from branch details, and job/site/branch autocomplete. Recently added: the O&M file generator, spend reporting (by trade, supplier, project and month) with a per-project cross-trade view, and a materials measuring tool. On the roadmap next: camera/drawing-based measuring, smart matching of stray supplier emails to the right job, AI that reads hire delivery photos to note condition automatically, hire-vs-buy suggestions based on your hire history, and accounting integrations like Xero and Sage."},
+    ]},
+    {cat:"O&M, reports & measure", qs:[
+      {q:"What is the O&M file generator?", a:"On the 'O&M files' tab (Buyers and Managers) ProQure builds an Operations & Maintenance pack for a project from the materials you've ordered against it. Pick the project and tap Generate O&M - you get a presented PDF with a cover, contents, equipment schedule, manufacturer literature, and planned preventative maintenance (PPM) schedules. The equipment details and maintenance schedules are AI-drafted and marked for your sign-off, so review before issuing to a client."},
+      {q:"How does it find the datasheets?", a:"Turn on 'find datasheet links online' before generating and ProQure searches each manufacturer for the exact datasheet for the model installed. That option uses web search (a small per-use cost) so it is off by default - with it off, the pack still lists each item's manufacturer and model with a search link."},
+      {q:"Can I split the O&M into separate files?", a:"Yes. Tick 'also export sections separately' and ProQure downloads the Literature and Maintenance sections as their own PDFs in addition to the single combined pack."},
+      {q:"What's in the Reports tab?", a:"Reports (Buyers and Managers) shows total spend, order count, projects and suppliers, with spend broken down by trade, by supplier and by month, and a CSV export. The 'By project' tab is the manager view: pick a project to see its total cost split across every trade and supplier on it."},
+      {q:"How is spend worked out?", a:"From your orders. ProQure adds up the line totals on each PO (falling back to the PO's estimated total), and ignores cancelled orders. Trade comes from the request the order was raised from."},
+      {q:"What does the Measure tab do?", a:"Enter an area (or a length and height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and a wastage allowance, and shows the assumptions it used. It's an estimate - always sense-check before ordering. Camera and scaled-drawing measuring are coming next."},
     ]},
   ];
 
@@ -5810,7 +5820,7 @@ Rules:
             R.byMonth.forEach(x=>rows.push(["Month",x.label,Math.round(x.value),x.count]));
             const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
             const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob);
-            const a=document.createElement("a"); a.href=url; a.download="ProQure-spend-report.csv"; a.click(); URL.revokeObjectURL(url);
+            const a=document.createElement("a"); a.href=url; a.download="ProQure-spend-report.csv"; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
           const kpis=[["Total spend",gbp(R.total)],["Orders",String(R.count)],["Projects",String(R.projects)],["Suppliers",String(R.suppliers)]];
           return (
@@ -6413,6 +6423,9 @@ Rules:
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
                     {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck"},
+                    {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2},
+                    {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2},
+                    {id:"measure",  label:"Measure",         sub:"Work out quantities to order",      icon:"ruler"},
                     {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building", min:2},
                     {id:"team",     label:"Team",            sub:"People and roles",                icon:"building", min:3},
                     {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
