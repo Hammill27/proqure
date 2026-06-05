@@ -7417,7 +7417,7 @@ class ErrorBoundary extends Component {
 // A simple shared site password shown before the login screen, so the public
 // cannot see the app while it is in private testing. Set SITE_GATE_PASSWORD
 // to "" at launch to disable the gate entirely.
-const SITE_GATE_PASSWORD = "proqure2026";
+const SITE_GATE_PASSWORD = "TKQM-9XJR-VP4H-WBEB-3FN7";
 function SiteGate({ onUnlock }) {
   const [val, setVal] = useState("");
   const [err, setErr] = useState(false);
