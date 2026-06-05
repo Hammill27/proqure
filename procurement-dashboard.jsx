@@ -3308,8 +3308,13 @@ ${settings.company||""}`;
 
   // --- Cloud push: mirror changes up to Supabase (debounced) ----------------
   const pushTimers = useRef({});
+  // Becomes true shortly after the initial load. Until then we DON'T push, so simply
+  // opening the app never echoes freshly-loaded (or stale) data back up to the cloud
+  // and clobbers it. Genuine user edits after load sync normally.
+  const hydratedRef = useRef(false);
   const queueCloudPush = useCallback((key, valueObj) => {
     if (!cloudEnabled || !cloudUserId) return;
+    if (!hydratedRef.current) return;
     clearTimeout(pushTimers.current[key]);
     pushTimers.current[key] = setTimeout(() => { cloudPush(cloudUserId, key, valueObj).catch(()=>{}); }, 800);
   }, [cloudUserId]);
@@ -3343,6 +3348,8 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_usage", usage); }, [usage, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_team", team); }, [team, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
+  // Allow real changes to sync only after the initial mount pushes above have run (and been skipped).
+  useEffect(()=>{ const t = setTimeout(()=>{ hydratedRef.current = true; }, 1000); return ()=>clearTimeout(t); }, []);
 
   // Spend by trade (from approved orders)
   const spendByTrade = (() => {
@@ -7815,6 +7822,15 @@ function AppInner() {
       (async () => {
         const co = await resolveCompany(session);
         const scope = (co && co.companyId) || session.user.id; // fallback: per-user scope
+        // Account-aware reset: if the data cached in THIS browser belongs to a different
+        // account/company, clear it before loading - so we never display, or push up,
+        // another account's data. (Same account => keep any unsynced local changes.)
+        try {
+          if (localStorage.getItem("piq_scope") !== scope) {
+            SYNC_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+            localStorage.setItem("piq_scope", scope);
+          }
+        } catch (e) {}
         if (active) setCompanyId(scope);
         await cloudPull(scope);
         if (active) setReady(true);
