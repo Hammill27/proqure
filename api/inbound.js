@@ -137,6 +137,12 @@ function extractToken(toField) {
   return null;
 }
 
+// Pull the bare email address out of a "Name <addr@x>" string.
+function extractEmail(str) {
+  const m = String(str || "").toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
+  return m ? m[0] : "";
+}
+
 async function forwardCopy(inbox, supName, fromAddr, subject, replyText) {
   try {
     await fetch("https://api.resend.com/emails", {
@@ -182,29 +188,54 @@ export default async function handler(req, res) {
     if (!email) email = data;
 
     const token = extractToken((email && email.to) || data.to);
-    console.log("api/inbound: emailId", emailId, "| token", token);
-    if (!token) return res.status(200).json({ ok: true, note: "no capture token" });
     if (!supabase) { console.error("api/inbound: Supabase not configured (URL / SERVICE key)"); return res.status(200).json({ ok: true, note: "storage not configured" }); }
 
     const replyText = stripQuotedReply(bodyText(email));
-    console.log("api/inbound: bodyTextLen", (replyText || "").length);
     const fromAddr = (email && email.from) || data.from || "supplier";
+    const fromEmail = extractEmail(fromAddr);
     const subject = (email && email.subject) || data.subject || "";
+    console.log("api/inbound: emailId", emailId, "| token", token, "| from", fromEmail, "| bodyLen", (replyText || "").length);
 
     const { data: rows, error } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_requests");
     if (error) { console.error("api/inbound: load error", error.message); return res.status(200).json({ ok: true }); }
 
-    let target = null;
-    for (const row of (rows || [])) {
-      const requests = Array.isArray(row.value) ? row.value : [];
-      for (let ri = 0; ri < requests.length; ri++) {
-        const sentTo = (requests[ri] && requests[ri].sentTo) || [];
-        const si = sentTo.findIndex((s) => s && s.replyToken && s.replyToken === token);
-        if (si !== -1) { target = { userId: row.user_id, requests, ri, si }; break; }
+    // 1) Preferred: match the unique per-supplier reply token (q-<token>@...).
+    let target = null, matchedBy = "token";
+    if (token) {
+      for (const row of (rows || [])) {
+        const requests = Array.isArray(row.value) ? row.value : [];
+        for (let ri = 0; ri < requests.length; ri++) {
+          const sentTo = (requests[ri] && requests[ri].sentTo) || [];
+          const si = sentTo.findIndex((s) => s && s.replyToken && s.replyToken === token);
+          if (si !== -1) { target = { userId: row.user_id, requests, ri, si }; break; }
+        }
+        if (target) break;
       }
-      if (target) break;
     }
-    if (!target) { console.warn("api/inbound: token not matched -", token); return res.status(200).json({ ok: true, note: "token not matched" }); }
+    // 2) Fallback: some mail clients reply to the visible From address instead of our
+    //    unique Reply-To, so the token is lost. Match the sender's email address against
+    //    a supplier we sent this job to - preferring a request still awaiting that
+    //    supplier's reply, then the most recent. Never guesses: only an exact email match.
+    if (!target && fromEmail) {
+      let best = null;
+      for (const row of (rows || [])) {
+        const requests = Array.isArray(row.value) ? row.value : [];
+        for (let ri = 0; ri < requests.length; ri++) {
+          const sentTo = (requests[ri] && requests[ri].sentTo) || [];
+          for (let si = 0; si < sentTo.length; si++) {
+            const s = sentTo[si];
+            const addr = extractEmail((s && (s.email || s.contactEmail)) || "");
+            if (addr && addr === fromEmail) {
+              const sentAt = new Date(requests[ri].created || requests[ri].sentAt || 0).getTime();
+              const score = (s && s.replyReceivedAt ? 0 : 1e15) + sentAt;
+              if (!best || score > best.score) best = { userId: row.user_id, requests, ri, si, score };
+            }
+          }
+        }
+      }
+      if (best) { target = best; matchedBy = "sender address"; }
+    }
+    if (!target) { console.warn("api/inbound: not matched - token", token, "from", fromEmail); return res.status(200).json({ ok: true, note: "not matched" }); }
 
     const { userId, requests, ri, si } = target;
     const sup = requests[ri].sentTo[si];
@@ -216,7 +247,7 @@ export default async function handler(req, res) {
     requests[ri].sentTo[si] = sup;
     requests[ri].activity = [
       ...(requests[ri].activity || []),
-      { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box`, user: "Inbound" },
+      { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box${matchedBy === "sender address" ? " (matched by sender address)" : ""}`, user: "Inbound" },
     ];
 
     const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: requests, updated_at: stamp }, { onConflict: "user_id,store_key" });
