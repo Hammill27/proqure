@@ -6695,9 +6695,9 @@ Rules:
           {moreMenuOpen&&(
             <div style={{position:"fixed",bottom:68,left:0,right:0,zIndex:200,animation:"fadeIn 0.15s ease"}}>
               <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,bottom:68,background:"rgba(0,0,0,0.6)",zIndex:198}}/>
-              <div style={{position:"relative",zIndex:199,background:"var(--topbar-bg)",borderRadius:"20px 20px 0 0",padding:"8px 0 12px",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)",border:"1px solid var(--sidebar-border)"}}>
+              <div style={{position:"relative",zIndex:199,background:"var(--topbar-bg)",borderRadius:"20px 20px 0 0",padding:"8px 0 calc(12px + env(safe-area-inset-bottom))",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)",border:"1px solid var(--sidebar-border)"}}>
                 <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
-                <div style={{padding:"0 8px"}}>
+                <div style={{padding:"0 8px",maxHeight:"calc(100dvh - 150px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
                     {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck"},
@@ -7564,6 +7564,9 @@ function LoginScreen({ onLoggedIn }) {
   const [mode, setMode] = useState("signin"); // signin | signup
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [showForgot, setShowForgot] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
   // Shares the same theme setting as the app (piq_dark)
   const [dark, setDark] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleTheme = () => setDark(p => { const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0")}catch{} return n; });
@@ -7574,10 +7577,17 @@ function LoginScreen({ onLoggedIn }) {
     try { document.body.style.background = bg; document.documentElement.style.background = bg; } catch {}
   }, [dark]);
 
-  const forgot = async () => {
-    if (!email.trim()) { setMsg("Enter your email above first, then tap reset."); return; }
-    try { await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin }); setMsg("If that email has an account, a reset link is on its way."); }
-    catch (e) { setMsg("Couldn't send a reset link just now - please try again shortly."); }
+  const openForgot = () => { setShowForgot(true); setResetEmail(email); setMsg(""); };
+  const sendReset = async () => {
+    const em = resetEmail.trim();
+    if (!em) { setMsg("Enter your email address first."); return; }
+    setResetBusy(true); setMsg("");
+    try {
+      await supabase.auth.resetPasswordForEmail(em, { redirectTo: window.location.origin });
+      setMsg("If that email has an account, a reset link is on its way. Check your inbox (and spam).");
+      setShowForgot(false);
+    } catch (e) { setMsg("Couldn't send a reset link just now - please try again shortly."); }
+    finally { setResetBusy(false); }
   };
   const submit = async () => {
     if (!email.trim() || !password) { setMsg("Enter an email and password."); return; }
@@ -7663,9 +7673,25 @@ function LoginScreen({ onLoggedIn }) {
           style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?0.7:1,marginBottom:14}}>
           {busy ? "Please wait..." : (mode==="signup"?"Create account":"Sign in")}
         </button>
-        {mode==="signin" && (
+        {mode==="signin" && !showForgot && (
           <div style={{textAlign:"center",marginBottom:12}}>
-            <button onClick={forgot} style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:600,cursor:"pointer",fontSize:12.5}}>Forgot password?</button>
+            <button onClick={openForgot} style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:600,cursor:"pointer",fontSize:12.5}}>Forgot password?</button>
+          </div>
+        )}
+        {showForgot && (
+          <div style={{marginTop:4,marginBottom:14,padding:"14px",border:`1px solid ${t.inputBorder}`,borderRadius:12,background:t.inputBg}}>
+            <div style={{fontSize:13,fontWeight:700,color:t.title,marginBottom:4}}>Reset your password</div>
+            <div style={{fontSize:12,color:t.sub,marginBottom:10,lineHeight:1.5}}>Enter your email and we&rsquo;ll send you a link to set a new password.</div>
+            <input type="email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} autoComplete="email" placeholder="you@company.co.uk"
+              onKeyDown={e=>{ if(e.key==="Enter") sendReset(); }}
+              style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.card,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:10,outline:"none"}}/>
+            <button onClick={sendReset} disabled={resetBusy}
+              style={{width:"100%",padding:"11px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:13.5,fontWeight:700,cursor:resetBusy?"default":"pointer",opacity:resetBusy?0.7:1,marginBottom:8}}>
+              {resetBusy?"Sending...":"Send reset link"}
+            </button>
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>{ setShowForgot(false); setMsg(""); }} style={{background:"none",border:"none",color:t.sub,fontWeight:600,cursor:"pointer",fontSize:12}}>Cancel</button>
+            </div>
           </div>
         )}
 
