@@ -2372,6 +2372,22 @@ function ProQureApp({ session, companyId }) {
     showToast("Fresh start - everything cleared except your suppliers");
   }
 
+  function markOrderDelivered(order, img) {
+    setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),...(img?{deliveryPhoto:img,signedOffBy:myEmail}:{})}:o));
+    logActivity(img?"Delivery signed off":"Order delivered",`${order.poNumber} (${order.supplier}) ${img?`signed off by ${myEmail} with delivery photo`:"marked as delivered"}`,{entity:"order",jobRef:order.jobRef});
+    if(img) meter("deliveriesSignedOff");
+    showToast(img?"Delivery signed off — back to dashboard":"Order delivered — back to dashboard");
+    setView("dashboard");
+  }
+  function deliverWithPhoto(order, file) {
+    if(!file) return;
+    const rd=new FileReader();
+    rd.onload=()=>{ const dataUrl=rd.result; const image=new Image();
+      image.onload=()=>{ const maxW=1000; const scale=Math.min(1,maxW/image.width); const cv=document.createElement("canvas"); cv.width=image.width*scale; cv.height=image.height*scale; cv.getContext("2d").drawImage(image,0,0,cv.width,cv.height); let img; try{img=cv.toDataURL("image/jpeg",0.7);}catch(err){img=dataUrl;} markOrderDelivered(order,img); };
+      image.onerror=()=>markOrderDelivered(order,dataUrl);
+      image.src=dataUrl; };
+    rd.readAsDataURL(file);
+  }
   function handleCancelOrder(orderId) {
     if (!can.deleteItems(myRole)) { showToast("Only a Manager can cancel orders.","warn"); return; }
     const order = orders.find(o=>o.id===orderId);
@@ -4335,7 +4351,7 @@ Rules:
                 {label:"New request",  sub:"Voice or type",         icon:"mic", action:()=>{setView("new");resetNewRequest();}, accent:"#5B5BD6"},
                 {label:"Analyse",      sub:"Compare quotes",        icon:"search", action:()=>{setView("quotes");}, accent:"#7E6DD6"},
                 {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"package", action:()=>setView("orders"), accent:"#1E9E63"},
-                ...(can.raisePO(myRole) ? [{label:"Quick PO", sub:"Emergency phone order", icon:"clock", action:()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]}), accent:"#D97706"}] : [{label:"Suppliers", sub:"Manage accounts", icon:"building", action:()=>setView("suppliers"), accent:"#C77D2E"}]),
+                ...(can.raisePO(myRole) ? [{label:"Quick PO", sub:"Phone-agreed order", icon:"clock", action:()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]}), accent:"#D97706"}] : [{label:"Suppliers", sub:"Manage accounts", icon:"building", action:()=>setView("suppliers"), accent:"#C77D2E"}]),
               ].map((q,qi)=>(
                 <button key={q.label} onClick={q.action} className="stagger-in" style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"14px 16px":"18px 22px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:104,animationDelay:`${0.2+qi*0.04}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
@@ -5484,9 +5500,9 @@ Rules:
                 }).map(order=>{
                   const STATUS_STEPS = [
                     {key:"pending-send",label:"Ready to send",color:"var(--green-dark)",  bg:"var(--green-mint)"},
-                    {key:"sent",        label:"Sent",          color:"var(--indigo)",      bg:"var(--indigo-light)"},
+                    {key:"sent",        label:"Sent",          color:"var(--green-dark)",  bg:"var(--green-light)"},
                     {key:"confirmed",   label:"Confirmed",     color:"var(--green-dark)",  bg:"var(--green-light)"},
-                    {key:"delivered",   label:"Delivered",     color:"var(--text-secondary)",bg:"var(--bg-subtle2)"},
+                    {key:"delivered",   label:"Delivered",     color:"var(--green-dark)",  bg:"var(--green-light)"},
                   ];
                   const stepIdx   = STATUS_STEPS.findIndex(s=>s.key===order.status);
                   const curStep   = STATUS_STEPS[stepIdx]||STATUS_STEPS[0];
@@ -5588,12 +5604,12 @@ Rules:
                                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>{can.viewCosts(myRole)?"Mark this order as confirmed manually, or upload the supplier's confirmation document.":"When the materials arrive, take a photo of the delivery note to sign off this delivery."}</div>
                                   <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
                                     {can.viewCosts(myRole)&&<Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",confirmedAt:new Date().toISOString()}:o));logActivity("Order confirmed",`${order.poNumber} (${order.supplier}) marked as confirmed`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as confirmed</Btn>}
-                                    <Btn outline onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o));logActivity("Order delivered",`${order.poNumber} (${order.supplier}) marked as delivered`,{entity:"order",jobRef:order.jobRef});}}>Mark as delivered</Btn>
-                                    <label style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
+                                    <label style={{fontSize:13,fontWeight:600,color:"white",background:"#15824F",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
                                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
                                       {order.deliveryPhoto?"Replace delivery photo":"Photo + sign off delivery"}
-                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const dataUrl=rd.result;const image=new Image();image.onload=()=>{const maxW=1000;const scale=Math.min(1,maxW/image.width);const cv=document.createElement("canvas");cv.width=image.width*scale;cv.height=image.height*scale;cv.getContext("2d").drawImage(image,0,0,cv.width,cv.height);let img;try{img=cv.toDataURL("image/jpeg",0.7);}catch(err){img=dataUrl;}setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:img,signedOffBy:myEmail}:o));logActivity("Delivery signed off",`${order.poNumber} (${order.supplier}) signed off by ${myEmail} with delivery note photo`,{entity:"order",jobRef:order.jobRef});meter("deliveriesSignedOff");showToast("Delivery signed off with photo");};image.onerror=()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),deliveryPhoto:dataUrl,signedOffBy:myEmail}:o));showToast("Delivery signed off with photo");};image.src=dataUrl;};rd.readAsDataURL(f);e.target.value="";}}/>
+                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];deliverWithPhoto(order,f);e.target.value="";}}/>
                                     </label>
+                                    <Btn outline onClick={()=>markOrderDelivered(order,null)}>Mark delivered (no photo)</Btn>
                                     {can.deleteItems(myRole) && order.status!=="cancelled" && <Btn outline onClick={()=>setCancelOrderConfirm(order)} style={{color:"var(--red)"}}>Cancel order</Btn>}
                                   </div>
                                   <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer",marginBottom:10}}>
@@ -5609,7 +5625,14 @@ Rules:
                                 <div>
                                   {order.confirmationDoc&&<div style={{fontSize:12,color:"var(--green-dark)",marginBottom:10}}>Confirmation received: {order.confirmationDoc.label||"document"}</div>}
                                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12}}>Expected delivery: {order.expectedDelivery?new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):"Not set"}</div>
-                                  <Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString()}:o));logActivity("Order delivered",`${order.poNumber} (${order.supplier}) marked as delivered`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as delivered</Btn>
+                                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                                    <label style={{fontSize:13,fontWeight:600,color:"white",background:"#15824F",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
+                                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                                      {order.deliveryPhoto?"Replace delivery photo":"Photo + sign off delivery"}
+                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];deliverWithPhoto(order,f);e.target.value="";}}/>
+                                    </label>
+                                    <Btn outline onClick={()=>markOrderDelivered(order,null)}>Mark delivered (no photo)</Btn>
+                                  </div>
                                 </div>
                               )}
 
@@ -6697,7 +6720,7 @@ Rules:
               <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,bottom:68,background:"rgba(0,0,0,0.6)",zIndex:198}}/>
               <div style={{position:"relative",zIndex:199,background:"var(--topbar-bg)",borderRadius:"20px 20px 0 0",padding:"8px 0 calc(12px + env(safe-area-inset-bottom))",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)",border:"1px solid var(--sidebar-border)"}}>
                 <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
-                <div style={{padding:"0 8px",maxHeight:"calc(100dvh - 150px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+                <div style={{padding:"0 8px",maxHeight:"65vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
                     {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck"},
@@ -7202,7 +7225,7 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill })
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"var(--text-secondary)",lineHeight:1}}>&times;</button>
         </div>
-        <div style={{fontSize:17,fontWeight:700,marginBottom:4,color:"var(--text-primary)"}}>Raise an emergency purchase order</div>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:4,color:"var(--text-primary)"}}>Raise a quick purchase order</div>
         <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.55}}>For phone-agreed orders that skip the quote process. This creates a numbered PO straight away and logs it as a direct/phone order.</div>
 
         {/* AI quick-fill */}
@@ -7266,7 +7289,7 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill })
 
         {/* Summary + total */}
         <label style={labelStyle}>Description / notes (optional)</label>
-        <textarea value={form.summary||""} onChange={e=>upd({summary:e.target.value})} placeholder="e.g. Emergency replacement pump agreed on phone with branch manager" style={{...inputStyle,minHeight:54,resize:"vertical",marginBottom:12,fontFamily:"inherit"}}></textarea>
+        <textarea value={form.summary||""} onChange={e=>upd({summary:e.target.value})} placeholder="e.g. Replacement pump agreed on phone with branch manager" style={{...inputStyle,minHeight:54,resize:"vertical",marginBottom:12,fontFamily:"inherit"}}></textarea>
 
         <label style={labelStyle}>Agreed total (the phone-quoted price)</label>
         <input value={form.total||""} onChange={e=>upd({total:e.target.value})} placeholder="e.g. £420.00" style={{...inputStyle,marginBottom:18}}/>
