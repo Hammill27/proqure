@@ -3,9 +3,11 @@
 // exposed to the browser.
 //
 // Supports the decided email model:
-//   from      - "Display Name <quotes@proqure.co.uk>" (ProQure domain, business display name)
-//   reply_to  - the user's own inbox, so supplier replies reach them
-//   html      - the branded ProQure email template (falls back to text if absent)
+//   from        - "Display Name <quotes@proqure.co.uk>" (ProQure domain, business display name)
+//   reply_to    - the user's own inbox, so supplier replies reach them
+//   html        - the branded ProQure email template (falls back to text if absent)
+//   attachments - optional array of { filename, content } where content is base64
+//                 (used to attach the PO PDF to purchase-order emails)
 //
 // NOTE: the "from" domain (proqure.co.uk) must be verified in Resend to deliver.
 
@@ -21,7 +23,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { to, subject, text, html, from, reply_to } = req.body || {};
+  const { to, subject, text, html, from, reply_to, attachments } = req.body || {};
 
   if (!from || !to || !subject) {
     return res.status(400).json({ error: "Missing from, to, or subject" });
@@ -37,6 +39,17 @@ export default async function handler(req, res) {
     if (text) payload.text = text;
     if (html) payload.html = html;
     if (reply_to) payload.reply_to = reply_to;
+
+    // Attachments: Resend expects [{ filename, content }] with content as a
+    // base64 string. We pass through only well-formed entries and cap the count
+    // and size defensively so a malformed client call can't wedge the request.
+    if (Array.isArray(attachments) && attachments.length) {
+      const clean = attachments
+        .filter(a => a && a.filename && typeof a.content === "string" && a.content.length)
+        .slice(0, 5)
+        .map(a => ({ filename: String(a.filename).slice(0, 200), content: a.content }));
+      if (clean.length) payload.attachments = clean;
+    }
 
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
