@@ -24,7 +24,7 @@ const ANON_KEY      = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE
 const ADMIN_EMAILS  = (process.env.ADMIN_CONSOLE_EMAILS || "")
   .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
-const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", "piq_activity"];
+const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", "piq_activity", "piq_quote_sets", "piq_quote_library", "piq_templates"];
 
 // ---- Pure assembly: turn raw rows into the metadata-only summary the UI needs -------
 // Exported so it can be unit-tested without a live database.
@@ -124,6 +124,8 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       createdAt: (ownerAuth && ownerAuth.created_at) || (owner && owner.joinedAt) || null,
       lastActive: lastActiveTs ? new Date(lastActiveTs).toISOString() : null,
       userCount: c.users.length,
+      pendingInvites: c.users.filter(u => !u.active).length,
+      unconfirmed: c.users.filter(u => !u.confirmed).length,
       users: c.users,
       counts: {
         orders: counts.piq_orders || 0,
@@ -131,6 +133,9 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
         suppliers: counts.piq_suppliers || 0,
         hires: counts.piq_hires || 0,
         activity: counts.piq_activity || 0,
+        quotes: counts.piq_quote_sets || 0,
+        library: counts.piq_quote_library || 0,
+        templates: counts.piq_templates || 0,
       },
       aiUsage: usageByCo.get(c.companyId) || null,
     });
@@ -141,10 +146,18 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const totalUsers = list.reduce((n, c) => n + c.userCount, 0);
   const totalOrders = list.reduce((n, c) => n + c.counts.orders, 0);
   const totalRequests = list.reduce((n, c) => n + c.counts.requests, 0);
+  const totalSuppliers = list.reduce((n, c) => n + c.counts.suppliers, 0);
+  const totalHires = list.reduce((n, c) => n + c.counts.hires, 0);
+  const totalQuotes = list.reduce((n, c) => n + c.counts.quotes, 0);
+  const pendingInvites = list.reduce((n, c) => n + c.pendingInvites, 0);
+  const unconfirmedUsers = list.reduce((n, c) => n + c.unconfirmed, 0);
+  const onboardedCount = list.filter(c => c.onboarded).length;
   const activeTrials = list.filter(c => c.plan === "trial").length;
   const paid = list.filter(c => c.plan === "active" || c.plan === "paid").length;
+  const planDist = list.reduce((m, c) => { const p = c.plan || "trial"; m[p] = (m[p] || 0) + 1; return m; }, {});
   const signupsLast30d = authUsers.filter(u => u.created_at && (now - Date.parse(u.created_at)) < 30 * DAY).length;
   const activeLast7d = list.filter(c => c.lastActive && (now - Date.parse(c.lastActive)) < 7 * DAY).length;
+  const staleCompanies = list.filter(c => c.onboarded && (!c.lastActive || (now - Date.parse(c.lastActive)) > 30 * DAY)).length;
 
   // recent signups feed
   const recentSignups = [...authUsers]
@@ -174,7 +187,12 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   }
 
   return {
-    kpis: { totalCompanies: list.length, totalUsers, activeTrials, paid, signupsLast30d, activeLast7d, totalOrders, totalRequests },
+    kpis: {
+      totalCompanies: list.length, totalUsers, activeTrials, paid,
+      signupsLast30d, activeLast7d, staleCompanies, onboardedCount,
+      totalOrders, totalRequests, totalSuppliers, totalHires, totalQuotes,
+      pendingInvites, unconfirmedUsers, planDist,
+    },
     signupHistogram: hist,
     recentSignups,
     companies: list,
