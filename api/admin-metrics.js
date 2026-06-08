@@ -28,9 +28,17 @@ const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", 
 
 // ---- Pure assembly: turn raw rows into the metadata-only summary the UI needs -------
 // Exported so it can be unit-tested without a live database.
-export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [] }) {
+export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [], excludeEmails = [] }) {
   const now = Date.now();
   const DAY = 86400000;
+
+  // Admin-console accounts are platform operators, not tenants - keep them out of
+  // every company/user/signup view so the admin's own login never shows as a "company".
+  const ex = new Set(excludeEmails.map(e => (e || "").toLowerCase()));
+  if (ex.size) {
+    members = members.filter(m => !ex.has((m.email || "").toLowerCase()));
+    authUsers = authUsers.filter(u => !ex.has((u.email || "").toLowerCase()));
+  }
 
   // index auth users by id and by email
   const userById = new Map();
@@ -260,7 +268,7 @@ export default async function handler(req, res) {
       const { data: usageRows } = await admin
         .from("proqure_data").select("user_id,value").eq("store_key", "piq_usage");
 
-      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [] });
+      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], excludeEmails: ADMIN_EMAILS });
       res.status(200).json({ ok: true, ...summary, viewer: callerEmail });
       return;
     }
