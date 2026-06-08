@@ -1,22 +1,19 @@
 // Serverless function: privileged account actions that need Supabase's SERVICE ROLE
 // key (which must NEVER be exposed to the browser). Currently supports inviting a
-// teammate: it verifies the CALLER is a Manager (or platform admin) of the target
-// company, sends them an invite email, and registers their membership so they join
-// the right company with the right role on first sign-in.
+// teammate: it verifies the CALLER is a Manager of their own company, sends them an
+// invite email, and registers their membership so they join the right company with
+// the right role on first sign-in. A caller can only ever invite into their OWN company.
 //
 // Required Vercel env vars:
 //   SUPABASE_URL                  - your project URL (https://xxxx.supabase.co)
 //   SUPABASE_SERVICE_ROLE_KEY     - service role key (Project Settings > API)
 //   APP_URL                       - where invite links land, e.g. https://app.proqure.co.uk
-//   PLATFORM_ADMIN_EMAILS         - optional, comma-separated super-user emails
 //
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/, "");
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const APP_URL = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
-const PLATFORM_ADMINS = (process.env.PLATFORM_ADMIN_EMAILS || "proqureadmin@proqure.co.uk")
-  .split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
 
 const admin = (SUPABASE_URL && SERVICE_KEY)
   ? createClient(SUPABASE_URL, SERVICE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
@@ -41,7 +38,6 @@ export default async function handler(req, res) {
   } catch (e) { return res.status(401).json({ error: "Invalid session" }); }
 
   const callerEmail = (caller.email || "").toLowerCase();
-  const isPlatformAdmin = PLATFORM_ADMINS.includes(callerEmail);
 
   // Look up the caller's membership (company + role).
   let callerCompany = null, callerRole = null;
@@ -50,7 +46,7 @@ export default async function handler(req, res) {
     if (rows && rows.length) { callerCompany = rows[0].company_id; callerRole = rows[0].role; }
   } catch (e) { /* ignore */ }
   // A brand-new manager bootstrapping their own company: company id = their user id.
-  if (!callerCompany) { callerCompany = caller.id; callerRole = isPlatformAdmin ? "manager" : (callerRole || "manager"); }
+  if (!callerCompany) { callerCompany = caller.id; callerRole = callerRole || "manager"; }
 
   const body = req.body || {};
   const action = body.action || "invite";
@@ -60,15 +56,14 @@ export default async function handler(req, res) {
     const role = ["engineer", "buyer", "manager"].includes(body.role) ? body.role : "engineer";
     const employment = body.employment === "internal" ? "internal" : (body.employment === "subcontractor" ? "subcontractor" : "");
     const name = String(body.name || "").trim();
-    // Target company: a platform admin may pass an explicit companyId; everyone else
-    // can only invite into their OWN company.
-    const companyId = (isPlatformAdmin && body.companyId) ? body.companyId : callerCompany;
+    // A caller can only ever invite into their OWN company.
+    const companyId = callerCompany;
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address" });
-    // Only Managers (or the platform admin) can create accounts.
-    if (!isPlatformAdmin && callerRole !== "manager") return res.status(403).json({ error: "Only a Manager can create accounts" });
+    // Only Managers can create accounts.
+    if (callerRole !== "manager") return res.status(403).json({ error: "Only a Manager can create accounts" });
     // You cannot grant a role above your own.
-    if (!isPlatformAdmin && ROLE_RANK[role] > ROLE_RANK[callerRole || "engineer"]) {
+    if (ROLE_RANK[role] > ROLE_RANK[callerRole || "engineer"]) {
       return res.status(403).json({ error: "You can only assign roles up to your own level" });
     }
 
