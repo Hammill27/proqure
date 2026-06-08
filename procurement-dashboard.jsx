@@ -10,9 +10,6 @@ const SB_URL = (import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\
 // because Row Level Security is enabled on the table.
 const SB_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 const cloudEnabled = !!(SB_URL && SB_KEY);
-// Platform super-user(s): full cross-company access for setup/support. Remove before go-live.
-const PLATFORM_ADMINS = ["proqureadmin@proqure.co.uk"];
-const isPlatformAdmin = (email) => PLATFORM_ADMINS.includes((email || "").toLowerCase());
 // Captured before Supabase consumes the URL, so we can tell when someone arrives via
 // an invite or password-reset link and needs to set a password.
 const INITIAL_HASH = (typeof window !== "undefined" ? (window.location.hash || "") : "");
@@ -2021,7 +2018,7 @@ function ProQureApp({ session, companyId }) {
   const myMember = team.find(m => (m.email||"").toLowerCase() === myEmail) || null;
   // Defensive: treat the retired "owner" role (or any unknown role) as manager / engineer sensibly.
   const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
-  const myRole = isPlatformAdmin(myEmail) ? "manager" : (normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager"));
+  const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
   // If the user is on a view their role can't access, send them to the dashboard.
   // Guard against transient demotion: during a background cloud sync the team list
   // can momentarily be empty/re-loading, which would briefly resolve myRole to the
@@ -6762,7 +6759,7 @@ Rules:
                   <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)"}}>Activity overview</div>
                   <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:"#4A4AB8",background:"#EEEEFB",borderRadius:99,padding:"2px 9px"}}>This workspace</span>
                 </div>
-                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>A quiet running tally of activity in this workspace. (A preview of the kind of overview the platform admin area will show across all companies later.)</div>
+                <div style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.5}}>A quiet running tally of activity in this workspace.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                   {[["Requests raised","requestsRaised"],["Quotes analysed","quotesAnalysed"],["RFQs sent","rfqsSent"],["POs raised (total)","posRaised"],["— of which materials","posMaterials"],["— of which hire","posHire"],["Deliveries signed off","deliveriesSignedOff"],["Emails sent","emailsSent"]].map(([label,key])=>(
                     <div key={key} style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"11px 13px"}}>
