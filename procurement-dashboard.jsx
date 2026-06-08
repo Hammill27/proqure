@@ -2324,6 +2324,17 @@ function ProQureApp({ session, companyId }) {
   const liveRequests = requests.filter(r=>!r.archived);
   // Engineers only see jobs they created; buyers and managers see everything.
   const visibleRequests = can.viewAllJobs(myRole) ? liveRequests : liveRequests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail);
+  // Engineers/subcontractors only see orders for jobs they're involved with: a request
+  // they raised, or a Quick PO they raised themselves. Managers/buyers see everything.
+  // ONE scoped list powers the rows AND every count (pills, empty-state, nav badge) so
+  // the numbers and the visible rows can never disagree. Derived from live state, so it
+  // recomputes automatically on account switch and after hydration - no cache to clear.
+  const involvedInOrder = (o) => {
+    if ((o.createdBy||"").toLowerCase() === myEmail) return true;
+    const r = requests.find(rr => rr.id === o.reqId);
+    return !!r && (r.createdBy||"").toLowerCase() === myEmail;
+  };
+  const visibleOrders = can.viewAllJobs(myRole) ? orders : orders.filter(involvedInOrder);
   const stats = {
     total:    visibleRequests.length,
     pending:  visibleRequests.filter(r=>r.status==="pending").length,
@@ -2597,7 +2608,7 @@ function ProQureApp({ session, companyId }) {
       unitPrice: i.unitPrice || "",
     }));
     const order = {
-      id: poNum, reqId: null,
+      id: poNum, reqId: null, createdBy: myEmail,
       jobRef: (form.jobRef||"").trim() || "Quick PO",
       site: (form.site||"").trim() || "",
       trade: form.trade || "",
@@ -3605,7 +3616,7 @@ ${settings.company||""}`;
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
     setView(id); setMoreMenuOpen(false); if(id==="new")resetNewRequest();
   };
-  const pendingOrders = orders.filter(o=>o.status==="pending-send").length;
+  const pendingOrders = visibleOrders.filter(o=>o.status==="pending-send").length;
 
   // Overdue requests (for dashboard banner)
   const overdueRequests = (() => {
@@ -5532,7 +5543,7 @@ Rules:
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
               <div>
                 <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Orders</h1>
-                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{(can.viewAllJobs(myRole)?orders:orders.filter(o=>{const r=requests.find(rr=>rr.id===o.reqId);return r&&(r.createdBy||"").toLowerCase()===myEmail;})).length} {can.viewAllJobs(myRole)?"total orders":"of your deliveries"}</p>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{visibleOrders.length} {can.viewAllJobs(myRole)?"total orders":"of your deliveries"}</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                 {can.raisePO(myRole)&&(
@@ -5551,9 +5562,9 @@ Rules:
                   </button>
                 )}
                 {[
-                  {id:"all",      label:"All",       count:orders.length},
-                  {id:"active",   label:"Active",    count:orders.filter(o=>o.status!=="delivered").length},
-                  {id:"delivered",label:"Delivered", count:orders.filter(o=>o.status==="delivered").length},
+                  {id:"all",      label:"All",       count:visibleOrders.length},
+                  {id:"active",   label:"Active",    count:visibleOrders.filter(o=>o.status!=="delivered").length},
+                  {id:"delivered",label:"Delivered", count:visibleOrders.filter(o=>o.status==="delivered").length},
                 ].map(f=>(
                   <button key={f.id} onClick={()=>setOrderFilter(f.id)}
                     style={{padding:"7px 16px",borderRadius:"var(--radius-sm)",border:`1px solid ${orderFilter===f.id?"var(--green-dark)":"var(--border)"}`,background:orderFilter===f.id?"var(--green-mint)":"var(--bg-card-solid)",color:orderFilter===f.id?"var(--green-deep)":"var(--text-secondary)",fontSize:13,fontWeight:orderFilter===f.id?600:400,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
@@ -5564,7 +5575,7 @@ Rules:
               </div>
             </div>
 
-            {orders.filter(o=>{
+            {visibleOrders.filter(o=>{
               if(orderFilter==="active") return o.status!=="delivered";
               if(orderFilter==="delivered") return o.status==="delivered";
               return true;
@@ -5575,8 +5586,7 @@ Rules:
               </Card>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {orders.filter(o=>{
-                  if(!can.viewAllJobs(myRole)){ const r=requests.find(rr=>rr.id===o.reqId); if(!r||(r.createdBy||"").toLowerCase()!==myEmail) return false; }
+                {visibleOrders.filter(o=>{
                   if(orderFilter==="active") return o.status!=="delivered";
                   if(orderFilter==="delivered") return o.status==="delivered";
                   return true;
