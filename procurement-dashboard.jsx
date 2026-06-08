@@ -13,6 +13,13 @@ const cloudEnabled = !!(SB_URL && SB_KEY);
 // Captured before Supabase consumes the URL, so we can tell when someone arrives via
 // an invite or password-reset link and needs to set a password.
 const INITIAL_HASH = (typeof window !== "undefined" ? (window.location.hash || "") : "");
+const INITIAL_SEARCH = (typeof window !== "undefined" ? (window.location.search || "") : "");
+// Arriving from the marketing site's "Start free trial" (app.proqure.co.uk/?signup=1):
+// open straight on the signup screen and let them past the private-preview gate.
+const INITIAL_WANTS_SIGNUP = /[?&]signup\b/.test(INITIAL_SEARCH) || /(^|[#&])signup\b/.test(INITIAL_HASH);
+// Arriving on a genuine Supabase auth link (email confirmation, invite, password reset,
+// magic link): also let them past the gate so they can finish, without the access code.
+const INITIAL_AUTH_CALLBACK = /(access_token|token_hash|[?&]code=|type=(signup|recovery|invite|magiclink|email_change))/.test(INITIAL_HASH + INITIAL_SEARCH);
 // Central AI: the OpenRouter key now lives in the /api/ai server function, so the
 // app no longer requires the user to supply one. We assume the server route is
 // available; callAI still falls back to a user key if present, and surfaces a
@@ -2059,6 +2066,10 @@ function ProQureApp({ session, companyId }) {
   // Defensive: treat the retired "owner" role (or any unknown role) as manager / engineer sensibly.
   const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
   const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
+  // A brand-new company's first Manager should set up their workspace before using it.
+  // Only fires for a cloud account that is a manager with no company name saved yet, so
+  // it never bothers an existing/established company (or invited engineers/buyers).
+  const needsOnboarding = cloudEnabled && roleRank(myRole) >= 3 && !settings.onboarded && !((settings.company || "").trim());
   // If the user is on a view their role can't access, send them to the dashboard.
   // Guard against transient demotion: during a background cloud sync the team list
   // can momentarily be empty/re-loading, which would briefly resolve myRole to the
@@ -3248,7 +3259,7 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 RFQ REVISIONS: a sent request can be revised and re-sent. On All Requests, tap 'Revise' on a sent request (Buyers/Managers) - it reopens in the wizard with everything pre-filled and the original suppliers/contacts selected. Edit anything, then re-send: it updates the SAME request (bumps the version, e.g. v2), re-sends to the chosen suppliers and resets their quote boxes for the new revision, rather than creating a duplicate.
 AUTOCOMPLETE: the Job reference and Site fields suggest values from your past requests as you type; the alternative-address field suggests past addresses; and the Collect-from field suggests your suppliers' branches plus places you've collected from before.
 
-O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule (with a separate spares & consumables list), manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules with their governing standards. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
+O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule (with a separate spares & consumables list), manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules with their governing standards. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.\n\nACCOUNTS, FREE TRIAL & GETTING SET UP: ProQure starts as a free trial - there is no card or payment needed to begin. A business gets started in one of two ways: from the ProQure website by tapping 'Get your licence', or from the sign-in screen by tapping 'Set up a new company'. Either way you receive an email, click the link, set a password, then complete a short onboarding (company name, your contact details, main trade, team size, address, and the email address you want quotes and POs to be sent from). The first person to set a company up becomes its Manager, and each company's data is completely separate and private to that company. To bring colleagues in, a Manager opens the team settings and invites them by email as a Buyer or an Engineer; the invited person gets an email, clicks it, sets their own password, and joins the same shared workspace. If an invite email does not arrive, that person can use 'Forgot password' on the sign-in screen to set a password and still get in. There are never any API keys for anyone to enter - AI and email are managed centrally.
 
 TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
@@ -3766,6 +3777,14 @@ ${settings.company||""}`;
       {q:"What does the Measure tab do?", a:"Enter an area (or a length and height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and a wastage allowance, and shows the assumptions it used. It's an estimate - always sense-check before ordering. It can also look up a specific product's datasheet for the exact coverage rate, and the 'From a drawing' mode does a full materials take-off from an uploaded PDF/image drawing that you can edit and turn into a request. Camera room-scanning is coming with the native app."},
       {q:"Can ProQure read a drawing and list the materials?", a:"Yes - that's the 'From a drawing' mode on the Measure tab. Upload a scaled PDF or image of the drawing and ProQure does a materials take-off of the items shown, then gives you an editable list you can adjust and turn straight into a request. It reads PDFs and images, not raw DWG/CAD files, so export a DWG to PDF first. The list is an AI draft - always check it against the drawing before ordering."},
       {q:"Can Measure use a specific product's real coverage rate?", a:"Yes. In 'By dimensions', type the product or brand and tick 'look up the manufacturer's datasheet', and ProQure web-searches that product's datasheet for its published coverage rate and bases the quantity on it, with a source link. That option uses web search (a small per-use cost) so it's off by default; left off, it uses standard UK coverage rates."},
+    ]},
+    {cat:"Account & your team", qs:[
+      {q:"Is ProQure free? Is there a trial?", a:"ProQure starts as a free trial - there is no card needed to get going. You will be given plenty of notice before anything about that changes."},
+      {q:"How do I set my company up on ProQure?", a:"Two ways: tap 'Get your licence' on the ProQure website, or 'Set up a new company' on the sign-in screen. You will get an email, click the link, set a password, then run through a short onboarding - company name, your contact details, main trade, team size, address, and the address you want quotes and POs sent from. Whoever sets the company up becomes its Manager."},
+      {q:"How do I add my team?", a:"As a Manager, open your team settings and invite each colleague by email, choosing whether they are a Buyer or an Engineer. They receive an email, click it, set their own password, and land in your shared workspace. You can invite people up to your own role level."},
+      {q:"Someone I invited did not get the email - what now?", a:"Ask them to go to the sign-in screen and tap 'Forgot password' using the email you invited. They will get a link to set a password and will still join your company when they sign in. Invite emails can occasionally be held up by a company spam filter, so it is worth checking junk too."},
+      {q:"Is my company's data separate from other companies?", a:"Yes. Every company on ProQure is completely isolated - your team shares one live view of your own data, and no other company can see it. Roles then control who on your team sees what (for example, Engineers do not see prices or spend)."},
+      {q:"What is the difference between Manager, Buyer and Engineer?", a:"Three roles, high to low. Managers have full access, manage the team and edit settings. Buyers send RFQs, handle returned quotes and raise purchase orders. Engineers raise the materials list and sign off deliveries, but do not see prices, costs or jobs that are not their own, and cannot send RFQs or raise POs."},
     ]},
   ];
 
@@ -7211,7 +7230,11 @@ Rules:
         </div>
       )}
 
-      {tourStep>=0&&tourStep<tourSteps.length&&(
+      {needsOnboarding && (
+        <CompanyOnboarding session={session} initial={settings} onComplete={(vals)=>{ saveSettings(vals); }} />
+      )}
+
+      {!needsOnboarding && tourStep>=0&&tourStep<tourSteps.length&&(
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:2500,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"30px 32px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
@@ -7787,6 +7810,9 @@ function SignatureEditor({ value, onChange }) {
 function LoginScreen({ onLoggedIn }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [company, setCompany] = useState("");
+  const [screen, setScreen] = useState(INITIAL_WANTS_SIGNUP ? "signup" : "signin"); // signin | signup | sent
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [showForgot, setShowForgot] = useState(false);
@@ -7821,6 +7847,26 @@ function LoginScreen({ onLoggedIn }) {
       const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (error) { setMsg(error.message); setBusy(false); return; }
       if (data?.session) { onLoggedIn(data.session); return; }
+    } catch (e) { setMsg("Something went wrong. Please try again."); }
+    setBusy(false);
+  };
+  // Self-serve company creation. The new user becomes the first Manager of a brand-new,
+  // isolated company (resolveCompany bootstraps that on first sign-in). Name + company
+  // ride along in user_metadata so the in-app onboarding can pre-fill them.
+  const submitSignup = async () => {
+    if (!name.trim() || !company.trim()) { setMsg("Enter your name and your company name."); return; }
+    if (!email.trim() || !password) { setMsg("Enter an email and a password."); return; }
+    if (password.length < 6) { setMsg("Use a password of at least 6 characters."); return; }
+    setBusy(true); setMsg("");
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(), password,
+        options: { data: { name: name.trim(), company: company.trim(), is_owner: true }, emailRedirectTo: window.location.origin },
+      });
+      if (error) { setMsg(error.message); setBusy(false); return; }
+      // If email confirmation is ON there's no session yet - point them to their inbox.
+      if (data?.session) { onLoggedIn(data.session); return; }
+      setScreen("sent");
     } catch (e) { setMsg("Something went wrong. Please try again."); }
     setBusy(false);
   };
@@ -7871,25 +7917,46 @@ function LoginScreen({ onLoggedIn }) {
           </div>
           <span style={{fontSize:22,fontWeight:800,color:t.title,letterSpacing:"-0.02em"}}>Pro<span style={{color:dark?"#3DD68C":"#15824F"}}>Qure</span></span>
         </div>
-        <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>Welcome back</div>
-        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>Sign in to access your procurement dashboard.</div>
+        <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>{screen==="signup"?"Set up your company":screen==="sent"?"Check your email":"Welcome back"}</div>
+        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>{screen==="signup"?"Create your ProQure workspace - it only takes a minute.":screen==="sent"?"One quick step to verify it's you.":"Sign in to access your procurement dashboard."}</div>
+
+        {screen === "sent" ? (
+          <div>
+            <div style={{fontSize:13.5,color:t.sub,lineHeight:1.6,marginBottom:18}}>
+              We&rsquo;ve sent a confirmation link to <strong style={{color:t.title}}>{email.trim()||"your email"}</strong>. Open it to verify your account, then come back here and sign in to finish setting up your company.
+            </div>
+            {msg && <div style={{fontSize:12.5,color:"#9A5B16",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:"9px 12px",marginBottom:14}}>{msg}</div>}
+            <button onClick={()=>{ setScreen("signin"); setMsg(""); setPassword(""); }}
+              style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer"}}>
+              Back to sign in
+            </button>
+          </div>
+        ) : (<>
+        {screen === "signup" && (<>
+          <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Your name</label>
+          <input type="text" value={name} onChange={e=>setName(e.target.value)} autoComplete="name" placeholder="Jane Smith"
+            style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
+          <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Company name</label>
+          <input type="text" value={company} onChange={e=>setCompany(e.target.value)} autoComplete="organization" placeholder="Your company Ltd"
+            style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
+        </>)}
 
         <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Email</label>
         <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" placeholder="you@company.co.uk"
-          style={{width:"100%",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
+          style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
 
         <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Password</label>
-        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" placeholder="Your password"
-          onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
-          style={{width:"100%",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:18,outline:"none"}}/>
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete={screen==="signup"?"new-password":"current-password"} placeholder={screen==="signup"?"Create a password":"Your password"}
+          onKeyDown={e=>{ if(e.key==="Enter") (screen==="signup"?submitSignup:submit)(); }}
+          style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:18,outline:"none"}}/>
 
         {msg && <div style={{fontSize:12.5,color:"#9A5B16",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:"9px 12px",marginBottom:14}}>{msg}</div>}
 
-        <button onClick={submit} disabled={busy}
+        <button onClick={screen==="signup"?submitSignup:submit} disabled={busy}
           style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?0.7:1,marginBottom:14}}>
-          {busy ? "Please wait..." : "Sign in"}
+          {busy ? "Please wait..." : (screen==="signup"?"Create company":"Sign in")}
         </button>
-        {!showForgot && (
+        {screen==="signin" && !showForgot && (
           <div style={{textAlign:"center",marginBottom:12}}>
             <button onClick={openForgot} style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:600,cursor:"pointer",fontSize:12.5}}>Forgot password?</button>
           </div>
@@ -7911,9 +7978,94 @@ function LoginScreen({ onLoggedIn }) {
           </div>
         )}
 
-        <div style={{textAlign:"center",fontSize:12,color:t.sub,lineHeight:1.5}}>
-          Access to ProQure is by invitation only. If you&rsquo;ve been invited, use the link in your email to set a password. Need access? Ask your manager to add you.
+        {screen==="signup" ? (
+          <div style={{textAlign:"center",fontSize:12.5,color:t.sub}}>
+            Already have an account?{" "}
+            <button onClick={()=>{ setScreen("signin"); setMsg(""); }} style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:700,cursor:"pointer",fontSize:12.5}}>Sign in</button>
+          </div>
+        ) : (
+          <div style={{textAlign:"center",fontSize:12,color:t.sub,lineHeight:1.6}}>
+            <button onClick={()=>{ setScreen("signup"); setMsg(""); }} style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:700,cursor:"pointer",fontSize:12.5}}>Set up a new company</button>
+            <div style={{marginTop:8}}>Invited to an existing company? Use the link in your email to set a password.</div>
+          </div>
+        )}
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+function CompanyOnboarding({ session, initial, onComplete }) {
+  const meta = (session && session.user && session.user.user_metadata) || {};
+  const [f, setF] = useState({
+    company: (initial && initial.company) || meta.company || "",
+    contactName: (initial && initial.contactName) || meta.name || "",
+    phone: (initial && initial.phone) || "",
+    primaryTrade: (initial && initial.primaryTrade) || "",
+    teamSize: (initial && initial.teamSize) || "business",
+    companyAddress: (initial && initial.companyAddress) || "",
+    fromEmail: (initial && initial.fromEmail) || (session && session.user && session.user.email) || "",
+    vat: (initial && initial.vat) || "",
+    companyReg: (initial && initial.companyReg) || "",
+  });
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const TRADES = ["Plumbing", "Heating & HVAC", "Electrical", "Mechanical", "Building / General", "Other"];
+  const finish = () => {
+    if (!f.company.trim()) { setErr("Your company name is needed to set up the workspace."); return; }
+    onComplete({ ...f, company: f.company.trim(), contactName: f.contactName.trim(), plan: "trial", onboarded: true });
+  };
+  const inputStyle = { width: "100%", boxSizing: "border-box", padding: "10px 12px", border: "1px solid var(--border)", background: "var(--bg-input)", color: "var(--text-primary)", borderRadius: "var(--radius-sm)", fontSize: 14, outline: "none" };
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5, marginTop: 12 };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(20,20,18,0.6)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: "var(--bg-card-solid)", borderRadius: "var(--radius-lg)", padding: "28px 30px", maxWidth: 480, width: "100%", maxHeight: "88vh", overflowY: "auto", boxShadow: "var(--shadow-lg)", border: "1px solid var(--border)", animation: "scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 6 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,var(--green),var(--green-dark))", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Icon name="rocket" size={22} color="white" />
+          </div>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>Welcome to ProQure</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>A few details to set up your company workspace.</div>
+          </div>
         </div>
+
+        <label style={labelStyle}>Company name</label>
+        <input style={inputStyle} value={f.company} onChange={e => set("company", e.target.value)} placeholder="Your company Ltd" />
+        <label style={labelStyle}>Your name</label>
+        <input style={inputStyle} value={f.contactName} onChange={e => set("contactName", e.target.value)} placeholder="Jane Smith" />
+        <label style={labelStyle}>Phone (optional)</label>
+        <input style={inputStyle} value={f.phone} onChange={e => set("phone", e.target.value)} placeholder="01234 567890" />
+        <label style={labelStyle}>Primary trade</label>
+        <select style={inputStyle} value={f.primaryTrade} onChange={e => set("primaryTrade", e.target.value)}>
+          <option value="">Select a trade...</option>
+          {TRADES.map(tr => <option key={tr} value={tr}>{tr}</option>)}
+        </select>
+        <label style={labelStyle}>Team size</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[["solo", "Just me"], ["business", "A team"]].map(([v, l]) => (
+            <button key={v} onClick={() => set("teamSize", v)} style={{ flex: 1, padding: "9px", borderRadius: "var(--radius-sm)", border: `1px solid ${f.teamSize === v ? "var(--green-dark)" : "var(--border)"}`, background: f.teamSize === v ? "var(--green-mint)" : "var(--bg-card-solid)", color: f.teamSize === v ? "var(--green-deep)" : "var(--text-secondary)", fontSize: 13, fontWeight: f.teamSize === v ? 700 : 500, cursor: "pointer" }}>{l}</button>
+          ))}
+        </div>
+        <label style={labelStyle}>Company address (optional)</label>
+        <input style={inputStyle} value={f.companyAddress} onChange={e => set("companyAddress", e.target.value)} placeholder="Unit 1, Industrial Estate, Town" />
+        <label style={labelStyle}>Email your RFQs &amp; POs reply to (optional)</label>
+        <input style={inputStyle} value={f.fromEmail} onChange={e => set("fromEmail", e.target.value)} placeholder="orders@yourcompany.co.uk" />
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>VAT no. (optional)</label>
+            <input style={inputStyle} value={f.vat} onChange={e => set("vat", e.target.value)} placeholder="GB123456789" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Company reg. (optional)</label>
+            <input style={inputStyle} value={f.companyReg} onChange={e => set("companyReg", e.target.value)} placeholder="12345678" />
+          </div>
+        </div>
+
+        {err && <div style={{ fontSize: 12.5, color: "#9A5B16", background: "var(--amber-light)", border: "1px solid var(--amber)", borderRadius: 8, padding: "9px 12px", marginTop: 14 }}>{err}</div>}
+
+        <button onClick={finish} style={{ width: "100%", marginTop: 18, padding: "12px", background: "linear-gradient(135deg,#1E9E63,#15824F)", color: "white", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Create my workspace</button>
+        <div style={{ fontSize: 11.5, color: "var(--text-muted)", textAlign: "center", marginTop: 10, lineHeight: 1.5 }}>You can change any of this later in Settings &rsaquo; Company.</div>
       </div>
     </div>
   );
@@ -8016,6 +8168,9 @@ function AppInner() {
   const [ready, setReady] = useState(false);
   const [gateOk, setGateOk] = useState(() => {
     if (!SITE_GATE_PASSWORD) return true;
+    // Trial signups (from the website) and anyone on a real auth link skip the gate,
+    // so the signup -> email -> onboarding flow works without sharing the access code.
+    if (INITIAL_WANTS_SIGNUP || INITIAL_AUTH_CALLBACK) return true;
     try { return sessionStorage.getItem("pq_gate_ok") === "1"; } catch { return false; }
   });
 
