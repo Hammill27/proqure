@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ProQure Admin</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='5' fill='%2315824F'/%3E%3Crect x='3' y='3' width='3' height='14' rx='1.5' fill='white'/%3E%3Crect x='6' y='3' width='8' height='3' rx='1.5' fill='white'/%3E%3Crect x='14' y='3' width='3' height='8' rx='1.5' fill='white'/%3E%3Crect x='6' y='10' width='8' height='3' rx='1.5' fill='white'/%3E%3Ccircle cx='16.5' cy='15.5' r='2' fill='white'/%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --green:#15824F; --green-br:#1E9E63; --green-glow:#3DD68C; --green-deep:#0E6A3F;
+    --bg:#0C0C0F; --bg2:#101013; --card:#16161A; --card2:#1C1C22;
+    --line:rgba(255,255,255,0.08); --line2:rgba(255,255,255,0.14);
+    --text:#F4F4F2; --sub:rgba(255,255,255,0.58); --soft:rgba(255,255,255,0.40);
+    --amber:#F6C667; --red:#F87171; --blue:#5B8DEF;
+    --r:14px; --mono:'JetBrains Mono',ui-monospace,monospace;
+    --font:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:var(--mono)}
+  button{font-family:inherit;cursor:pointer}
+  a{color:var(--green-glow)}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 22px}
+
+  /* logo */
+  .logo{display:inline-flex;align-items:center;gap:10px}
+  .logo-tile{width:34px;height:34px;border-radius:10px;background:linear-gradient(150deg,var(--green-br),var(--green-deep));display:flex;align-items:center;justify-content:center}
+  .logo-tile svg{width:19px;height:19px}
+  .wordmark{font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .wordmark span{color:var(--green-glow)}
+  .tag{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--green-glow);border:1px solid var(--line2);border-radius:6px;padding:3px 7px;margin-left:4px}
+
+  /* login */
+  #login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(circle at 50% 0%,rgba(61,214,140,0.08),transparent 60%)}
+  .login-card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:32px 28px;box-shadow:0 30px 70px rgba(0,0,0,.45)}
+  .login-card .logo{justify-content:center;margin-bottom:6px}
+  .login-card h1{font-size:20px;font-weight:800;text-align:center;margin:14px 0 4px}
+  .login-card p.s{text-align:center;color:var(--sub);font-size:13.5px;margin-bottom:22px}
+  label{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin:0 0 6px}
+  input,select{width:100%;background:var(--card2);border:1px solid var(--line2);border-radius:11px;padding:12px 14px;color:var(--text);font-size:14.5px;font-family:inherit;outline:none;transition:border-color .2s}
+  input:focus,select:focus{border-color:var(--green)}
+  .field{margin-bottom:14px}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:700;font-size:14px;border-radius:11px;padding:12px 18px;border:1px solid transparent;transition:transform .2s,background .2s,border-color .2s,opacity .2s}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:linear-gradient(135deg,var(--green-br),var(--green));color:#fff;width:100%}
+  .btn-primary:hover{box-shadow:0 8px 24px rgba(30,158,99,.3)}
+  .btn-ghost{background:transparent;border-color:var(--line2);color:var(--text)}
+  .btn-ghost:hover{border-color:var(--green)}
+  .btn-sm{padding:7px 12px;font-size:12.5px;border-radius:9px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .err{color:var(--red);font-size:13px;margin-top:10px;min-height:18px}
+  .notice{background:rgba(61,214,140,.1);border:1px solid rgba(61,214,140,.3);color:var(--green-glow);border-radius:10px;padding:10px 13px;font-size:13px;margin:14px 0}
+
+  /* app shell */
+  #app{display:none}
+  header.top{position:sticky;top:0;z-index:40;background:rgba(12,12,15,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  header.top .bar{display:flex;align-items:center;justify-content:space-between;height:60px}
+  .top-right{display:flex;align-items:center;gap:14px;font-size:13px;color:var(--sub)}
+  .top-right .who{font-family:var(--mono);font-size:12px}
+  nav.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);background:var(--bg2)}
+  nav.tabs .wrap{display:flex;gap:4px}
+  .tab{background:none;border:none;color:var(--sub);font-weight:600;font-size:14px;padding:14px 16px;border-bottom:2px solid transparent;transition:.2s}
+  .tab:hover{color:var(--text)}
+  .tab.on{color:var(--text);border-bottom-color:var(--green)}
+  main{padding:26px 0 80px}
+
+  /* kpis */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px}
+  .kpi .l{font-size:12px;color:var(--sub);font-weight:600}
+  .kpi .n{font-family:var(--mono);font-size:30px;font-weight:700;margin-top:6px;letter-spacing:-.02em}
+  .kpi .n.green{color:var(--green-glow)}
+  .grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;margin-bottom:24px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px}
+  .panel h2{font-size:15px;font-weight:800;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
+  .panel h2 .hint{font-size:11px;font-weight:600;color:var(--soft)}
+
+  /* sparkline bars */
+  .spark{display:flex;align-items:flex-end;gap:5px;height:90px;padding-top:8px}
+  .spark .b{flex:1;background:linear-gradient(180deg,var(--green-glow),var(--green));border-radius:4px 4px 0 0;min-height:3px;position:relative}
+  .spark .b span{position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:10px;color:var(--sub);opacity:0}
+  .spark .b:hover span{opacity:1}
+  .spark-x{display:flex;gap:5px;margin-top:6px}
+  .spark-x div{flex:1;text-align:center;font-family:var(--mono);font-size:9px;color:var(--soft)}
+
+  /* lists / tables */
+  .feed{display:flex;flex-direction:column;gap:2px}
+  .feed .row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+  .feed .row:last-child{border-bottom:none}
+  .feed .row .e{font-weight:600}
+  .feed .row .m{font-size:12px;color:var(--sub)}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:12px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:middle}
+  tr.crow{cursor:pointer;transition:background .15s}
+  tr.crow:hover{background:rgba(255,255,255,.03)}
+  .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .toolbar .search{max-width:280px}
+  .muted{color:var(--soft)}
+  .num{font-family:var(--mono);text-align:right}
+
+  /* badges */
+  .badge{display:inline-block;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:99px;border:1px solid transparent;white-space:nowrap}
+  .b-trial{background:rgba(246,198,103,.14);color:var(--amber);border-color:rgba(246,198,103,.3)}
+  .b-active{background:rgba(61,214,140,.14);color:var(--green-glow);border-color:rgba(61,214,140,.3)}
+  .b-suspended,.b-cancelled{background:rgba(248,113,113,.13);color:var(--red);border-color:rgba(248,113,113,.3)}
+  .b-role{background:rgba(91,141,239,.13);color:var(--blue);border-color:rgba(91,141,239,.3)}
+  .b-owner{background:rgba(61,214,140,.14);color:var(--green-glow);border-color:rgba(61,214,140,.3)}
+  .b-on{background:rgba(61,214,140,.14);color:var(--green-glow)}
+  .b-off{background:rgba(255,255,255,.06);color:var(--soft)}
+  .b-pending{background:rgba(246,198,103,.14);color:var(--amber)}
+
+  /* drawer */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;display:none}
+  .scrim.open{display:block}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:560px;max-width:94vw;background:var(--bg2);border-left:1px solid var(--line2);z-index:70;transform:translateX(100%);transition:transform .28s cubic-bezier(.16,1,.3,1);overflow-y:auto}
+  .drawer.open{transform:none}
+  .drawer .dh{position:sticky;top:0;background:var(--bg2);border-bottom:1px solid var(--line);padding:20px 22px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .drawer .dh h3{font-size:18px;font-weight:800;letter-spacing:-.02em}
+  .drawer .dh .sub{font-family:var(--mono);font-size:11px;color:var(--soft);margin-top:4px;word-break:break-all}
+  .x{background:none;border:1px solid var(--line2);color:var(--text);width:32px;height:32px;border-radius:9px;font-size:18px;line-height:1;flex-shrink:0}
+  .dbody{padding:20px 22px}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;margin-bottom:20px}
+  .meta .k{font-size:11px;color:var(--soft);text-transform:uppercase;letter-spacing:.05em}
+  .meta .v{font-size:14px;font-weight:600;margin-top:2px;word-break:break-word}
+  .countpills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+  .pill{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;text-align:center;min-width:74px}
+  .pill .pn{font-family:var(--mono);font-size:18px;font-weight:700}
+  .pill .pl{font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.05em;margin-top:1px}
+  .sec-title{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);margin:18px 0 10px}
+  .planrow{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .planrow select{max-width:200px}
+  .uitem{border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:8px}
+  .uitem .u1{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .uitem .ue{font-weight:600;font-size:13.5px;word-break:break-all}
+  .uitem .um{font-size:11.5px;color:var(--sub);margin-top:3px}
+  .uitem .ua{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+
+  .loading{display:flex;align-items:center;justify-content:center;padding:60px;color:var(--sub);font-size:14px}
+  .spin{width:18px;height:18px;border:2px solid var(--line2);border-top-color:var(--green-glow);border-radius:50%;animation:sp .7s linear infinite;margin-right:10px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--card);border:1px solid var(--line2);border-radius:11px;padding:12px 18px;font-size:13.5px;font-weight:600;box-shadow:0 16px 40px rgba(0,0,0,.5);opacity:0;transition:.3s;z-index:90;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.bad{border-color:rgba(248,113,113,.4);color:var(--red)}
+  .banner{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--red);border-radius:11px;padding:12px 16px;font-size:13.5px;margin-bottom:18px;display:none}
+
+  #gate{position:fixed;inset:0;z-index:2000;background:radial-gradient(circle at 50% 0%,rgba(61,214,140,0.10),transparent 60%),var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
+  #gate .gc{width:100%;max-width:380px;text-align:center}
+  #gate .logo{justify-content:center;margin-bottom:18px}
+  #gate h1{font-size:22px;font-weight:800;margin-bottom:8px}
+  #gate p{color:var(--sub);font-size:14px;margin-bottom:22px}
+  #gate input{text-align:center;letter-spacing:.04em}
+  #gate .gerr{color:var(--red);font-size:13px;margin-top:12px;min-height:18px}
+  .gate-shake{animation:gshake .4s}
+  @keyframes gshake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+  body.locked{overflow:hidden}
+
+  @media(max-width:820px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .grid2{grid-template-columns:1fr}
+    .meta{grid-template-columns:1fr}
+    th.hide,td.hide{display:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- ACCESS GATE (soft pre-screen; the real lock is the login + allow-list) -->
+<div id="gate">
+  <div class="gc">
+    <span class="logo"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></span>
+    <h1>Restricted area</h1>
+    <p>Enter the admin access code to continue.</p>
+    <input id="gateInput" type="password" placeholder="Access code" autocomplete="off" aria-label="Access code">
+    <button id="gateBtn" class="btn btn-primary" style="margin-top:12px">Continue</button>
+    <div class="gerr" id="gateErr"></div>
+  </div>
+</div>
+
+<!-- LOGIN -->
+<div id="login">
+  <div class="login-card">
+    <span class="logo"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></span>
+    <h1>Admin console</h1>
+    <p class="s">Sign in with your ProQure owner account.</p>
+    <div id="cfgWarn" class="notice" style="display:none"></div>
+    <div class="field"><label>Email</label><input id="liEmail" type="email" autocomplete="username" placeholder="you@proqure.co.uk"></div>
+    <div class="field"><label>Password</label><input id="liPass" type="password" autocomplete="current-password" placeholder="Your password"></div>
+    <button id="liBtn" class="btn btn-primary">Sign in</button>
+    <div class="err" id="liErr"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <header class="top">
+    <div class="wrap bar">
+      <span class="logo"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></span>
+      <div class="top-right">
+        <span class="who" id="whoami"></span>
+        <button class="btn btn-ghost btn-sm" id="refreshBtn">Refresh</button>
+        <button class="btn btn-ghost btn-sm" id="signoutBtn">Sign out</button>
+      </div>
+    </div>
+    <nav class="tabs"><div class="wrap">
+      <button class="tab on" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="companies">Companies</button>
+      <button class="tab" data-tab="users">Users</button>
+      <button class="tab" data-tab="signups">Signups</button>
+    </div></nav>
+  </header>
+  <main class="wrap">
+    <div class="banner" id="banner"></div>
+    <div id="view"><div class="loading"><span class="spin"></span>Loading platform data...</div></div>
+  </main>
+</div>
+
+<!-- DRAWER -->
+<div class="scrim" id="scrim"></div>
+<div class="drawer" id="drawer"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ============================================================================
+   CONFIG - paste your Supabase project's PUBLIC values here. These are the same
+   two values your app uses as VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. The
+   anon key is safe to expose in a page; the service-role key is NEVER here - it
+   stays server-side in the admin-metrics endpoint.
+   If you host this console on a DIFFERENT domain than the app, set API_BASE to
+   your app origin, e.g. "https://app.proqure.co.uk". If it sits on the same
+   project/domain as /api, leave API_BASE as "".
+============================================================================ */
+const SUPABASE_URL = "https://pjltclnrjuvqqcxowamw.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_V8TuiFK-dvUeVFATxQ6YmQ_9SiYCJc8";
+const API_BASE = "";
+// Soft access-code gate shown before the login screen. CHANGE THIS to your own code.
+// Note: in a static page this code lives in the source, so it's a screen that keeps
+// the public out - the REAL lock is the Supabase login + ADMIN_CONSOLE_EMAILS allow-list.
+const ADMIN_GATE_CODE = "PQAD-9X4K-7M2R-VB6E";
+/* ========================================================================== */
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const fmtDate = (iso) => { if(!iso) return "-"; const d=new Date(iso); if(isNaN(d)) return "-"; return d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}); };
+const fmtAgo = (iso) => { if(!iso) return "never"; const ms=Date.now()-new Date(iso).getTime(); if(isNaN(ms))return "-"; const d=Math.floor(ms/86400000); if(d<=0)return "today"; if(d===1)return "yesterday"; if(d<30)return d+"d ago"; const mo=Math.floor(d/30); return mo+"mo ago"; };
+
+let sb = null, session = null, DATA = null, currentTab = "overview", search = "";
+
+function toast(msg, bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); setTimeout(()=>t.className="toast",2600); }
+
+// ---- auth -------------------------------------------------------------------
+function configOk(){ return SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length > 20; }
+
+async function init(){
+  if(!configOk()){
+    $("cfgWarn").style.display="block";
+    $("cfgWarn").textContent="Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file before use.";
+    return;
+  }
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth:{ persistSession:true, autoRefreshToken:true } });
+  const { data } = await sb.auth.getSession();
+  if(data && data.session){ session = data.session; showApp(); }
+}
+
+$("liBtn").addEventListener("click", login);
+$("liPass").addEventListener("keydown", e=>{ if(e.key==="Enter") login(); });
+async function login(){
+  $("liErr").textContent="";
+  const email=$("liEmail").value.trim(), password=$("liPass").value;
+  if(!email||!password){ $("liErr").textContent="Enter your email and password."; return; }
+  $("liBtn").disabled=true; $("liBtn").textContent="Signing in...";
+  try{
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){ $("liErr").textContent=error.message; }
+    else { session=data.session; showApp(); }
+  }catch(e){ $("liErr").textContent="Could not sign in. Please try again."; }
+  $("liBtn").disabled=false; $("liBtn").textContent="Sign in";
+}
+
+$("signoutBtn").addEventListener("click", async ()=>{ await sb.auth.signOut(); location.reload(); });
+$("refreshBtn").addEventListener("click", ()=>loadData());
+
+function showApp(){
+  $("login").style.display="none";
+  $("app").style.display="block";
+  $("whoami").textContent = (session.user && session.user.email) || "";
+  loadData();
+}
+
+// ---- API --------------------------------------------------------------------
+async function api(action, payload){
+  const url = API_BASE + "/api/admin-metrics" + (action==="summary" ? "?action=summary" : "");
+  const opt = {
+    method: action==="summary" ? "GET" : "POST",
+    headers: { "Authorization":"Bearer "+session.access_token, "Content-Type":"application/json" },
+  };
+  if(action!=="summary") opt.body = JSON.stringify({ action, ...(payload||{}) });
+  const r = await fetch(url, opt);
+  let d={}; try{ d=await r.json(); }catch{}
+  if(!r.ok){ const e=new Error((d&&d.error)||("Request failed ("+r.status+")")); e.status=r.status; throw e; }
+  return d;
+}
+
+async function loadData(){
+  $("banner").style.display="none";
+  $("view").innerHTML='<div class="loading"><span class="spin"></span>Loading platform data...</div>';
+  try{
+    DATA = await api("summary");
+    render();
+  }catch(e){
+    if(e.status===403){
+      $("view").innerHTML='<div class="panel"><h2>Not authorised</h2><p class="muted" style="margin-top:8px">This account isn\u2019t on the admin allow-list. Add its email to ADMIN_CONSOLE_EMAILS in Vercel, or sign in with an authorised account.</p><button class="btn btn-ghost btn-sm" style="margin-top:14px" onclick="document.getElementById(\'signoutBtn\').click()">Sign out</button></div>';
+    } else {
+      $("banner").style.display="block";
+      $("banner").textContent = "Could not load data: " + e.message;
+      $("view").innerHTML='<div class="loading">Nothing to show.</div>';
+    }
+  }
+}
+
+// ---- tabs -------------------------------------------------------------------
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
+  currentTab=t.dataset.tab; search="";
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));
+  render();
+}));
+
+function render(){
+  if(!DATA) return;
+  if(currentTab==="overview") renderOverview();
+  else if(currentTab==="companies") renderCompanies();
+  else if(currentTab==="users") renderUsers();
+  else if(currentTab==="signups") renderSignups();
+}
+
+function planBadge(plan){ const p=esc(plan||"trial"); return '<span class="badge b-'+p+'">'+p+'</span>'; }
+
+// ---- overview ---------------------------------------------------------------
+function renderOverview(){
+  const k=DATA.kpis;
+  const kpi=(l,n,green)=>'<div class="kpi"><div class="l">'+l+'</div><div class="n'+(green?" green":"")+'">'+n+'</div></div>';
+  const maxN = Math.max(1, ...DATA.signupHistogram.map(h=>h.n));
+  const bars = DATA.signupHistogram.map(h=>'<div class="b" style="height:'+Math.round(h.n/maxN*100)+'%"><span>'+h.n+'</span></div>').join("");
+  const xlab = DATA.signupHistogram.map((h,i)=> i%3===0 ? '<div>'+h.d.slice(5)+'</div>' : '<div></div>').join("");
+  const signups = DATA.recentSignups.length
+    ? DATA.recentSignups.map(s=>'<div class="row"><div><div class="e">'+esc(s.company||s.name||s.email)+'</div><div class="m">'+esc(s.email)+'</div></div><div style="text-align:right"><div class="m">'+fmtAgo(s.createdAt)+'</div>'+(s.confirmed?'<span class="badge b-on">confirmed</span>':'<span class="badge b-pending">pending</span>')+'</div></div>').join("")
+    : '<div class="muted" style="padding:8px 0">No signups yet.</div>';
+  $("view").innerHTML =
+    '<div class="kpis">'+
+      kpi("Companies",k.totalCompanies,true)+kpi("Users",k.totalUsers)+kpi("Active trials",k.activeTrials)+kpi("Paid",k.paid)+
+    '</div>'+
+    '<div class="kpis">'+
+      kpi("Signups (30d)",k.signupsLast30d)+kpi("Active (7d)",k.activeLast7d)+kpi("Total orders",k.totalOrders)+kpi("Total requests",k.totalRequests)+
+    '</div>'+
+    '<div class="grid2">'+
+      '<div class="panel"><h2>Signups <span class="hint">last 14 days</span></h2><div class="spark">'+bars+'</div><div class="spark-x">'+xlab+'</div></div>'+
+      '<div class="panel"><h2>Recent signups</h2><div class="feed">'+signups+'</div></div>'+
+    '</div>';
+}
+
+// ---- companies --------------------------------------------------------------
+function renderCompanies(){
+  const list = DATA.companies.filter(c=> !search || (c.name+" "+(c.fromEmail||"")+" "+(c.trade||"")).toLowerCase().includes(search.toLowerCase()));
+  const rows = list.map((c,i)=>(
+    '<tr class="crow" data-i="'+DATA.companies.indexOf(c)+'">'+
+      '<td><div style="font-weight:700">'+esc(c.name)+'</div><div class="m muted" style="font-size:11.5px">'+esc(c.fromEmail||"")+'</div></td>'+
+      '<td>'+planBadge(c.plan)+(c.onboarded?'':' <span class="badge b-pending">setup</span>')+'</td>'+
+      '<td class="hide">'+esc(c.trade||"-")+'</td>'+
+      '<td class="num">'+c.userCount+'</td>'+
+      '<td class="num">'+c.counts.orders+'</td>'+
+      '<td class="num hide">'+c.counts.requests+'</td>'+
+      '<td class="hide">'+fmtAgo(c.lastActive)+'</td>'+
+    '</tr>'
+  )).join("") || '<tr><td colspan="7" class="muted" style="padding:24px;text-align:center">No companies match.</td></tr>';
+  $("view").innerHTML =
+    '<div class="toolbar"><div></div><input class="search" id="coSearch" placeholder="Search companies..." value="'+esc(search)+'"></div>'+
+    '<div class="panel" style="padding:6px 8px"><table><thead><tr>'+
+      '<th>Company</th><th>Plan</th><th class="hide">Trade</th><th class="num">Users</th><th class="num">Orders</th><th class="num hide">Reqs</th><th class="hide">Last active</th>'+
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  $("coSearch").addEventListener("input",e=>{ search=e.target.value; const sel=e.target.selectionStart; renderCompanies(); const s=$("coSearch"); s.focus(); s.setSelectionRange(sel,sel); });
+  document.querySelectorAll("#view tr.crow").forEach(r=>r.addEventListener("click",()=>openCompany(DATA.companies[+r.dataset.i])));
+}
+
+// ---- users ------------------------------------------------------------------
+function renderUsers(){
+  const all=[];
+  DATA.companies.forEach(c=>c.users.forEach(u=>all.push({ ...u, company:c.name, companyId:c.companyId })));
+  const list = all.filter(u=> !search || (u.email+" "+u.company+" "+u.role).toLowerCase().includes(search.toLowerCase()));
+  const rows = list.map(u=>(
+    '<tr>'+
+      '<td><div style="font-weight:600;word-break:break-all">'+esc(u.email)+'</div></td>'+
+      '<td class="hide">'+esc(u.company)+'</td>'+
+      '<td>'+(u.isOwner?'<span class="badge b-owner">owner</span>':'<span class="badge b-role">'+esc(u.role)+'</span>')+'</td>'+
+      '<td>'+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+'</td>'+
+      '<td class="hide">'+fmtAgo(u.lastSignIn)+'</td>'+
+      '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'+
+        '<button class="btn btn-ghost btn-sm" onclick="doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend invite</button>'+
+        '<button class="btn btn-ghost btn-sm" onclick="doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Reset</button>'+
+      '</div></td>'+
+    '</tr>'
+  )).join("") || '<tr><td colspan="6" class="muted" style="padding:24px;text-align:center">No users match.</td></tr>';
+  $("view").innerHTML =
+    '<div class="toolbar"><div></div><input class="search" id="uSearch" placeholder="Search users..." value="'+esc(search)+'"></div>'+
+    '<div class="panel" style="padding:6px 8px"><table><thead><tr>'+
+      '<th>Email</th><th class="hide">Company</th><th>Role</th><th>Status</th><th class="hide">Last sign-in</th><th>Actions</th>'+
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  $("uSearch").addEventListener("input",e=>{ search=e.target.value; const sel=e.target.selectionStart; renderUsers(); const s=$("uSearch"); s.focus(); s.setSelectionRange(sel,sel); });
+}
+
+// ---- signups ----------------------------------------------------------------
+function renderSignups(){
+  const rows = DATA.recentSignups.map(s=>(
+    '<tr>'+
+      '<td><div style="font-weight:700">'+esc(s.company||"-")+'</div><div class="m muted">'+esc(s.name||"")+'</div></td>'+
+      '<td style="word-break:break-all">'+esc(s.email)+'</td>'+
+      '<td>'+(s.confirmed?'<span class="badge b-on">confirmed</span>':'<span class="badge b-pending">pending</span>')+'</td>'+
+      '<td class="hide">'+fmtAgo(s.lastSignIn)+'</td>'+
+      '<td>'+fmtDate(s.createdAt)+'</td>'+
+    '</tr>'
+  )).join("") || '<tr><td colspan="5" class="muted" style="padding:24px;text-align:center">No signups yet.</td></tr>';
+  $("view").innerHTML =
+    '<div class="panel" style="padding:6px 8px"><table><thead><tr>'+
+      '<th>Company</th><th>Email</th><th>Status</th><th class="hide">Last sign-in</th><th>Signed up</th>'+
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+// ---- drawer (company detail) ------------------------------------------------
+function openCompany(c){
+  const meta=(k,v)=>'<div><div class="k">'+k+'</div><div class="v">'+esc(v==null||v===""?"-":v)+'</div></div>';
+  const pill=(n,l)=>'<div class="pill"><div class="pn">'+n+'</div><div class="pl">'+l+'</div></div>';
+  const users = c.users.map(u=>(
+    '<div class="uitem"><div class="u1"><div><div class="ue">'+esc(u.email)+'</div>'+
+      '<div class="um">'+(u.isOwner?'<span class="badge b-owner">owner</span> ':'<span class="badge b-role">'+esc(u.role)+'</span> ')+
+        (u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+
+        (u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+'</div></div></div>'+
+      '<div class="um" style="margin-top:8px">Joined '+fmtDate(u.joinedAt)+' &middot; Last sign-in '+fmtAgo(u.lastSignIn)+'</div>'+
+      '<div class="ua">'+
+        '<button class="btn btn-ghost btn-sm" onclick="doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend invite</button>'+
+        '<button class="btn btn-ghost btn-sm" onclick="doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Send reset</button>'+
+      '</div></div>'
+  )).join("");
+  $("drawer").innerHTML =
+    '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+'</div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
+    '<div class="dbody">'+
+      '<div class="planrow"><select id="planSel">'+
+        ["trial","active","paid","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+
+        '</select><button class="btn btn-primary btn-sm" style="width:auto" onclick="setPlan(\''+esc(c.companyId)+'\')">Update plan</button></div>'+
+      '<div class="sec-title">Details</div>'+
+      '<div class="meta">'+
+        meta("Plan",c.plan)+meta("Onboarded",c.onboarded?"Yes":"No")+
+        meta("Primary trade",c.trade)+meta("Team size",c.teamSize)+
+        meta("Reply-to email",c.fromEmail)+meta("Address",c.address)+
+        meta("VAT no.",c.vat)+meta("Company reg.",c.companyReg)+
+        meta("Created",fmtDate(c.createdAt))+meta("Last active",fmtAgo(c.lastActive))+
+      '</div>'+
+      '<div class="sec-title">Usage</div>'+
+      '<div class="countpills">'+pill(c.counts.orders,"Orders")+pill(c.counts.requests,"Requests")+pill(c.counts.suppliers,"Suppliers")+pill(c.counts.hires,"Hires")+pill(c.counts.activity,"Activity")+'</div>'+
+      '<div class="sec-title">Users ('+c.userCount+')</div>'+users+
+    '</div>';
+  $("scrim").classList.add("open"); $("drawer").classList.add("open");
+}
+function closeDrawer(){ $("scrim").classList.remove("open"); $("drawer").classList.remove("open"); }
+$("scrim").addEventListener("click", closeDrawer);
+
+async function setPlan(companyId){
+  const plan = $("planSel").value;
+  try{ const d=await api("set-plan",{companyId,plan}); toast(d.message||"Plan updated."); await loadData(); closeDrawer(); }
+  catch(e){ toast(e.message,true); }
+}
+
+async function doAction(action,payload){
+  try{ const d=await api(action,payload); toast(d.message||"Done."); }
+  catch(e){ toast(e.message,true); }
+}
+window.doAction=doAction; window.setPlan=setPlan; window.closeDrawer=closeDrawer;
+
+// ---- access gate ------------------------------------------------------------
+(function(){
+  const gate=$("gate"), inp=$("gateInput"), btn=$("gateBtn"), err=$("gateErr");
+  let unlocked=false; try{ unlocked=sessionStorage.getItem("pq_admin_gate")==="1"; }catch(e){}
+  if(unlocked){ gate.style.display="none"; }
+  else { document.body.classList.add("locked"); setTimeout(()=>inp&&inp.focus(),150); }
+  function pass(){ try{sessionStorage.setItem("pq_admin_gate","1");}catch(e){} gate.style.display="none"; document.body.classList.remove("locked"); }
+  function tryCode(){
+    if((inp.value||"").trim().toLowerCase()===ADMIN_GATE_CODE.toLowerCase()){ pass(); }
+    else { err.textContent="That code isn\u2019t right."; const gc=gate.querySelector(".gc"); gc.classList.add("gate-shake"); setTimeout(()=>gc.classList.remove("gate-shake"),420); inp.select(); }
+  }
+  btn&&btn.addEventListener("click",tryCode);
+  inp&&inp.addEventListener("keydown",e=>{ if(e.key==="Enter") tryCode(); });
+})();
+
+init();
+</script>
+</body>
+</html>
