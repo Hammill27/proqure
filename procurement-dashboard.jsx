@@ -1335,13 +1335,14 @@ async function omBuildData(materials) {
     `${i + 1}. ${m.product}${m.qty ? ` (qty ${m.qty})` : ""}${m.trade ? ` [${m.trade}]` : ""}`
   ).join("\n");
 
-  const sys = `You are compiling an Operations & Maintenance (O&M) manual for a UK building services contractor, from a list of materials that were procured for one project. For EACH item, infer the likely manufacturer and model/range where you reasonably can (leave blank if unknown — never invent a precise model number you are unsure of). Group items into sensible building-services systems (e.g. Electrical Distribution, Lighting, Fire & Security, Ventilation & AC, Water Services, Drainage, etc.). Also draft a Planned Preventative Maintenance (PPM) schedule for the equipment types present, split into Electrical and Mechanical, using realistic UK frequencies (Monthly/Quarterly/6 Monthly/Annually) and standards (BS 7671, BS 5266, BS 5839, F-Gas) where relevant.
+  const sys = `You are compiling an Operations & Maintenance (O&M) manual for a UK building services contractor, from a list of materials that were procured for one project. For EACH item, infer the likely manufacturer and model/range where you reasonably can (leave blank if unknown — never invent a precise model number you are unsure of). Group the genuine equipment/plant items into sensible building-services systems (e.g. Electrical Distribution, Lighting, Fire & Security, Ventilation & AC, Water Services, Drainage, etc.), carrying a qty/rating where given. Put pure consumables (cable, fixings, sealant, fittings, sundries, ducting offcuts) into a SEPARATE "consumables" list so the equipment schedule reads as an equipment register rather than a shopping list — never silently drop an item. Also draft a Planned Preventative Maintenance (PPM) schedule for the equipment types present, split into Electrical and Mechanical, using realistic UK frequencies (Monthly/Quarterly/6 Monthly/Annually). For each task give the governing standard/reference where one applies (e.g. BS 7671, BS 5266, BS 5839, F-Gas, BS 8558) in a "ref" field, otherwise leave "ref" blank.
 Return ONLY valid JSON, no markdown, in exactly this shape:
 {"equipment":[{"category":"...","items":[{"item":"...","manufacturer":"...","model":"...","rating":"..."}]}],
+ "consumables":[{"item":"...","qty":"..."}],
  "literature":[{"item":"...","manufacturer":"...","model":"...","query":"manufacturer model datasheet pdf"}],
- "ppm":{"electrical":[{"title":"...","rows":[{"freq":"Monthly","activity":"..."}]}],
-        "mechanical":[{"title":"...","rows":[{"freq":"Quarterly","activity":"..."}]}]}}
-Keep "literature" to the distinct equipment products only (not consumables like cable, fixings, sealant). Every PPM activity must be a real maintenance task. All schedules are drafts for the contractor to sign off.`;
+ "ppm":{"electrical":[{"title":"...","rows":[{"freq":"Monthly","activity":"...","ref":"BS 7671"}]}],
+        "mechanical":[{"title":"...","rows":[{"freq":"Quarterly","activity":"...","ref":""}]}]}}
+Keep "literature" to the distinct equipment products only (not consumables). Every PPM activity must be a real maintenance task. All schedules are drafts for the contractor to sign off.`;
 
   let data = null;
   try {
@@ -1356,12 +1357,14 @@ Keep "literature" to the distinct equipment products only (not consumables like 
         category: "Procured materials",
         items: materials.map(m => ({ item: m.product, manufacturer: "", model: "", rating: m.qty ? `qty ${m.qty}` : "" })),
       }],
+      consumables: [],
       literature: materials.slice(0, 40).map(m => ({ item: m.product, manufacturer: "", model: "", query: `${m.product} datasheet pdf` })),
       ppm: { electrical: [], mechanical: [] },
       _fallback: true,
     };
   }
   data.equipment = data.equipment || [];
+  data.consumables = data.consumables || [];
   data.literature = data.literature || [];
   data.ppm = data.ppm || { electrical: [], mechanical: [] };
   data.ppm.electrical = data.ppm.electrical || [];
@@ -1376,18 +1379,40 @@ async function omFindDatasheets(literature, onProgress) {
   const items = (literature || []).slice(0, 24);
   const batchSize = 4;
   let done = 0;
+  const sys = `You find the official manufacturer datasheet or product-literature page for a UK building-services product. Reply with ONLY the single best direct URL — strongly prefer the manufacturer's own website and a PDF datasheet. Do NOT return a search-engine results page. If you genuinely cannot find a credible source, reply exactly NONE. No other words.`;
+  const BAD_HOST = /(^|\.)(google|bing|duckduckgo|yahoo)\./i;
+  const valid = (u) => { try { return /^https?:\/\//.test(u) && !BAD_HOST.test(new URL(u).hostname); } catch { return false; } };
+  // Choose the best URL from the model's text + the web plugin's citations,
+  // preferring one hosted on the manufacturer's own domain.
+  const pickUrl = (text, citations, manufacturer) => {
+    const t = (text || "").trim();
+    if (/^NONE$/i.test(t)) return "";
+    let url = (t.match(/https?:\/\/[^\s)>"']+/) || [""])[0];
+    if (!valid(url)) url = "";
+    const cites = (citations || []).map(c => c.url).filter(valid);
+    const mk = (manufacturer || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (mk.length >= 4) {
+      const onBrand = [url, ...cites].filter(Boolean).find(u => {
+        try { return new URL(u).hostname.toLowerCase().replace(/[^a-z0-9]/g, "").includes(mk.slice(0, 6)); } catch { return false; }
+      });
+      if (onBrand) return onBrand;
+    }
+    return url || cites[0] || "";
+  };
   for (let i = 0; i < items.length; i += batchSize) {
     const batch = items.slice(i, i + batchSize);
     await Promise.all(batch.map(async (lit) => {
-      const q = lit.query || `${lit.manufacturer || ""} ${lit.model || lit.item} datasheet pdf`.trim();
-      const sys = `You find the official manufacturer datasheet or product-literature page for a building-services product. Reply with ONLY the single best direct URL (prefer the manufacturer's own domain and a PDF if available). If you cannot find a credible source, reply exactly NONE. No other words.`;
+      const q1 = lit.query || `${lit.manufacturer || ""} ${lit.model || lit.item} datasheet pdf`.trim();
       try {
-        const { text, citations } = await callAIWeb(sys, `Find the datasheet for: ${q}`, 4);
-        let url = "";
-        const m = (text || "").match(/https?:\/\/[^\s)>"']+/);
-        if (m) url = m[0];
-        if (!url && citations && citations.length) url = citations[0].url;
-        if (url && !/^NONE$/i.test(text.trim())) {
+        let { text, citations } = await callAIWeb(sys, `Find the datasheet for: ${q1}`, 4);
+        let url = pickUrl(text, citations, lit.manufacturer);
+        if (!url) {
+          // One broadened retry before giving up (only runs on a miss).
+          const q2 = `${lit.manufacturer || ""} ${lit.model || lit.item} official product datasheet`.trim();
+          ({ text, citations } = await callAIWeb(sys, `Find the datasheet for: ${q2}`, 4));
+          url = pickUrl(text, citations, lit.manufacturer);
+        }
+        if (url) {
           lit.url = url;
           try { lit.source = new URL(url).hostname.replace(/^www\./, ""); } catch { lit.source = ""; }
         }
@@ -1549,6 +1574,17 @@ function omRenderEquipment(ctx, data) {
       { header: "Model", width: 38, mono: true }, { header: "Rating / Qty", width: 24, color: OM_C.mute },
     ], rows);
   });
+  // Spares & consumables: kept separate from the equipment register so the schedule
+  // reads cleanly, but listed for completeness (so nothing procured is unaccounted for).
+  if ((data.consumables || []).length) {
+    omEnsure(ctx, 16);
+    ctx.doc.setFont("helvetica", "bold"); ctx.doc.setFontSize(9.5); ctx.doc.setTextColor(...OM_C.greenD);
+    ctx.doc.text("Spares & consumables", 16, ctx.y); ctx.y += 3;
+    ctx.doc.setFont("helvetica", "normal"); ctx.doc.setFontSize(7.6); ctx.doc.setTextColor(...OM_C.mute);
+    ctx.doc.text("Sundry materials procured for the works (not maintainable plant).", 16, ctx.y); ctx.y += 5;
+    const crows = (data.consumables || []).map(c => [c.item || "", c.qty != null && c.qty !== "" ? String(c.qty) : ""]);
+    omTable(ctx, [{ header: "Item", width: 154 }, { header: "Qty", width: 24, color: OM_C.mute, align: "right" }], crows);
+  }
 }
 
 function omRenderLiterature(ctx, data, web) {
@@ -1606,8 +1642,12 @@ function omRenderPPM(ctx, data) {
       omEnsure(ctx, 14);
       ctx.doc.setFont("helvetica", "bold"); ctx.doc.setFontSize(9.5); ctx.doc.setTextColor(...OM_C.dark);
       ctx.doc.text(g.title || "Equipment", 16, ctx.y); ctx.y += 5.5;
-      const rows = (g.rows || []).map(r => [r.freq || "", r.activity || ""]);
-      omTable(ctx, [{ header: "Frequency", width: 30, color: OM_C.greenD }, { header: "Maintenance activity", width: 148 }], rows);
+      const rows = (g.rows || []).map(r => [r.freq || "", r.activity || "", r.ref || ""]);
+      omTable(ctx, [
+        { header: "Frequency", width: 28, color: OM_C.greenD },
+        { header: "Maintenance activity", width: 122 },
+        { header: "Reference", width: 28, mono: true, color: OM_C.mute },
+      ], rows);
     });
     ctx.y += 2;
   });
@@ -3208,7 +3248,7 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 RFQ REVISIONS: a sent request can be revised and re-sent. On All Requests, tap 'Revise' on a sent request (Buyers/Managers) - it reopens in the wizard with everything pre-filled and the original suppliers/contacts selected. Edit anything, then re-send: it updates the SAME request (bumps the version, e.g. v2), re-sends to the chosen suppliers and resets their quote boxes for the new revision, rather than creating a duplicate.
 AUTOCOMPLETE: the Job reference and Site fields suggest values from your past requests as you type; the alternative-address field suggests past addresses; and the Collect-from field suggests your suppliers' branches plus places you've collected from before.
 
-O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule, manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
+O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule (with a separate spares & consumables list), manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules with their governing standards. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.
 
 TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
@@ -3718,7 +3758,7 @@ ${settings.company||""}`;
       {q:"What features are coming next?", a:"Recently added: trade auto-detect, multiple named contacts and branches per supplier, automatic capture of supplier email replies into the quote box, revise-and-re-send for RFQs, collect-from branch details, and job/site/branch autocomplete. Recently added: the O&M file generator, spend reporting (by trade, supplier, project and month) with a per-project cross-trade view, and a materials measuring tool. Just added: a 'From a drawing' materials take-off (upload a scaled PDF/image and ProQure lists the materials to order, ready to edit) and manufacturer-datasheet coverage lookup in Measure. On the roadmap next: a native mobile app with camera room-scanning for on-site measuring, smart matching of stray supplier emails to the right job, AI that reads hire delivery photos to note condition automatically, hire-vs-buy suggestions based on your hire history, and accounting integrations like Xero and Sage."},
     ]},
     {cat:"O&M, reports & measure", qs:[
-      {q:"What is the O&M file generator?", a:"On the 'O&M files' tab (Buyers and Managers) ProQure builds an Operations & Maintenance pack for a project from the materials you've ordered against it. Pick the project and tap Generate O&M - you get a presented PDF with a cover, contents, equipment schedule, manufacturer literature, and planned preventative maintenance (PPM) schedules. The equipment details and maintenance schedules are AI-drafted and marked for your sign-off, so review before issuing to a client."},
+      {q:"What is the O&M file generator?", a:"On the 'O&M files' tab (Buyers and Managers) ProQure builds an Operations & Maintenance pack for a project from the materials you've ordered against it. Pick the project and tap Generate O&M - you get a presented PDF with a cover, contents, an equipment schedule (with a separate spares & consumables list), manufacturer literature, and planned preventative maintenance (PPM) schedules with their governing standards. The equipment details and maintenance schedules are AI-drafted and marked for your sign-off, so review before issuing to a client."},
       {q:"How does it find the datasheets?", a:"Turn on 'find datasheet links online' before generating and ProQure searches each manufacturer for the exact datasheet for the model installed. That option uses web search (a small per-use cost) so it is off by default - with it off, the pack still lists each item's manufacturer and model with a search link."},
       {q:"Can I split the O&M into separate files?", a:"Yes. Tick 'also export sections separately' and ProQure downloads the Literature and Maintenance sections as their own PDFs in addition to the single combined pack."},
       {q:"What's in the Reports tab?", a:"Reports (Buyers and Managers) shows total spend, order count, projects and suppliers, with spend broken down by trade, by supplier and by month, and a CSV export. The 'By project' tab is the manager view: pick a project to see its total cost split across every trade and supplier on it."},
@@ -7747,7 +7787,6 @@ function SignatureEditor({ value, onChange }) {
 function LoginScreen({ onLoggedIn }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState("signin"); // signin | signup
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [showForgot, setShowForgot] = useState(false);
@@ -7779,18 +7818,9 @@ function LoginScreen({ onLoggedIn }) {
     if (!email.trim() || !password) { setMsg("Enter an email and password."); return; }
     setBusy(true); setMsg("");
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email: email.trim(), password });
-        if (error) { setMsg(error.message); setBusy(false); return; }
-        const { data } = await supabase.auth.getSession();
-        if (data?.session) { onLoggedIn(data.session); return; }
-        setMsg("Account created. You can now sign in.");
-        setMode("signin");
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-        if (error) { setMsg(error.message); setBusy(false); return; }
-        if (data?.session) { onLoggedIn(data.session); return; }
-      }
+      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) { setMsg(error.message); setBusy(false); return; }
+      if (data?.session) { onLoggedIn(data.session); return; }
     } catch (e) { setMsg("Something went wrong. Please try again."); }
     setBusy(false);
   };
@@ -7841,15 +7871,15 @@ function LoginScreen({ onLoggedIn }) {
           </div>
           <span style={{fontSize:22,fontWeight:800,color:t.title,letterSpacing:"-0.02em"}}>Pro<span style={{color:dark?"#3DD68C":"#15824F"}}>Qure</span></span>
         </div>
-        <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>{mode==="signup"?"Create your account":"Welcome back"}</div>
-        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>{mode==="signup"?"Set up a login to access ProQure.":"Sign in to access your procurement dashboard."}</div>
+        <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>Welcome back</div>
+        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>Sign in to access your procurement dashboard.</div>
 
         <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Email</label>
         <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" placeholder="you@company.co.uk"
           style={{width:"100%",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
 
         <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Password</label>
-        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete={mode==="signup"?"new-password":"current-password"} placeholder="Your password"
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" placeholder="Your password"
           onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
           style={{width:"100%",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:18,outline:"none"}}/>
 
@@ -7857,9 +7887,9 @@ function LoginScreen({ onLoggedIn }) {
 
         <button onClick={submit} disabled={busy}
           style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?0.7:1,marginBottom:14}}>
-          {busy ? "Please wait..." : (mode==="signup"?"Create account":"Sign in")}
+          {busy ? "Please wait..." : "Sign in"}
         </button>
-        {mode==="signin" && !showForgot && (
+        {!showForgot && (
           <div style={{textAlign:"center",marginBottom:12}}>
             <button onClick={openForgot} style={{background:"none",border:"none",color:dark?"#3DD68C":"#15824F",fontWeight:600,cursor:"pointer",fontSize:12.5}}>Forgot password?</button>
           </div>
