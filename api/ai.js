@@ -26,10 +26,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing messages" });
     }
 
-    // When web search is requested we need a tool/plugin-capable model. Gemini
-    // Flash handles the web plugin well and is cheap, so we prefer it for web
+    // When web search is requested we need a tool/plugin-capable model. Flash-tier
+    // Gemini handles the web plugin well and is cheap, so we prefer it for web
     // requests; otherwise use the caller's list (or the standard fallbacks).
-    const webModels = ["google/gemini-flash-1.5"];
+    // Listed newest-first; the loop below falls through to the next if a slug has
+    // been retired, so this keeps working when OpenRouter rotates model versions.
+    // All are routed through OpenRouter - no other provider is used.
+    const webModels = ["google/gemini-2.5-flash", "google/gemini-3.1-flash-lite"];
     const standardModels = [
       "deepseek/deepseek-chat",
       "meta-llama/llama-3.1-8b-instruct",
