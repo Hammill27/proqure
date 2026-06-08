@@ -323,7 +323,7 @@ document.querySelectorAll(".navitem").forEach(b=>b.addEventListener("click",()=>
 function configOk(){ return SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length>20; }
 async function init(){
   if(!configOk()){ $("gate").style.display="none"; $("login").style.display="flex"; $("cfgWarn").style.display="block"; $("cfgWarn").textContent="Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file."; return; }
-  sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
+  sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{storageKey:"pq-admin-auth",persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
   const { data } = await sb.auth.getSession();
   if(data&&data.session){ session=data.session; if(gatePassed) showApp(); }
 }
