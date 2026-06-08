@@ -2564,6 +2564,8 @@ function ProQureApp({ session, companyId }) {
     if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
     const itemsValid = (form.items||[]).some(i => (i.description||"").trim());
     if (!itemsValid && !(form.summary||"").trim()) { showToast("Add at least one item or a description.","warn"); return; }
+    const hasSupplier = (form.newSupplier && (form.newSupplierName||"").trim()) || (!form.newSupplier && form.supplierId);
+    if (!hasSupplier) { showToast("Pick a supplier (or add one) before raising the PO.","warn"); return; }
 
     // Resolve or create the supplier
     let supplier = null;
@@ -7318,6 +7320,7 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill, o
     setAiBusy(false);
   };
   const [scanBusy, setScanBusy] = useState(false);
+  const [supOpen, setSupOpen] = useState(false);
   const runScan = async (file) => {
     if (!file || !onScan) return;
     setScanBusy(true);
@@ -7364,13 +7367,23 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill, o
         {/* Supplier */}
         <label style={labelStyle}>Supplier</label>
         {!form.newSupplier ? (
-          <div style={{marginBottom:8}}>
-            <select value={form.supplierId||""} onChange={e=>{ if(e.target.value==="__new__"){ upd({newSupplier:true,supplierId:null}); } else { upd({supplierId:e.target.value}); } }} style={{...inputStyle,marginBottom:0}}>
-              <option value="">Select a supplier...</option>
-              {approvedSuppliers.length>0 && <optgroup label="Approved suppliers">{approvedSuppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>}
-              {adhocSuppliers.length>0 && <optgroup label="Ad-hoc suppliers">{adhocSuppliers.map(s=><option key={s.id} value={s.id}>{s.name} (ad-hoc)</option>)}</optgroup>}
-              <option value="__new__">+ Add a new supplier on the spot</option>
-            </select>
+          <div style={{marginBottom:8,position:"relative"}}>
+            {(()=>{ const sel = suppliers.find(s=>String(s.id)===String(form.supplierId)); return (
+              <button type="button" onClick={()=>setSupOpen(o=>!o)} style={{...inputStyle,marginBottom:0,textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}>
+                <span style={{color:sel?"var(--text-primary)":"var(--text-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sel?(sel.name+(sel.tier==="ad-hoc"?" (ad-hoc)":"")):"Select a supplier..."}</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,color:"var(--text-secondary)",transform:supOpen?"rotate(180deg)":"none"}}><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            ); })()}
+            {supOpen && (
+              <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:20,background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",boxShadow:"var(--shadow-lg)",maxHeight:240,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+                {suppliers.length===0 && <div style={{padding:"10px 14px",fontSize:12,color:"var(--text-muted)"}}>No suppliers yet — add one below.</div>}
+                {approvedSuppliers.length>0 && <div style={{padding:"7px 14px 3px",fontSize:10,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em"}}>Approved</div>}
+                {approvedSuppliers.map(sp=>(<button key={sp.id} type="button" onClick={()=>{upd({supplierId:String(sp.id),newSupplier:false});setSupOpen(false);}} style={{width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:String(form.supplierId)===String(sp.id)?"var(--green-light)":"transparent",color:"var(--text-primary)",fontSize:13,cursor:"pointer"}}>{sp.name}</button>))}
+                {adhocSuppliers.length>0 && <div style={{padding:"7px 14px 3px",fontSize:10,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em"}}>Ad-hoc</div>}
+                {adhocSuppliers.map(sp=>(<button key={sp.id} type="button" onClick={()=>{upd({supplierId:String(sp.id),newSupplier:false});setSupOpen(false);}} style={{width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:String(form.supplierId)===String(sp.id)?"var(--green-light)":"transparent",color:"var(--text-primary)",fontSize:13,cursor:"pointer"}}>{sp.name} (ad-hoc)</button>))}
+                <button type="button" onClick={()=>{upd({newSupplier:true,supplierId:null});setSupOpen(false);}} style={{width:"100%",textAlign:"left",padding:"11px 14px",border:"none",borderTop:suppliers.length?"1px solid var(--border)":"none",background:"transparent",color:"#15824F",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add a new supplier on the spot</button>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{marginBottom:8,padding:"12px",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-subtle2)"}}>
@@ -7402,12 +7415,16 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill, o
           <button onClick={addItem} style={{background:"none",border:"none",color:"#15824F",fontSize:12,fontWeight:700,cursor:"pointer"}}>+ Add line</button>
         </div>
         {items.map((it,idx)=>(
-          <div key={idx} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
-            <input value={it.description||""} onChange={e=>setItem(idx,{description:e.target.value})} placeholder="Item description" style={{...inputStyle,flex:3}}/>
-            <input value={it.quantity||""} onChange={e=>setItem(idx,{quantity:e.target.value})} placeholder="Qty" style={{...inputStyle,flex:1,minWidth:0}}/>
-            <input value={it.unit||""} onChange={e=>setItem(idx,{unit:e.target.value})} placeholder="Unit" style={{...inputStyle,flex:1,minWidth:0}}/>
-            <input value={it.unitPrice||""} onChange={e=>setItem(idx,{unitPrice:e.target.value})} placeholder="Price" style={{...inputStyle,flex:1,minWidth:0}}/>
-            {items.length>1 && <button onClick={()=>removeItem(idx)} style={{background:"none",border:"none",color:"var(--text-secondary)",fontSize:18,cursor:"pointer",lineHeight:1}}>&times;</button>}
+          <div key={idx} style={{border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:8,marginBottom:8,background:"var(--bg-subtle2)"}}>
+            <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+              <input value={it.description||""} onChange={e=>setItem(idx,{description:e.target.value})} placeholder="Item description" style={{...inputStyle,flex:1,background:"var(--bg-card-solid)"}}/>
+              {items.length>1 && <button onClick={()=>removeItem(idx)} title="Remove line" style={{background:"none",border:"none",color:"var(--text-secondary)",fontSize:20,cursor:"pointer",lineHeight:1,padding:"4px 4px 0"}}>&times;</button>}
+            </div>
+            <div style={{display:"flex",gap:6,marginTop:6}}>
+              <input value={it.quantity||""} onChange={e=>setItem(idx,{quantity:e.target.value})} placeholder="Qty" style={{...inputStyle,flex:1,minWidth:0,background:"var(--bg-card-solid)"}}/>
+              <input value={it.unit||""} onChange={e=>setItem(idx,{unit:e.target.value})} placeholder="Unit" style={{...inputStyle,flex:1,minWidth:0,background:"var(--bg-card-solid)"}}/>
+              <input value={it.unitPrice||""} onChange={e=>setItem(idx,{unitPrice:e.target.value})} placeholder="Price" style={{...inputStyle,flex:1,minWidth:0,background:"var(--bg-card-solid)"}}/>
+            </div>
           </div>
         ))}
         <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:2,marginBottom:10}}>Or just describe it below and enter a total - whichever is quicker.</div>
