@@ -1823,28 +1823,83 @@ Be realistic and conservative. Round packsNeeded up to whole packs. Never omit t
   }
 }
 
+// Lazily load pdf.js (from CDN) so we can rasterise PDF pages to images in the
+// browser. Vision models read images, not raw PDF bytes, so for any PDF (drawing
+// or scanned document) we render its pages to PNGs and send those instead.
+let _pdfjsPromise = null;
+function loadPdfJs() {
+  if (typeof window !== "undefined" && window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_pdfjsPromise) return _pdfjsPromise;
+  _pdfjsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload = () => {
+      try {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        resolve(window.pdfjsLib);
+      } catch (e) { reject(e); }
+    };
+    s.onerror = () => reject(new Error("Could not load the PDF reader."));
+    document.head.appendChild(s);
+  });
+  return _pdfjsPromise;
+}
+
+// Render the first `maxPages` pages of a PDF File to PNG data URLs.
+async function pdfToImages(file, maxPages = 3) {
+  const pdfjsLib = await loadPdfJs();
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const n = Math.min(pdf.numPages, maxPages);
+  const out = [];
+  for (let p = 1; p <= n; p++) {
+    const page = await pdf.getPage(p);
+    const base = page.getViewport({ scale: 1 });
+    const cap = 2000; // keep the longest edge sensible so payloads stay small
+    const scale = Math.min(2.2, cap / Math.max(base.width, base.height)) || 1.5;
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    out.push(canvas.toDataURL("image/png"));
+  }
+  return out;
+}
+
 // Reads an uploaded drawing (PDF or image) via the central AI and returns a
-// materials take-off — the items shown on the drawing. PDF/image only: a true
-// DWG/CAD file can't be read directly (export it to PDF first).
+// materials take-off — the items shown on the drawing. PDFs are rasterised to
+// page images first; a true DWG/CAD file can't be read (export it to PDF first).
 async function takeoffFromDrawing(file) {
   const sys = `You are a quantity surveyor doing a materials take-off from a construction drawing or specification. List the MATERIAL items shown, with quantities where they can reasonably be inferred from counts, schedules, legends or dimensions. Do NOT invent precise quantities you cannot see — use 1 and add a note if unsure. Ignore labour, prices and title-block text. Return ONLY valid JSON, no markdown:
 {"items":[{"description":"...","quantity":number,"unit":"e.g. no / m / m2 / each","category":"the trade, e.g. Electrical","notes":"short, e.g. 'counted from legend' or 'scale assumed'"}]}
 Always return the JSON, even if the list is short.`;
   try {
-    const base64 = await new Promise((res, rej) => {
-      const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
-    });
     const isImage = (file.type || "").startsWith("image/");
     const isPDF = (file.type || "") === "application/pdf";
     if (!isImage && !isPDF) return { error: "Please upload a PDF or an image of the drawing — a DWG/CAD file can't be read, so export it to PDF first." };
-    const userContent = isImage
-      ? [{ type: "image_url", image_url: { url: `data:${file.type};base64,${base64}` } }, { type: "text", text: "Do a materials take-off from this drawing." }]
-      : `This is a scaled drawing/specification supplied as a base64 PDF. Do a materials take-off of the items shown. Base64 (truncated): ${base64.slice(0, 9000)}`;
+    let imageUrls = [];
+    if (isImage) {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(file);
+      });
+      imageUrls = [dataUrl];
+    } else {
+      imageUrls = await pdfToImages(file, 3);
+    }
+    if (!imageUrls.length) return { error: "Couldn't read that file — try a clearer PDF or image." };
+    const userContent = [
+      ...imageUrls.map(url => ({ type: "image_url", image_url: { url } })),
+      { type: "text", text: "Do a materials take-off from this drawing." },
+    ];
     const r = await fetch("/api/ai", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: [{ role: "system", content: sys }, { role: "user", content: userContent }],
-        models: [isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat"],
+        models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"],
         temperature: 0,
       }),
     });
@@ -2016,6 +2071,8 @@ function ProQureApp({ session, companyId }) {
   const [mArea, setMArea] = useState("");
   const [mCoats, setMCoats] = useState("2");
   const [mWastage, setMWastage] = useState("10");
+  const [mMeasureType, setMMeasureType] = useState("area"); // "area" (m2) | "volume" (m3)
+  const [mDepth, setMDepth] = useState(""); // depth/thickness in mm, for volume
   const [mBusy, setMBusy] = useState(false);
   const [mResult, setMResult] = useState(null);
   const [mProduct, setMProduct] = useState("");
@@ -2594,15 +2651,20 @@ function ProQureApp({ session, companyId }) {
     if (!file) return null;
     if (!AI_VIA_SERVER && !settings.openRouterKey) { showToast("AI is temporarily unavailable. Please try again shortly.","warn"); return null; }
     try {
-      const base64 = await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);r.onerror=rej;r.readAsDataURL(file);});
       const isImage = file.type.startsWith("image/");
       const isPDF = file.type==="application/pdf";
       if (!isImage && !isPDF) { const text = await file.text(); return await aiParseQuickPO(text, suppliers.map(s=>s.name)); }
+      let imageUrls = [];
+      if (isImage) {
+        const dataUrl = await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(file);});
+        imageUrls = [dataUrl];
+      } else {
+        imageUrls = await pdfToImages(file, 3);
+      }
+      if (!imageUrls.length) { showToast("Couldn't read that document - try a clearer photo","warn"); return null; }
       const sys = `You read UK construction/trades order documents (supplier quotes, delivery notes, handwritten lists). Extract the order as plain text: one line per item as "[quantity] [unit] [description]". If a supplier name or an agreed total price is visible, add lines "SUPPLIER: <name>" and "TOTAL: <amount>". No preamble, just the lines.`;
-      const userMsg = isImage
-        ? { role:"user", content:[{type:"image_url",image_url:{url:`data:${file.type};base64,${base64}`}},{type:"text",text:"Extract this order."}] }
-        : { role:"user", content:`PDF base64 (extract the order): ${base64.slice(0,8000)}` };
-      const models = [ isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat" ];
+      const userMsg = { role:"user", content:[ ...imageUrls.map(url=>({type:"image_url",image_url:{url}})), {type:"text",text:"Extract this order."} ] };
+      const models = [ "google/gemini-2.5-flash", "google/gemini-flash-1.5" ];
       let extracted="";
       try {
         const sres = await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"system",content:sys},userMsg],models,temperature:0.1})});
@@ -3602,13 +3664,26 @@ ${settings.company||""}`;
 
   const runMeasure = async () => {
     if (mBusy) return;
+    const coatsApplies = /paint|plaster|render|coat/i.test(mMaterial);
     setMBusy(true); setMResult(null);
     try {
       const area = mArea ? Number(mArea) : (mLength && mHeight ? Number(mLength) * Number(mHeight) : null);
       if (!area || isNaN(area) || area <= 0) { showToast("Enter an area, or a length and height.", "warn"); return; }
-      const inputs = { area_m2: Math.round(area * 100) / 100, coats: Number(mCoats) || 1, wastage_percent: Number(mWastage) || 0 };
+      const areaR = Math.round(area * 100) / 100;
+      let inputs, basis, basisUnit;
+      if (mMeasureType === "volume") {
+        const depthMm = Number(mDepth);
+        if (!depthMm || isNaN(depthMm) || depthMm <= 0) { showToast("Enter a depth / thickness in mm for a volume calculation.", "warn"); return; }
+        const volume = Math.round(area * (depthMm / 1000) * 1000) / 1000;
+        inputs = { volume_m3: volume, area_m2: areaR, depth_mm: depthMm, wastage_percent: Number(mWastage) || 0 };
+        basis = volume; basisUnit = "m\u00B3";
+      } else {
+        inputs = { area_m2: areaR, wastage_percent: Number(mWastage) || 0 };
+        if (coatsApplies) inputs.coats = Number(mCoats) || 1;
+        basis = areaR; basisUnit = "m\u00B2";
+      }
       const res = await measureCompute(mMaterial, inputs, { product: mProduct, useDatasheet: mUseDatasheet });
-      setMResult({ ...res, area: inputs.area_m2 });
+      setMResult({ ...res, basis, basisUnit });
     } catch (e) { showToast("Couldn't calculate: " + (e.message || "error"), "warn"); }
     finally { setMBusy(false); }
   };
@@ -6295,6 +6370,7 @@ Rules:
         })()}
         {view==="measure"&&(()=>{
           const materials=["Emulsion paint","Gloss / satinwood paint","Plaster (skim coat)","Bonding plaster","Plasterboard","Bricks","Concrete blocks","Tile adhesive","Floor screed","Self-levelling compound","Insulation board","Sand & cement render"];
+          const coatsApplies=/paint|plaster|render|coat/i.test(mMaterial);
           const tabBtn=(id,label)=>(
             <button onClick={()=>setMMode(id)} style={{flex:1,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:mMode===id?"var(--green)":"var(--bg-card)",color:mMode===id?"white":"var(--text-primary)"}}>{label}</button>
           );
@@ -6317,7 +6393,14 @@ Rules:
                   <input type="checkbox" checked={mUseDatasheet} onChange={e=>setMUseDatasheet(e.target.checked)} style={{marginTop:2}}/>
                   <span>Look up the manufacturer&rsquo;s datasheet for the exact coverage rate <span style={{color:"var(--text-muted)"}}>(uses web search; needs a product/brand above)</span></span>
                 </label>
-                <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Area</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{mMeasureType==="volume"?"Area to cover":"Area"}</span>
+                  <div style={{display:"inline-flex",background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:3}}>
+                    {[["area","Area (m\u00B2)"],["volume","Volume (m\u00B3)"]].map(([id,lab])=>(
+                      <button key={id} type="button" onClick={()=>setMMeasureType(id)} style={{padding:"6px 12px",border:"none",borderRadius:6,background:mMeasureType===id?"var(--bg-card)":"transparent",color:mMeasureType===id?"var(--text-primary)":"var(--text-muted)",fontWeight:600,fontSize:12,cursor:"pointer",boxShadow:mMeasureType===id?"var(--shadow-sm)":"none"}}>{lab}</button>
+                    ))}
+                  </div>
+                </div>
                 <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
                   <input type="number" inputMode="decimal" placeholder="Area (m²)" value={mArea} onChange={e=>setMArea(e.target.value)} style={{flex:"1 1 120px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                   <span style={{fontSize:12,color:"var(--text-muted)"}}>or</span>
@@ -6325,11 +6408,20 @@ Rules:
                   <span style={{fontSize:13,color:"var(--text-muted)"}}>×</span>
                   <input type="number" inputMode="decimal" placeholder="Height (m)" value={mHeight} onChange={e=>setMHeight(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                 </div>
+                {mMeasureType==="volume"&&(
+                  <div style={{marginTop:10}}>
+                    <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Depth / thickness (mm)</label>
+                    <input type="number" inputMode="decimal" placeholder="e.g. 50" value={mDepth} onChange={e=>setMDepth(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
+                    <div style={{fontSize:11.5,color:"var(--text-muted)",marginTop:5}}>Volume = area &times; depth &mdash; good for screed, levelling compound, concrete.</div>
+                  </div>
+                )}
                 <div style={{display:"flex",gap:14,flexWrap:"wrap",margin:"14px 0 4px"}}>
+                  {coatsApplies&&mMeasureType==="area"&&(
                   <div style={{flex:"1 1 120px"}}>
                     <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Coats</label>
                     <input type="number" inputMode="numeric" value={mCoats} onChange={e=>setMCoats(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                   </div>
+                  )}
                   <div style={{flex:"1 1 120px"}}>
                     <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Wastage %</label>
                     <input type="number" inputMode="numeric" value={mWastage} onChange={e=>setMWastage(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
@@ -6341,7 +6433,7 @@ Rules:
                 <div style={{marginTop:14,padding:"14px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text-primary)"}}>{mResult.error}</div>
               ):(
                 <div style={{marginTop:14,background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
-                  <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>You&rsquo;ll need (for ~{mResult.area} m²)</div>
+                  <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>You&rsquo;ll need (for ~{mResult.basis} {mResult.basisUnit})</div>
                   <div style={{fontSize:isMobile?26:32,fontWeight:800,color:"var(--green)",fontFamily:"'JetBrains Mono',monospace",margin:"6px 0",letterSpacing:"-1px"}}>{mResult.quantity} {mResult.unit}</div>
                   {mResult.packsNeeded!=null&&<div style={{fontSize:14,color:"var(--text-primary)",fontWeight:600}}>{mResult.packsNeeded} × {mResult.packSize||"pack"}</div>}
                   {mResult.coverageBasis&&<div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:8}}>Based on: {mResult.coverageBasis}</div>}
@@ -7010,6 +7102,7 @@ Rules:
           form={quickPO}
           setForm={setQuickPO}
           suppliers={suppliers}
+          isMobile={isMobile}
           onSubmit={handleQuickPO}
           onClose={()=>setQuickPO(null)}
           onAiFill={aiParseQuickPO}
@@ -7353,7 +7446,7 @@ Rules:
 }
 
 // --- Quick PO modal (emergency direct PO) ------------------------------------
-function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill, onScan }) {
+function QuickPOModal({ form, setForm, suppliers, isMobile, onSubmit, onClose, onAiFill, onScan }) {
   const upd = (patch) => setForm(f => ({ ...f, ...patch }));
   const items = form.items || [{ description:"", quantity:"", unit:"", unitPrice:"" }];
   const setItem = (idx, patch) => {
@@ -7406,8 +7499,9 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill, o
   });
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"20px",overflowY:"auto"}}>
-      <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"26px 28px",maxWidth:640,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",margin:"20px 0"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:isMobile?"stretch":"flex-start",justifyContent:"center",padding:isMobile?0:"20px",overflowY:"auto"}}>
+      <div style={{background:"var(--bg-card-solid)",borderRadius:isMobile?0:"var(--radius-lg)",maxWidth:isMobile?"100%":640,width:"100%",boxShadow:"var(--shadow-lg)",border:isMobile?"none":"1px solid var(--border)",margin:isMobile?0:"20px 0",display:"flex",flexDirection:"column",maxHeight:isMobile?"100dvh":"calc(100vh - 40px)"}}>
+        <div style={{padding:isMobile?"18px 18px 0":"26px 28px 0",overflowY:"auto",flex:1,minHeight:0}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
           <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"4px 10px",borderRadius:99,background:"rgba(217,119,6,0.12)"}}>
             <span style={{fontSize:11,fontWeight:700,color:"#D97706",letterSpacing:"0.04em",textTransform:"uppercase"}}>Quick PO</span>
@@ -7440,24 +7534,12 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill, o
         {/* Supplier */}
         <label style={labelStyle}>Supplier</label>
         {!form.newSupplier ? (
-          <div style={{marginBottom:8,position:"relative"}}>
-            {(()=>{ const sel = suppliers.find(s=>String(s.id)===String(form.supplierId)); return (
-              <button type="button" onClick={()=>setSupOpen(o=>!o)} style={{...inputStyle,marginBottom:0,textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}>
-                <span style={{color:sel?"var(--text-primary)":"var(--text-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sel?(sel.name+(sel.tier==="ad-hoc"?" (ad-hoc)":"")):"Select a supplier..."}</span>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,color:"var(--text-secondary)",transform:supOpen?"rotate(180deg)":"none"}}><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-            ); })()}
-            {supOpen && (
-              <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:20,background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",boxShadow:"var(--shadow-lg)",maxHeight:240,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-                {suppliers.length===0 && <div style={{padding:"10px 14px",fontSize:12,color:"var(--text-muted)"}}>No suppliers yet — add one below.</div>}
-                {approvedSuppliers.length>0 && <div style={{padding:"7px 14px 3px",fontSize:10,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em"}}>Approved</div>}
-                {approvedSuppliers.map(sp=>(<button key={sp.id} type="button" onClick={()=>{upd({supplierId:String(sp.id),newSupplier:false});setSupOpen(false);}} style={{width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:String(form.supplierId)===String(sp.id)?"var(--green-light)":"transparent",color:"var(--text-primary)",fontSize:13,cursor:"pointer"}}>{sp.name}</button>))}
-                {adhocSuppliers.length>0 && <div style={{padding:"7px 14px 3px",fontSize:10,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em"}}>Ad-hoc</div>}
-                {adhocSuppliers.map(sp=>(<button key={sp.id} type="button" onClick={()=>{upd({supplierId:String(sp.id),newSupplier:false});setSupOpen(false);}} style={{width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:String(form.supplierId)===String(sp.id)?"var(--green-light)":"transparent",color:"var(--text-primary)",fontSize:13,cursor:"pointer"}}>{sp.name} (ad-hoc)</button>))}
-                <button type="button" onClick={()=>{upd({newSupplier:true,supplierId:null});setSupOpen(false);}} style={{width:"100%",textAlign:"left",padding:"11px 14px",border:"none",borderTop:suppliers.length?"1px solid var(--border)":"none",background:"transparent",color:"#15824F",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add a new supplier on the spot</button>
-              </div>
-            )}
-          </div>
+          <select value={form.supplierId||""} onChange={e=>{ const v=e.target.value; if(v==="__new__"){upd({newSupplier:true,supplierId:null});} else {upd({supplierId:v,newSupplier:false});} }} style={{...inputStyle,marginBottom:8,cursor:"pointer",appearance:"auto"}}>
+            <option value="">Select a supplier...</option>
+            {approvedSuppliers.length>0&&(<optgroup label="Approved suppliers">{approvedSuppliers.map(sp=><option key={sp.id} value={String(sp.id)}>{sp.name}</option>)}</optgroup>)}
+            {adhocSuppliers.length>0&&(<optgroup label="Ad-hoc suppliers">{adhocSuppliers.map(sp=><option key={sp.id} value={String(sp.id)}>{sp.name} (ad-hoc)</option>)}</optgroup>)}
+            <option value="__new__">+ Add a new supplier on the spot</option>
+          </select>
         ) : (
           <div style={{marginBottom:8,padding:"12px",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-subtle2)"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
@@ -7522,8 +7604,8 @@ function QuickPOModal({ form, setForm, suppliers, onSubmit, onClose, onAiFill, o
         {form.deliveryMethod==="collect" && <input value={form.collectFrom||""} onChange={e=>upd({collectFrom:e.target.value})} placeholder="Collect from (branch / depot)" style={{...inputStyle,marginBottom:8}}/>}
         <label style={labelStyle}>Required by (optional)</label>
         <input type="date" value={form.deliveryDate||""} onChange={e=>upd({deliveryDate:e.target.value})} style={{...inputStyle,marginBottom:18}}/>
-
-        <div style={{display:"flex",gap:10}}>
+        </div>
+        <div style={{display:"flex",gap:10,padding:isMobile?"12px 18px":"16px 28px",borderTop:"1px solid var(--border)",background:"var(--bg-card-solid)"}}>
           <button onClick={()=>onSubmit(form)} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"none",background:"#15824F",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Raise PO</button>
           <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancel</button>
         </div>
