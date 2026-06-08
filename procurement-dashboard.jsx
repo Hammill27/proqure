@@ -6153,7 +6153,7 @@ Rules:
           return (
           <div style={{maxWidth:860,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
             <div style={{marginBottom:6}}>
-              <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text)",letterSpacing:"-0.02em",margin:0}}>O&amp;M files</h1>
+              <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em",margin:0}}>O&amp;M files</h1>
               <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 0",maxWidth:620,lineHeight:1.5}}>
                 Turn a project&rsquo;s procured materials into a presented Operations &amp; Maintenance pack &mdash; equipment schedule, manufacturer literature, and planned maintenance schedules &mdash; in one PDF.
               </p>
@@ -6164,14 +6164,14 @@ Rules:
               <label style={{flex:1,display:"flex",gap:10,alignItems:"flex-start",padding:"13px 15px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
                 <input type="checkbox" checked={omWeb} disabled={omBusy} onChange={e=>setOmWeb(e.target.checked)} style={{marginTop:2,accentColor:"var(--green)",width:16,height:16}}/>
                 <span>
-                  <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--text)"}}>Find datasheet links online</span>
+                  <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--text-primary)"}}>Find datasheet links online</span>
                   <span style={{display:"block",fontSize:12,color:"var(--text-muted)",marginTop:2,lineHeight:1.45}}>Searches each manufacturer for the exact datasheet. Uses web search &mdash; a small per-use cost. Off = manufacturer &amp; model listed with a search link.</span>
                 </span>
               </label>
               <label style={{flex:1,display:"flex",gap:10,alignItems:"flex-start",padding:"13px 15px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
                 <input type="checkbox" checked={omSplit} disabled={omBusy} onChange={e=>setOmSplit(e.target.checked)} style={{marginTop:2,accentColor:"var(--green)",width:16,height:16}}/>
                 <span>
-                  <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--text)"}}>Also export sections separately</span>
+                  <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--text-primary)"}}>Also export sections separately</span>
                   <span style={{display:"block",fontSize:12,color:"var(--text-muted)",marginTop:2,lineHeight:1.45}}>In addition to the combined pack, download Literature and Maintenance as their own PDFs.</span>
                 </span>
               </label>
@@ -6179,7 +6179,7 @@ Rules:
 
             {projects.length===0 ? (
               <div style={{textAlign:"center",padding:"60px 20px",background:"var(--bg-card)",border:"1px dashed var(--border)",borderRadius:"var(--radius-lg)"}}>
-                <div style={{fontSize:15,fontWeight:600,color:"var(--text)"}}>No projects to build from yet</div>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)"}}>No projects to build from yet</div>
                 <div style={{fontSize:13,color:"var(--text-muted)",marginTop:6,maxWidth:420,marginLeft:"auto",marginRight:"auto",lineHeight:1.5}}>O&amp;M packs are built from materials you&rsquo;ve ordered. Once a project has orders against a job reference, it&rsquo;ll appear here.</div>
               </div>
             ) : (
@@ -6189,7 +6189,7 @@ Rules:
                   return (
                   <div key={p.jobRef} style={{display:"flex",flexDirection:isMobile?"column":"row",alignItems:isMobile?"stretch":"center",gap:14,padding:"15px 17px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)"}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:15,fontWeight:700,color:"var(--text)",letterSpacing:"-0.01em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.jobRef}</div>
+                      <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",letterSpacing:"-0.01em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.jobRef}</div>
                       <div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:3}}>
                         {p.site?`${p.site} · `:""}{p.items} item{p.items===1?"":"s"} across {p.pos} order{p.pos===1?"":"s"}
                       </div>
@@ -6213,15 +6213,15 @@ Rules:
           const COLORS=["#15824F","#2E9E68","#46B97F","#5FA8D3","#E0A458","#C45D5D","#8A7CC2","#6B8E23"];
           const barRow=(x,max,i)=>(
             <div key={x.label} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 0"}}>
-              <div style={{width:isMobile?100:150,flexShrink:0,fontSize:12.5,color:"var(--text)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={x.label}>{x.label}</div>
+              <div style={{width:isMobile?100:150,flexShrink:0,fontSize:12.5,color:"var(--text-primary)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={x.label}>{x.label}</div>
               <div style={{flex:1,background:"var(--bg-subtle2)",borderRadius:5,height:18,overflow:"hidden",position:"relative"}}>
                 <div style={{width:`${Math.max(2,(x.value/max)*100)}%`,height:"100%",background:COLORS[i%COLORS.length],borderRadius:5,transition:"width .5s cubic-bezier(0.16,1,0.3,1)"}}/>
               </div>
-              <div style={{width:isMobile?72:96,flexShrink:0,textAlign:"right",fontSize:12.5,fontFamily:"'JetBrains Mono',monospace",color:"var(--text)",fontWeight:600}}>{gbp(x.value)}</div>
+              <div style={{width:isMobile?72:96,flexShrink:0,textAlign:"right",fontSize:12.5,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-primary)",fontWeight:600}}>{gbp(x.value)}</div>
             </div>);
           const section=(title,arr)=>{ const max=Math.max(1,...arr.map(a=>a.value)); return (
             <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"18px 20px",marginBottom:14}}>
-              <div style={{fontSize:13,fontWeight:700,color:"var(--text)",marginBottom:10,letterSpacing:"-0.01em"}}>{title}</div>
+              <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10,letterSpacing:"-0.01em"}}>{title}</div>
               {arr.length?arr.slice(0,12).map((x,i)=>barRow(x,max,i)):<div style={{fontSize:13,color:"var(--text-muted)"}}>No data yet.</div>}
             </div>); };
           const exportCsv=()=>{
@@ -6239,21 +6239,21 @@ Rules:
           <div style={{maxWidth:920,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
               <div>
-                <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text)",letterSpacing:"-0.02em",margin:0}}>Reports</h1>
+                <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em",margin:0}}>Reports</h1>
                 <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 0"}}>Where the money&rsquo;s going &mdash; spend by trade, supplier, project and month.</p>
               </div>
-              <button onClick={exportCsv} style={{flexShrink:0,padding:"9px 15px",background:"var(--bg-card)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Export CSV</button>
+              <button onClick={exportCsv} style={{flexShrink:0,padding:"9px 15px",background:"var(--bg-card)",color:"var(--text-primary)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Export CSV</button>
             </div>
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:10,marginBottom:18}}>
               {kpis.map(([k,v])=>(
                 <div key={k} style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
                   <div style={{fontSize:10.5,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>{k}</div>
-                  <div style={{fontSize:isMobile?20:24,fontWeight:800,color:"var(--text)",fontFamily:"'JetBrains Mono',monospace",marginTop:4,letterSpacing:"-1px"}}>{v}</div>
+                  <div style={{fontSize:isMobile?20:24,fontWeight:800,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",marginTop:4,letterSpacing:"-1px"}}>{v}</div>
                 </div>))}
             </div>
             <div style={{display:"inline-flex",background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",padding:3,marginBottom:16}}>
               {[["overview","Overview"],["projects","By project"]].map(([id,lbl])=>(
-                <button key={id} onClick={()=>setRepMode(id)} style={{padding:"7px 16px",border:"none",borderRadius:6,background:repMode===id?"var(--bg-card)":"transparent",color:repMode===id?"var(--text)":"var(--text-muted)",fontWeight:600,fontSize:13,cursor:"pointer",boxShadow:repMode===id?"var(--shadow-sm)":"none"}}>{lbl}</button>))}
+                <button key={id} onClick={()=>setRepMode(id)} style={{padding:"7px 16px",border:"none",borderRadius:6,background:repMode===id?"var(--bg-card)":"transparent",color:repMode===id?"var(--text-primary)":"var(--text-muted)",fontWeight:600,fontSize:13,cursor:"pointer",boxShadow:repMode===id?"var(--shadow-sm)":"none"}}>{lbl}</button>))}
             </div>
             {repMode==="overview" ? (
               <div>
@@ -6271,7 +6271,7 @@ Rules:
                   <div key={j.label} style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden"}}>
                     <button onClick={()=>setRepOpen(open?null:j.label)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"14px 17px",background:"transparent",border:"none",cursor:"pointer",textAlign:"left"}}>
                       <div style={{minWidth:0}}>
-                        <div style={{fontSize:14.5,fontWeight:700,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{j.label}</div>
+                        <div style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{j.label}</div>
                         <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{j.count} order{j.count===1?"":"s"}</div>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
@@ -6296,54 +6296,54 @@ Rules:
         {view==="measure"&&(()=>{
           const materials=["Emulsion paint","Gloss / satinwood paint","Plaster (skim coat)","Bonding plaster","Plasterboard","Bricks","Concrete blocks","Tile adhesive","Floor screed","Self-levelling compound","Insulation board","Sand & cement render"];
           const tabBtn=(id,label)=>(
-            <button onClick={()=>setMMode(id)} style={{flex:1,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:mMode===id?"var(--green)":"var(--bg-card)",color:mMode===id?"white":"var(--text)"}}>{label}</button>
+            <button onClick={()=>setMMode(id)} style={{flex:1,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:mMode===id?"var(--green)":"var(--bg-card)",color:mMode===id?"white":"var(--text-primary)"}}>{label}</button>
           );
           const updTake=(i,field,v)=>setMTakeoff(p=>p.map((it,ii)=>ii===i?{...it,[field]:v}:it));
           return (
           <div style={{maxWidth:760,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
-            <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text)",letterSpacing:"-0.02em",margin:0}}>Measure</h1>
+            <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em",margin:0}}>Measure</h1>
             <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 18px",maxWidth:580,lineHeight:1.5}}>Work out what to order &mdash; from measurements, or from a drawing.</p>
             <div style={{display:"flex",gap:8,marginBottom:18}}>{tabBtn("dims","By dimensions")}{tabBtn("drawing","From a drawing")}</div>
 
             {mMode==="dims"&&(<>
               <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
-                <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Material</label>
-                <select value={mMaterial} onChange={e=>setMMaterial(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14,marginBottom:14}}>
+                <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Material</label>
+                <select value={mMaterial} onChange={e=>setMMaterial(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14,marginBottom:14}}>
                   {materials.map(m=><option key={m} value={m}>{m}</option>)}
                 </select>
-                <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Specific product / brand <span style={{color:"var(--text-muted)",fontWeight:400}}>(optional)</span></label>
-                <input type="text" placeholder="e.g. Dulux Trade Vinyl Matt" value={mProduct} onChange={e=>setMProduct(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14,marginBottom:10}}/>
-                <label style={{display:"flex",alignItems:"flex-start",gap:9,fontSize:12.5,color:"var(--text)",marginBottom:16,cursor:"pointer"}}>
+                <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Specific product / brand <span style={{color:"var(--text-muted)",fontWeight:400}}>(optional)</span></label>
+                <input type="text" placeholder="e.g. Dulux Trade Vinyl Matt" value={mProduct} onChange={e=>setMProduct(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14,marginBottom:10}}/>
+                <label style={{display:"flex",alignItems:"flex-start",gap:9,fontSize:12.5,color:"var(--text-primary)",marginBottom:16,cursor:"pointer"}}>
                   <input type="checkbox" checked={mUseDatasheet} onChange={e=>setMUseDatasheet(e.target.checked)} style={{marginTop:2}}/>
                   <span>Look up the manufacturer&rsquo;s datasheet for the exact coverage rate <span style={{color:"var(--text-muted)"}}>(uses web search; needs a product/brand above)</span></span>
                 </label>
-                <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Area</div>
+                <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Area</div>
                 <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
-                  <input type="number" inputMode="decimal" placeholder="Area (m²)" value={mArea} onChange={e=>setMArea(e.target.value)} style={{flex:"1 1 120px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                  <input type="number" inputMode="decimal" placeholder="Area (m²)" value={mArea} onChange={e=>setMArea(e.target.value)} style={{flex:"1 1 120px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                   <span style={{fontSize:12,color:"var(--text-muted)"}}>or</span>
-                  <input type="number" inputMode="decimal" placeholder="Length (m)" value={mLength} onChange={e=>setMLength(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                  <input type="number" inputMode="decimal" placeholder="Length (m)" value={mLength} onChange={e=>setMLength(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                   <span style={{fontSize:13,color:"var(--text-muted)"}}>×</span>
-                  <input type="number" inputMode="decimal" placeholder="Height (m)" value={mHeight} onChange={e=>setMHeight(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                  <input type="number" inputMode="decimal" placeholder="Height (m)" value={mHeight} onChange={e=>setMHeight(e.target.value)} style={{flex:"1 1 90px",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                 </div>
                 <div style={{display:"flex",gap:14,flexWrap:"wrap",margin:"14px 0 4px"}}>
                   <div style={{flex:"1 1 120px"}}>
-                    <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Coats</label>
-                    <input type="number" inputMode="numeric" value={mCoats} onChange={e=>setMCoats(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                    <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Coats</label>
+                    <input type="number" inputMode="numeric" value={mCoats} onChange={e=>setMCoats(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                   </div>
                   <div style={{flex:"1 1 120px"}}>
-                    <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:6}}>Wastage %</label>
-                    <input type="number" inputMode="numeric" value={mWastage} onChange={e=>setMWastage(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:14}}/>
+                    <label style={{display:"block",fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:6}}>Wastage %</label>
+                    <input type="number" inputMode="numeric" value={mWastage} onChange={e=>setMWastage(e.target.value)} style={{width:"100%",padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:14}}/>
                   </div>
                 </div>
                 <button onClick={runMeasure} disabled={mBusy} style={{marginTop:18,width:"100%",padding:"12px",background:"var(--green)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:mBusy?"default":"pointer",opacity:mBusy?0.6:1}}>{mBusy?(mUseDatasheet?"Checking datasheet…":"Calculating…"):"Calculate quantity"}</button>
               </div>
               {mResult&&(mResult.error?(
-                <div style={{marginTop:14,padding:"14px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text)"}}>{mResult.error}</div>
+                <div style={{marginTop:14,padding:"14px 16px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text-primary)"}}>{mResult.error}</div>
               ):(
                 <div style={{marginTop:14,background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
                   <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>You&rsquo;ll need (for ~{mResult.area} m²)</div>
                   <div style={{fontSize:isMobile?26:32,fontWeight:800,color:"var(--green)",fontFamily:"'JetBrains Mono',monospace",margin:"6px 0",letterSpacing:"-1px"}}>{mResult.quantity} {mResult.unit}</div>
-                  {mResult.packsNeeded!=null&&<div style={{fontSize:14,color:"var(--text)",fontWeight:600}}>{mResult.packsNeeded} × {mResult.packSize||"pack"}</div>}
+                  {mResult.packsNeeded!=null&&<div style={{fontSize:14,color:"var(--text-primary)",fontWeight:600}}>{mResult.packsNeeded} × {mResult.packSize||"pack"}</div>}
                   {mResult.coverageBasis&&<div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:8}}>Based on: {mResult.coverageBasis}</div>}
                   {mResult.datasheet&&<div style={{fontSize:12,color:"var(--green-dark)",marginTop:6}}>Datasheet: {mResult.datasheet}{mResult.source&&<> &middot; <a href={mResult.source} target="_blank" rel="noreferrer" style={{color:"var(--green-dark)"}}>source</a></>}</div>}
                   {Array.isArray(mResult.assumptions)&&mResult.assumptions.length>0&&(
@@ -6361,22 +6361,22 @@ Rules:
                     {mDrawBusy?<Spinner/>:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>}
                   </div>
                   <div>
-                    <div style={{fontSize:13.5,fontWeight:600,color:mDrawBusy?"var(--indigo)":"var(--text)"}}>{mDrawBusy?"Reading the drawing…":(mDrawName?`Re-upload (last: ${mDrawName})`:"Upload a drawing (PDF or image)")}</div>
+                    <div style={{fontSize:13.5,fontWeight:600,color:mDrawBusy?"var(--indigo)":"var(--text-primary)"}}>{mDrawBusy?"Reading the drawing…":(mDrawName?`Re-upload (last: ${mDrawName})`:"Upload a drawing (PDF or image)")}</div>
                     <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>The AI lists what it can see &mdash; you review and edit before ordering.</div>
                   </div>
                 </label>
-                {mDrawError&&<div style={{marginTop:12,padding:"12px 14px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text)"}}>{mDrawError}</div>}
+                {mDrawError&&<div style={{marginTop:12,padding:"12px 14px",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",fontSize:13,color:"var(--text-primary)"}}>{mDrawError}</div>}
               </div>
 
               {mTakeoff&&mTakeoff.length>0&&(
                 <div style={{marginTop:14,background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"14px":"18px 20px"}}>
-                  <div style={{fontSize:13,fontWeight:700,color:"var(--text)",marginBottom:10}}>Materials take-off <span style={{color:"var(--text-muted)",fontWeight:400}}>({mTakeoff.length} items &mdash; AI draft, edit as needed)</span></div>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Materials take-off <span style={{color:"var(--text-muted)",fontWeight:400}}>({mTakeoff.length} items &mdash; AI draft, edit as needed)</span></div>
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {mTakeoff.map((it,i)=>(
                       <div key={it.id||i} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                        <input type="number" inputMode="decimal" value={it.quantity} onChange={e=>updTake(i,"quantity",Number(e.target.value)||0)} style={{width:64,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:13}}/>
-                        <input type="text" value={it.unit} onChange={e=>updTake(i,"unit",e.target.value)} style={{width:64,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:13}}/>
-                        <input type="text" value={it.description} onChange={e=>updTake(i,"description",e.target.value)} style={{flex:"1 1 160px",padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text)",fontSize:13}}/>
+                        <input type="number" inputMode="decimal" value={it.quantity} onChange={e=>updTake(i,"quantity",Number(e.target.value)||0)} style={{width:64,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:13}}/>
+                        <input type="text" value={it.unit} onChange={e=>updTake(i,"unit",e.target.value)} style={{width:64,padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:13}}/>
+                        <input type="text" value={it.description} onChange={e=>updTake(i,"description",e.target.value)} style={{flex:"1 1 160px",padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:"var(--bg-card)",color:"var(--text-primary)",fontSize:13}}/>
                         <button onClick={()=>setMTakeoff(p=>p.filter((_,ii)=>ii!==i))} style={{background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",fontSize:18,lineHeight:1,padding:"0 4px"}} title="Remove">×</button>
                       </div>
                     ))}
