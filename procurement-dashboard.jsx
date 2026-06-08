@@ -4031,6 +4031,8 @@ Rules:
         --green-mint:     #F2FAF5;
         --indigo:         #5B5BD6;
         --indigo-light:   #EEEEFB;
+        --violet:         #7E6DD6;
+        --violet-light:   #EFEDFB;
         --amber:          #C77D2E;
         --amber-light:    #FBF3E8;
         --red:            #D14343;
@@ -4071,6 +4073,8 @@ Rules:
         --green-mint:     rgba(61,214,140,0.07);
         --indigo:         #8B8BF0;
         --indigo-light:   rgba(139,139,240,0.14);
+        --violet:         #A99CF0;
+        --violet-light:   rgba(169,156,240,0.14);
         --amber:          #E0A04D;
         --amber-light:    rgba(224,160,77,0.12);
         --red:            #E66B6B;
@@ -4422,21 +4426,20 @@ Rules:
             {/* Stat cards */}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?18:24}}>
               {[
-                {label:"Total requests",  value:stats.total,    color:"#5B5BD6", grad:"linear-gradient(135deg,#5B5BD6,#4A4AB8)", icon:"clipboard", nav:()=>setView("requests")},
-                {label:"Awaiting quotes", value:stats.pending,  color:"#C77D2E", grad:"linear-gradient(135deg,#C77D2E,#A8661F)", icon:"clock", nav:()=>setView("quotes")},
-                {label:"Quotes received", value:stats.received, color:"#7E6DD6", grad:"linear-gradient(135deg,#7E6DD6,#6B4FC4)", icon:"inbox", nav:()=>{setView("quotes");}},
-                {label:"Approved POs",    value:stats.approved, color:"#1E9E63", grad:"linear-gradient(135deg,#1E9E63,#15824F)", icon:"check_circle", nav:()=>setView("orders")},
+                {label:"Total requests",  value:stats.total,    accent:"var(--indigo)", tint:"var(--indigo-light)", icon:"clipboard", sub:"across all jobs", nav:()=>setView("requests")},
+                {label:"Awaiting quotes", value:stats.pending,  accent:"var(--amber)",  tint:"var(--amber-light)",  icon:"clock", sub:"need supplier quotes", nav:()=>setView("quotes")},
+                {label:"Quotes received", value:stats.received, accent:"var(--violet)", tint:"var(--violet-light)", icon:"inbox", sub:"ready to compare", nav:()=>{setView("quotes");}},
+                {label:"Approved POs",    value:stats.approved, accent:"var(--green)",  tint:"var(--green-light)",  icon:"check_circle", sub:"sent to suppliers", nav:()=>setView("orders")},
               ].map((s,si)=>(
-                <button key={s.label} onClick={s.nav} title={`View ${s.label.toLowerCase()}`} aria-label={`View ${s.label.toLowerCase()}`} className="stagger-in" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"16px 18px":"20px 24px",border:"1px solid var(--border)",position:"relative",overflow:"hidden",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s",animationDelay:`${si*0.05}s`}}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor=s.color;e.currentTarget.style.boxShadow=`0 2px 4px rgba(26,26,23,0.04), 0 12px 28px ${s.color}1f`;e.currentTarget.style.transform="translateY(-3px)";}}
+                <button key={s.label} onClick={s.nav} title={`View ${s.label.toLowerCase()}`} aria-label={`View ${s.label.toLowerCase()}`} className="stagger-in" style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-md)",padding:isMobile?"16px 16px 14px":"18px 20px 16px",border:"1px solid var(--border)",boxShadow:"var(--shadow-sm)",textAlign:"left",cursor:"pointer",width:"100%",display:"block",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s",animationDelay:`${si*0.05}s`}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=s.accent;e.currentTarget.style.boxShadow="var(--shadow-md)";e.currentTarget.style.transform="translateY(-3px)";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.boxShadow="var(--shadow-sm)";e.currentTarget.style.transform="translateY(0)";}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                    <div style={{display:"flex"}}><Icon name={s.icon} size={20} color="white"/></div>
-                    <div style={{fontSize:9,fontWeight:700,color:s.value>0?s.color:"var(--text-muted)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{s.value>0?"active":"empty"}</div>
+                  <div style={{width:isMobile?34:38,height:isMobile?34:38,borderRadius:11,background:s.tint,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:isMobile?10:14}}>
+                    <Icon name={s.icon} size={isMobile?17:19} color={s.accent}/>
                   </div>
-                  <div style={{fontSize:isMobile?26:36,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-2px",color:s.value>0?s.color:"var(--text-muted)",marginBottom:4}} className="num"><CountUp value={s.value}/></div>
-                  <div style={{fontSize:11,color:"var(--text-secondary)",fontWeight:500}}>{s.label}</div>
-                  <div style={{position:"absolute",bottom:0,left:0,right:0,height:2,background:s.value>0?s.grad:"transparent",borderRadius:"0 0 var(--radius-md) var(--radius-md)"}}/>
+                  <div style={{fontSize:isMobile?26:34,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",lineHeight:1,letterSpacing:"-0.02em",color:s.value>0?"var(--text-primary)":"var(--text-muted)"}} className="num"><CountUp value={s.value}/></div>
+                  <div style={{fontSize:12.5,color:"var(--text-secondary)",fontWeight:600,marginTop:7}}>{s.label}</div>
+                  <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:2}}>{s.sub}</div>
                 </button>
               ))}
             </div>
