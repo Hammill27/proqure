@@ -101,7 +101,7 @@
   .kpi .ic svg{width:19px;height:19px}
   .kpi .n{font-family:var(--mono);font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
   .kpi .l{font-size:12.5px;color:var(--sub);font-weight:600;margin-top:6px}
-  .kpi .x{font-size:11.5px;color:var(--soft);margin-top:3px}
+  .kpi .x{font-size:11.5px;color:var(--soft);margin-top:3px;background:none;border:0;border-radius:0;width:auto;height:auto;line-height:1.4;flex-shrink:1}
   @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
   .strip{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:24px}
@@ -201,12 +201,12 @@
 
   @media(max-width:920px){
     .shell{flex-direction:column}
-    .rail{width:auto;height:auto;position:sticky;top:0;flex-direction:row;align-items:center;padding:12px 16px;gap:10px;border-right:none;border-bottom:1px solid rgba(255,255,255,.08);z-index:50}
-    .rail .brand{padding:0;margin-right:6px}
-    .rail nav{flex-direction:row;flex:1;overflow-x:auto;gap:4px}
-    .navitem{padding:9px 12px;white-space:nowrap}
-    .navitem span.lbl{display:none}
-    .rail .foot{border-top:none;padding-top:0;flex-direction:row;align-items:center;gap:8px}
+    .rail{width:auto;height:auto;position:sticky;top:0;flex-flow:row wrap;align-items:center;padding:12px 16px;gap:10px;border-right:none;border-bottom:1px solid rgba(255,255,255,.08);z-index:50}
+    .rail .brand{padding:0;margin-right:auto}
+    .rail .foot{order:2;border-top:none;padding-top:0;flex-direction:row;align-items:center;gap:8px}
+    .rail nav{order:3;flex-direction:row;flex-basis:100%;width:100%;overflow-x:auto;gap:4px;margin-top:10px;padding-bottom:2px}
+    .navitem{padding:9px 13px;white-space:nowrap;flex:0 0 auto;width:auto}
+    .navitem span.lbl{display:inline}
     .rail .who{display:none}
     main{padding:22px 18px 70px}
     .kpis{grid-template-columns:repeat(2,1fr)}
@@ -278,8 +278,8 @@
    the service-role key is NEVER here - it stays server-side in admin-metrics.js.
    API_BASE: leave "" when this page sits on the same domain as /api.
 ============================================================================ */
-const SUPABASE_URL = "https://pjltclnrjuvqqcxowamw.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_V8TuiFK-dvUeVFATxQ6YmQ_9SiYCJc8";
+const SUPABASE_URL = "PASTE_YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY";
 const API_BASE = "";
 const ADMIN_GATE_CODE = "PQAD-9X4K-7M2R-VB6E";   // change to your own code
 /* ========================================================================== */
@@ -323,14 +323,18 @@ document.querySelectorAll(".navitem").forEach(b=>b.addEventListener("click",()=>
 function configOk(){ return SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length>20; }
 async function init(){
   if(!configOk()){ $("gate").style.display="none"; $("login").style.display="flex"; $("cfgWarn").style.display="block"; $("cfgWarn").textContent="Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file."; return; }
-  sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{storageKey:"pq-admin-auth",persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
-  const { data } = await sb.auth.getSession();
-  if(data&&data.session){ session=data.session; if(gatePassed) showApp(); }
+  try{ sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{storageKey:"pq-admin-auth",persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}}); }
+  catch(e){ if(gatePassed){ $("gate").style.display="none"; $("login").style.display="flex"; } return; }
+  let s=null;
+  try{ const { data } = await sb.auth.getSession(); s=(data&&data.session)||null; }catch(e){}
+  session=s;
+  if(session){ if(gatePassed) showApp(); }
+  else if(gatePassed){ $("gate").style.display="none"; $("login").style.display="flex"; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },80); }
 }
 let gatePassed=false; try{ gatePassed=sessionStorage.getItem("pq_admin_gate")==="1"; }catch(e){}
 (function gate(){
   const g=$("gate"),inp=$("gateInput"),btn=$("gateBtn"),err=$("gateErr");
-  if(gatePassed){ g.style.display="none"; }
+  if(gatePassed){ g.style.display="none"; $("login").style.display="flex"; }
   else { document.body.classList.add("locked"); setTimeout(()=>inp&&inp.focus(),150); }
   function pass(){ gatePassed=true; try{sessionStorage.setItem("pq_admin_gate","1");}catch(e){} g.style.display="none"; document.body.classList.remove("locked"); if(session) showApp(); else { $("login").style.display="flex"; setTimeout(()=>$("liEmail").focus(),100); } }
   function tryCode(){ if((inp.value||"").trim().toLowerCase()===ADMIN_GATE_CODE.toLowerCase()) pass(); else { err.textContent="That code isn\u2019t right."; const c=g.querySelector(".auth-card"); c.classList.add("gate-shake"); setTimeout(()=>c.classList.remove("gate-shake"),420); inp.select(); } }
@@ -346,7 +350,7 @@ async function login(){
   catch(e){ $("liErr").textContent="Could not sign in. Please try again."; }
   $("liBtn").disabled=false; $("liBtn").textContent="Sign in";
 }
-$("signoutBtn").addEventListener("click",async()=>{ await sb.auth.signOut(); location.reload(); });
+$("signoutBtn").addEventListener("click",async()=>{ try{ await sb.auth.signOut(); }catch(e){} session=null; $("app").style.display="none"; $("gate").style.display="none"; $("login").style.display="flex"; const p=$("liPass"); if(p) p.value=""; const er=$("liErr"); if(er) er.textContent=""; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },60); });
 $("refreshBtn").addEventListener("click",()=>loadData());
 
 function showApp(){ $("gate").style.display="none"; $("login").style.display="none"; $("app").style.display="block"; $("whoami").textContent=(session.user&&session.user.email)||""; loadData(); }
