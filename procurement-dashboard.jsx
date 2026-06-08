@@ -1036,7 +1036,7 @@ function captureReplyAddress(token) {
   return INBOUND_CAPTURE_DOMAIN ? `q-${token}@${INBOUND_CAPTURE_DOMAIN}` : null;
 }
 
-async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settings={}, jobCtx={}) {
+async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settings={}, jobCtx={}, attachments=[]) {
   const results = [];
   const sender = buildSender("quotes", settings);
   const token = jobReplyToken(jobCtx.jobRef, jobCtx.reqId); // hidden reply-matching groundwork (legacy/backup)
@@ -1058,7 +1058,8 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
           reply_to: replyTo,
           subject,
           text: body,
-          html: buildEmailHtml(body, settings, { supplierName: s.contactName || s.name, jobToken: token })
+          html: buildEmailHtml(body, settings, { supplierName: s.contactName || s.name, jobToken: token }),
+          ...(Array.isArray(attachments) && attachments.length ? { attachments: attachments.map(a => ({ filename: a.filename, content: a.content })) } : {})
         })
       });
       const d = await res.json();
@@ -1102,6 +1103,26 @@ function compressImage(file, maxWidth = 1200, quality = 0.7) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// Turns a user-picked File into a Resend-ready attachment {filename, content(base64)}.
+// Images are compressed (JPEG) to keep the email payload small; PDFs/other pass through as-is.
+async function fileToAttachment(file) {
+  const isImg = (file.type || "").startsWith("image/");
+  let blob = file;
+  let filename = file.name || (isImg ? "image.jpg" : "document");
+  if (isImg) {
+    try { blob = await compressImage(file, 1600, 0.72); filename = (file.name || "image").replace(/\.[^.]+$/, "") + ".jpg"; }
+    catch { blob = file; }
+  }
+  const content = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(",")[1] || "");
+    r.onerror = rej;
+    r.readAsDataURL(blob);
+  });
+  const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+  return { id, filename, content, size: Math.round((content.length * 3) / 4), kind: isImg ? "image" : "file" };
 }
 
 // Uploads a compressed photo to the 'hire-photos' bucket; returns a public URL.
@@ -2082,6 +2103,7 @@ function ProQureApp({ session, companyId }) {
   const [mDrawName, setMDrawName] = useState("");
   const [mTakeoff, setMTakeoff] = useState(null);
   const [mDrawError, setMDrawError] = useState("");
+  const [mDragOver, setMDragOver] = useState(false); // desktop drag-and-drop highlight for the drawing upload zone
   const [hires,    setHires]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_hires")||"[]")}catch{return []} });
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
@@ -2237,6 +2259,7 @@ function ProQureApp({ session, companyId }) {
   const [site,     setSite]     = useState("");
   const [trade,    setTrade]    = useState("Plumbing");
   const [rfqEmail, setRfqEmail] = useState("");
+  const [rfqDocs,  setRfqDocs]  = useState([]); // supporting docs sent with the RFQ: {id,filename,content(base64),size,kind}
   const [selSup,   setSelSup]   = useState([]);
   const [contactSel, setContactSel] = useState({}); // { [supplierId]: contactId } - which contact an RFQ goes to
   const [supSearch, setSupSearch] = useState("");    // searchable supplier picker (wizard)
@@ -2930,7 +2953,7 @@ function ProQureApp({ session, companyId }) {
     const subject = `Request for Quotation - ${jobRef||parsed?.jobRef||"TBC"}`;
     let results;
     try {
-      results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev", settings, { jobRef: jobRef||parsed?.jobRef||"", reqId: activeReq?.id||"" });
+      results = await sendRFQEmails(toSend, subject, rfqEmail, settings.resendKey, settings.fromEmail||"onboarding@resend.dev", settings, { jobRef: jobRef||parsed?.jobRef||"", reqId: activeReq?.id||"" }, rfqDocs);
     } catch(e) {
       setLoading(false);
       showToast("Couldn't send to suppliers: "+(e?.message||"unknown error"),"warn");
@@ -2948,7 +2971,7 @@ function ProQureApp({ session, companyId }) {
       if (editingReqId) {
         const existing = requests.find(r=>r.id===editingReqId);
         const rev = (existing?.revision||1)+1;
-        const reviseEntry = { ts:new Date().toISOString(), action:`RFQ revised (v${rev}) & re-sent`, detail:`Re-sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}`, user:settings.contactName||"You" };
+        const reviseEntry = { ts:new Date().toISOString(), action:`RFQ revised (v${rev}) & re-sent`, detail:`Re-sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}${rfqDocs.length?` · ${rfqDocs.length} supporting doc${rfqDocs.length!==1?"s":""}`:""}`, user:settings.contactName||"You" };
         setRequests(p=>p.map(r=>r.id===editingReqId ? {
           ...r,
           jobRef:jobRef||r.jobRef, site:site||r.site, trade, notes:requestNotes,
@@ -2981,7 +3004,7 @@ function ProQureApp({ session, companyId }) {
         sentTo: isEngineer ? [] : sentSuppliers,
         activity:[
           { ts:new Date().toISOString(), action:"Request created", detail:`Job: ${jobRef||"TBC"} · Site: ${site||"TBC"} · Trade: ${trade} · ${parsed.items.length} items`, user:settings.contactName||"You" },
-          { ts:new Date().toISOString(), action:"RFQ emails sent", detail:`Sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}${rfqDeadline?` · Deadline: ${new Date(rfqDeadline).toLocaleDateString("en-GB")}`:""}${deliveryMethod?` · Delivery: ${deliveryMethod}`:""}`, user:settings.contactName||"You" },
+          { ts:new Date().toISOString(), action:"RFQ emails sent", detail:`Sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}${rfqDeadline?` · Deadline: ${new Date(rfqDeadline).toLocaleDateString("en-GB")}`:""}${deliveryMethod?` · Delivery: ${deliveryMethod}`:""}${rfqDocs.length?` · ${rfqDocs.length} supporting doc${rfqDocs.length!==1?"s":""}`:""}`, user:settings.contactName||"You" },
         ]
       };
       setRequests(p=>[r,...p]);
@@ -2992,7 +3015,7 @@ function ProQureApp({ session, companyId }) {
         // Full reset - ready for next request
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
-        setRfqEmail(""); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
+        setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
         setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
       }, 1800);
@@ -3030,7 +3053,7 @@ function ProQureApp({ session, companyId }) {
     });
     setContactSel(cs);
     setSupSearch("");
-    setRfqEmail(""); setEmailRes(null);
+    setRfqEmail(""); setRfqDocs([]); setEmailRes(null);
     setStep(2);
     setView("new");
     showToast(`Revising ${r.jobRef||r.id} - edit, then re-send`);
@@ -3076,12 +3099,32 @@ function ProQureApp({ session, companyId }) {
 
   function resetNewRequest() {
     setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
-    setRfqEmail(""); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
+    setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
     setInterim(""); setScanning(false);
     setLoading(false); setLoadMsg("");
     setAllAnalyses([]); setExpandedQuote(null);
   }
+
+  // Supporting documents for the RFQ: site photos / layout drawings / specs sent to
+  // suppliers for context. Not parsed into the materials list. Capped at 5 (Resend cap)
+  // and ~8MB per file; images are compressed by fileToAttachment to keep the payload small.
+  async function addRfqDocs(files) {
+    const incoming = Array.from(files || []);
+    if (!incoming.length) return;
+    const room = 5 - rfqDocs.length;
+    if (room <= 0) { showToast("You can attach up to 5 supporting documents.", "warn"); return; }
+    const take = incoming.slice(0, room);
+    if (incoming.length > room) showToast(`Only ${room} more file${room !== 1 ? "s" : ""} can be attached (max 5).`, "warn");
+    const built = [];
+    for (const f of take) {
+      if (f.size > 8 * 1024 * 1024) { showToast(`"${f.name}" is too large (max 8MB).`, "warn"); continue; }
+      try { built.push(await fileToAttachment(f)); }
+      catch { showToast(`Couldn't read "${f.name}".`, "warn"); }
+    }
+    if (built.length) setRfqDocs(p => [...p, ...built]);
+  }
+
 
   function handleFinalise() {
     if (parsed) {
@@ -3664,7 +3707,7 @@ ${settings.company||""}`;
 
   const runMeasure = async () => {
     if (mBusy) return;
-    const coatsApplies = /paint|plaster|render|coat/i.test(mMaterial);
+    const coatsApplies = /paint|render/i.test(mMaterial) || (/plaster|coat/i.test(mMaterial) && !/board/i.test(mMaterial));
     setMBusy(true); setMResult(null);
     try {
       const area = mArea ? Number(mArea) : (mLength && mHeight ? Number(mLength) * Number(mHeight) : null);
@@ -3789,7 +3832,7 @@ ${settings.company||""}`;
       {q:"Can I edit the parsed list?", a:"Yes. Every field is editable - description, quantity, unit, category, and notes. You can also add or remove items before sending."},
       {q:"What are templates?", a:"Templates save common material lists for instant reuse. They are grouped by trade so you can find them quickly."},
       {q:"Can I set a response deadline?", a:"Yes. In Step 2 there is a response deadline date picker. The date appears in the RFQ email and as a countdown on the dashboard."},
-      {q:"How do I scan a document or photo?", a:"On Step 1, tap 'Take a photo or upload a document'. On mobile this opens your camera. Photograph a scope of works, delivery note or handwritten list - the vision AI reads it and extracts the items. PDFs and images both work. Review the extracted list, then tap Proceed."},
+      {q:"How do I scan a document or photo?", a:"On Step 1, tap 'Take a photo or upload a document'. On mobile this opens your camera. Photograph a scope of works, schedule of materials or handwritten list - the vision AI reads it and extracts the items. PDFs and images both work. Review the extracted list, then tap Proceed."},
       {q:"Can I import a spreadsheet?", a:"Yes. On Step 1 use 'Import a materials spreadsheet'. Upload a CSV with description, quantity and unit columns and it imports instantly - no AI needed, no waiting. It auto-detects your column headers."},
       {q:"What are request notes?", a:"An optional field on Step 2 for access instructions or special requirements. Notes are stored with the request and shown in the All Requests list."},
     ]},
@@ -4737,7 +4780,7 @@ Rules:
                     </div>
                     <div>
                       <div style={{fontSize:13,fontWeight:600,color:scanning?"var(--indigo)":"var(--text-primary)",marginBottom:2}}>{scanning?loadMsg:"Take a photo or upload a document"}</div>
-                      <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Scope of works, delivery note, handwritten list · Photo, PDF, or image</div>
+                      <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Scope of works, schedule of materials, handwritten list · Photo, PDF, or image</div>
                     </div>
                     {!scanning&&(
                       <div style={{marginLeft:"auto",display:"flex",gap:6,flexShrink:0}}>
@@ -4985,6 +5028,35 @@ Rules:
                     <textarea value={rfqEmail} onChange={e=>setRfqEmail(e.target.value)} rows={10} style={{width:"100%",boxSizing:"border-box",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)",padding:"14px 16px",fontSize:13,lineHeight:1.7,color:"var(--text-primary)",border:"1px solid var(--border)",resize:"vertical",fontFamily:"inherit",marginTop:8}}/>
                     <div style={{fontSize:11,color:"var(--text-muted)",marginTop:4}}>This is the message body. The greeting (Dear [supplier]) and your signature are added automatically.</div>
                   </details>
+                  {/* Supporting documents — site photos, layout drawings or specs, sent to suppliers with the RFQ for context. Not parsed into the materials list. */}
+                  <div style={{marginBottom:16,padding:"14px 16px",background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)"}}>
+                    <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",marginBottom:2}}>Supporting documents <span style={{fontWeight:400,color:"var(--text-muted)"}}>(optional)</span></div>
+                    <div style={{fontSize:11.5,color:"var(--text-muted)",marginBottom:10,lineHeight:1.5}}>Site photos, a layout drawing or a spec — attached to the RFQ email to help suppliers quote. These are <strong>not</strong> added to the materials list.</div>
+                    {rfqDocs.length>0&&(
+                      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+                        {rfqDocs.map(d=>(
+                          <div key={d.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)"}}>
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99,background:d.kind==="image"?"var(--indigo-light)":"var(--green-light)",color:d.kind==="image"?"var(--indigo)":"var(--green-dark)",flexShrink:0}}>{d.kind==="image"?"IMG":"PDF"}</span>
+                            <span style={{fontSize:12.5,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{d.filename}</span>
+                            <span style={{fontSize:11,color:"var(--text-muted)",flexShrink:0}}>{d.size<1048576?`${Math.max(1,Math.round(d.size/1024))} KB`:`${(d.size/1048576).toFixed(1)} MB`}</span>
+                            <button onClick={()=>setRfqDocs(p=>p.filter(x=>x.id!==d.id))} title="Remove" style={{background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",fontSize:18,lineHeight:1,padding:"0 2px",flexShrink:0}}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {rfqDocs.length<5&&(
+                      <label style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 14px",background:"var(--bg-card)",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer",fontSize:12.5,fontWeight:600,color:"var(--green-dark)"}}>
+                        <input type="file" accept="image/*,.pdf" multiple style={{display:"none"}} onChange={e=>{addRfqDocs(e.target.files);e.target.value="";}}/>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                        {rfqDocs.length?"Add another":"Attach a photo, drawing or PDF"}
+                      </label>
+                    )}
+                    {(()=>{ const total=rfqDocs.reduce((a,d)=>a+(d.size||0),0); return total>3.5*1048576?(
+                      <div style={{fontSize:11,color:"var(--amber)",marginTop:8}}>These attachments total {(total/1048576).toFixed(1)} MB — large emails can bounce. Consider removing one or sending a lighter file.</div>
+                    ):rfqDocs.length>=5?(
+                      <div style={{fontSize:11,color:"var(--text-muted)",marginTop:8}}>Maximum of 5 supporting documents reached.</div>
+                    ):null; })()}
+                  </div>
                   {selSup.length>0&&(
                     <div style={{marginBottom:14}}>
                       <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Will be sent to:</div>
@@ -6370,7 +6442,7 @@ Rules:
         })()}
         {view==="measure"&&(()=>{
           const materials=["Emulsion paint","Gloss / satinwood paint","Plaster (skim coat)","Bonding plaster","Plasterboard","Bricks","Concrete blocks","Tile adhesive","Floor screed","Self-levelling compound","Insulation board","Sand & cement render"];
-          const coatsApplies=/paint|plaster|render|coat/i.test(mMaterial);
+          const coatsApplies=/paint|render/i.test(mMaterial)||(/plaster|coat/i.test(mMaterial)&&!/board/i.test(mMaterial));
           const tabBtn=(id,label)=>(
             <button onClick={()=>setMMode(id)} style={{flex:1,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",background:mMode===id?"var(--green)":"var(--bg-card)",color:mMode===id?"white":"var(--text-primary)"}}>{label}</button>
           );
@@ -6447,7 +6519,11 @@ Rules:
             {mMode==="drawing"&&(<>
               <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"20px 22px"}}>
                 <p style={{fontSize:13,color:"var(--text-muted)",margin:"0 0 14px",lineHeight:1.5}}>Upload a scaled drawing or specification (PDF or image) and ProQure does a materials take-off of the items shown. A true DWG/CAD file can&rsquo;t be read &mdash; export it to PDF first.</p>
-                <label style={{display:"flex",alignItems:"center",gap:12,padding:"16px",background:mDrawBusy?"var(--indigo-light)":"var(--bg-subtle)",border:mDrawBusy?"2px solid var(--indigo)":"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:mDrawBusy?"not-allowed":"pointer"}}>
+                <label
+                  onDragOver={e=>{if(!mDrawBusy){e.preventDefault();setMDragOver(true);}}}
+                  onDragLeave={e=>{e.preventDefault();setMDragOver(false);}}
+                  onDrop={e=>{e.preventDefault();setMDragOver(false);if(mDrawBusy)return;const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];if(f){const ok=/^image\//.test(f.type)||/\.pdf$/i.test(f.name||"")||f.type==="application/pdf";if(ok)runTakeoff(f);else setMDrawError("Please drop an image or PDF — a DWG/CAD file must be exported to PDF first.");}}}
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"16px",background:mDrawBusy?"var(--indigo-light)":(mDragOver?"var(--indigo-light)":"var(--bg-subtle)"),border:mDrawBusy?"2px solid var(--indigo)":(mDragOver?"2px solid var(--indigo)":"1px dashed var(--border)"),borderRadius:"var(--radius-md)",cursor:mDrawBusy?"not-allowed":"pointer",transition:"all 0.15s"}}>
                   <input type="file" accept="image/*,.pdf" style={{display:"none"}} disabled={mDrawBusy} onChange={e=>{if(e.target.files[0])runTakeoff(e.target.files[0]);e.target.value="";}}/>
                   <div style={{width:42,height:42,borderRadius:12,background:mDrawBusy?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"white"}}>
                     {mDrawBusy?<Spinner/>:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>}
