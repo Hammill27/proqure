@@ -260,6 +260,10 @@ function reportAiUsage(cost, web = false) {
 let __budgetCheck = null;
 function aiBudgetOk() { try { return __budgetCheck ? !!__budgetCheck() : true; } catch (e) { return true; } }
 const AI_BUDGET_MSG = "Your team has reached this month's AI limit. It resets on the 1st \u2014 or upgrade your plan for more headroom.";
+// The current company id, set by the component. Sent with every /api/ai call so the
+// SERVER can enforce the monthly AI budget authoritatively (the client gate above is
+// only the fast first line and can be bypassed; the server is the real wall).
+let __companyId = null;
 
 async function callAI(system, user, history=[], temperature=0.1) {
   if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
@@ -280,15 +284,17 @@ async function callAI(system, user, history=[], temperature=0.1) {
     const res = await fetch("/api/ai", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ messages, models, temperature })
+      body: JSON.stringify({ messages, models, temperature, companyId: __companyId })
     });
+    if (res.status === 402) throw new Error(AI_BUDGET_MSG);
     if (res.ok) {
       const d = await res.json();
+      if (d.blocked) throw new Error(AI_BUDGET_MSG);
       if (d.text) { reportAiUsage(d.cost, false); return d.text; }
       if (d.error && !d.error.includes("not configured")) throw new Error(d.error);
       // if "not configured", fall through to the user-key path below
     }
-  } catch(e) { /* fall through to direct call */ }
+  } catch(e) { if (e && e.message === AI_BUDGET_MSG) throw e; /* else fall through to direct call */ }
 
   // Fallback: user-provided key (legacy / if server key isn't set up yet).
   const key = window.__piq_or_key__ || "";
@@ -378,7 +384,7 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
   ];
   try {
     if (!aiBudgetOk()) return null;
-    const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1 }) });
+    const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1, companyId: __companyId }) });
     if (!res.ok) return null;
     const d = await res.json();
     reportAiUsage(d.cost, false);
@@ -1374,14 +1380,16 @@ async function callAIWeb(system, user, maxResults = 4) {
     const res = await fetch("/api/ai", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, web: true, maxResults, temperature: 0 }),
+      body: JSON.stringify({ messages, web: true, maxResults, temperature: 0, companyId: __companyId }),
     });
+    if (res.status === 402) throw new Error(AI_BUDGET_MSG);
     if (res.ok) {
       const d = await res.json();
+      if (d.blocked) throw new Error(AI_BUDGET_MSG);
       if (d.text) { reportAiUsage(d.cost, true); return { text: d.text, citations: d.citations || [] }; }
       if (d.error && !d.error.includes("not configured")) throw new Error(d.error);
     }
-  } catch (e) { /* fall through */ }
+  } catch (e) { if (e && e.message === AI_BUDGET_MSG) throw e; /* else fall through */ }
   // No web fallback on the user-key path (kept simple): return empty.
   return { text: "", citations: [] };
 }
@@ -1982,6 +1990,7 @@ Always return the JSON, even if the list is short.`;
         messages: [{ role: "system", content: sys }, { role: "user", content: userContent }],
         models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"],
         temperature: 0,
+        companyId: __companyId,
       }),
     });
     if (!r.ok) return { error: "The AI couldn't read that drawing — try a clearer PDF or image." };
@@ -2032,7 +2041,7 @@ Always return the JSON, even if the list is short.`;
       }
       if (!imageUrls.length) return { error: "Couldn't read that file \u2014 try a clearer PDF or image." };
       const userContent = [...imageUrls.map(url => ({ type: "image_url", image_url: { url } })), { type: "text", text: "Extract the products from this catalogue." }];
-      const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0 }) });
+      const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0, companyId: __companyId }) });
       if (!r.ok) return { error: "The AI couldn't read that catalogue \u2014 try a clearer PDF or image." };
       const j = await r.json(); reportAiUsage(j.cost, false); text = j.text || "";
     } else {
@@ -2878,7 +2887,7 @@ function ProQureApp({ session, companyId }) {
       let extracted="";
       try {
         if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
-        const sres = await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"system",content:sys},userMsg],models,temperature:0.1})});
+        const sres = await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"system",content:sys},userMsg],models,temperature:0.1,companyId:__companyId})});
         if (sres.ok){ const sd=await sres.json(); reportAiUsage(sd.cost,false); if(sd.text) extracted=sd.text; }
       } catch(e){}
       if (!extracted.trim() && settings.openRouterKey) {
@@ -3826,6 +3835,8 @@ ${settings.company||""}`;
     };
     return ()=>{ __budgetCheck = null; };
   }, [usage, settings]);
+  // Tag outgoing AI calls with this company id so the server can meter/enforce per-tenant.
+  useEffect(()=>{ __companyId = cloudUserId || null; return ()=>{ __companyId = null; }; }, [cloudUserId]);
   // --- Metered web-search allowances (Measure online, O&M datasheets, Catalogues) ---
   // Counters live on the cloud-synced `usage` object and reset each billing month.
   // allowance = plan entitlement + any purchased add-on blocks for the period.
@@ -4437,7 +4448,7 @@ Rules:
         const sres = await fetch("/api/ai", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: [{ role: "system", content: systemPrompt }, userMsg], models: scanModels, temperature: 0.1 })
+          body: JSON.stringify({ messages: [{ role: "system", content: systemPrompt }, userMsg], models: scanModels, temperature: 0.1, companyId: __companyId })
         });
         if (sres.ok) {
           const sd = await sres.json();
