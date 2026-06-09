@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { to, subject, text, html, from, reply_to, attachments } = req.body || {};
+  const { to, subject, text, html, from, reply_to, attachments, company_id } = req.body || {};
 
   if (!from || !to || !subject) {
     return res.status(400).json({ error: "Missing from, to, or subject" });
@@ -39,6 +39,14 @@ export default async function handler(req, res) {
     if (text) payload.text = text;
     if (html) payload.html = html;
     if (reply_to) payload.reply_to = reply_to;
+
+    // Tag the send with the company id so the Resend webhook can attribute
+    // delivered/bounced/complained events per company. Resend tags allow only
+    // [A-Za-z0-9_-]; a UUID passes cleanly.
+    if (company_id && typeof company_id === "string") {
+      const v = company_id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
+      if (v) payload.tags = [{ name: "company_id", value: v }];
+    }
 
     // Attachments: Resend expects [{ filename, content }] with content as a
     // base64 string. We pass through only well-formed entries and cap the count
