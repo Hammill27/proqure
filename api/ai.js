@@ -67,12 +67,25 @@ async function meterRead(companyId) {
   return { plan, spent };
 }
 // Add a call's cost to the server-owned meter (auto-resets on a new month).
+// Prefer the atomic RPC (proqure_ai_meter_add) so concurrent AI calls cannot
+// lose an increment via read-modify-write. If the RPC isn't installed yet, fall
+// back to the previous read-modify-write so metering still works either way.
 async function meterAdd(companyId, cost) {
   const p = aiPeriod();
+  const amt = Number(cost) || 0;
+  try {
+    const { error } = await sb.rpc("proqure_ai_meter_add", {
+      p_company_id: companyId, p_cost: amt, p_period: p,
+    });
+    if (!error) return;                 // atomic path succeeded
+    // else: RPC missing/not yet installed — fall through to legacy path
+  } catch (e) { /* fall through to legacy path */ }
+
+  // Legacy fallback (non-atomic): read-modify-write upsert.
   const { data } = await sb.from("proqure_data").select("value")
     .eq("user_id", companyId).eq("store_key", "piq_ai_meter").maybeSingle();
   const cur = (data && data.value && data.value.period === p) ? (Number(data.value.costPeriod) || 0) : 0;
-  const value = { period: p, costPeriod: Number((cur + (Number(cost) || 0)).toFixed(6)) };
+  const value = { period: p, costPeriod: Number((cur + amt).toFixed(6)) };
   await sb.from("proqure_data").upsert(
     { user_id: companyId, store_key: "piq_ai_meter", value, updated_at: new Date().toISOString() },
     { onConflict: "user_id,store_key" });
