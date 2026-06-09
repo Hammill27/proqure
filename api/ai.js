@@ -10,6 +10,43 @@
 // datasheets/literature. Web search is METERED on the OpenRouter account
 // (billed per result), so it is OFF unless the caller explicitly asks for it.
 
+import { createClient } from "@supabase/supabase-js";
+
+// Server-authoritative monthly AI budget (the circuit-breaker's real wall).
+// Mirrors the client ENTITLEMENTS.aiBudget — KEEP THE TWO IN SYNC. It is a GBP
+// ceiling on OpenRouter cost per company per calendar month; at/over it, this
+// endpoint refuses to spend. Per-company and per-plan: each tenant is measured
+// only against its own plan and its own spend — never any global total.
+const AI_BUDGET = { trial: 6, sole: 6, team: 20, business: 60, enterprise: 150 };
+const SB_URL = process.env.SUPABASE_URL;
+const SB_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const sb = (SB_URL && SB_SERVICE) ? createClient(SB_URL, SB_SERVICE, { auth: { persistSession: false } }) : null;
+const aiPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
+
+// Read the company's plan + this-month authoritative spend (server-owned meter,
+// store_key piq_ai_meter — the client cannot write it once the RLS lock is run).
+async function meterRead(companyId) {
+  const { data } = await sb.from("proqure_data").select("store_key,value")
+    .eq("user_id", companyId).in("store_key", ["piq_settings", "piq_ai_meter"]);
+  let plan = "trial", spent = 0;
+  for (const row of (data || [])) {
+    if (row.store_key === "piq_settings" && row.value) plan = row.value.plan || "trial";
+    if (row.store_key === "piq_ai_meter" && row.value && row.value.period === aiPeriod()) spent = Number(row.value.costPeriod) || 0;
+  }
+  return { plan, spent };
+}
+// Add a call's cost to the server-owned meter (auto-resets on a new month).
+async function meterAdd(companyId, cost) {
+  const p = aiPeriod();
+  const { data } = await sb.from("proqure_data").select("value")
+    .eq("user_id", companyId).eq("store_key", "piq_ai_meter").maybeSingle();
+  const cur = (data && data.value && data.value.period === p) ? (Number(data.value.costPeriod) || 0) : 0;
+  const value = { period: p, costPeriod: Number((cur + (Number(cost) || 0)).toFixed(6)) };
+  await sb.from("proqure_data").upsert(
+    { user_id: companyId, store_key: "piq_ai_meter", value, updated_at: new Date().toISOString() },
+    { onConflict: "user_id,store_key" });
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -21,9 +58,21 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { messages, models, temperature, web, maxResults, user } = req.body || {};
+    const { messages, models, temperature, web, maxResults, user, companyId } = req.body || {};
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: "Missing messages" });
+    }
+
+    // Circuit-breaker (server-authoritative): refuse to spend if this company is
+    // already at/over its plan's monthly AI cost cap. Per-tenant, per-plan only.
+    if (sb && companyId) {
+      try {
+        const { plan, spent } = await meterRead(companyId);
+        const cap = AI_BUDGET[plan] != null ? AI_BUDGET[plan] : AI_BUDGET.trial;
+        if (cap > 0 && spent >= cap) {
+          return res.status(402).json({ error: "Monthly AI limit reached for this plan.", blocked: true });
+        }
+      } catch (e) { /* fail-open: never break the app over a metering read */ }
     }
 
     // When web search is requested we need a tool/plugin-capable model. Flash-tier
@@ -88,6 +137,8 @@ export default async function handler(req, res) {
           // per-company spend for the admin cost dashboard.
           const usage = d.usage || null;
           const cost = usage && usage.cost != null ? Number(usage.cost) : null;
+          // Record authoritative spend so the cap can't be bypassed client-side.
+          if (sb && companyId && cost != null) { try { await meterAdd(companyId, cost); } catch (e) { /* never break on meter write */ } }
           return res.status(200).json({ text, citations, usage, cost, model, web: !!web });
         }
       } catch (e) {
