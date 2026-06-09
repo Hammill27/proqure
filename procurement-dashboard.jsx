@@ -75,7 +75,7 @@ const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", busines
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues"];
 
 // Pull every key for this user from the cloud into localStorage (on login)
 async function cloudPull(userId) {
@@ -1987,6 +1987,80 @@ Always return the JSON, even if the list is short.`;
   }
 }
 
+// Reads an uploaded supplier catalogue (PDF / image / CSV) via the central AI and
+// returns a normalised product index — description, part number, manufacturer,
+// datasheet link if one is printed. We index the products; we do not re-host the
+// file. PDFs are rasterised to page images (first pages only, to bound cost).
+async function parseCatalogue(file) {
+  const sys = `You are reading a SUPPLIER PRODUCT CATALOGUE for UK building / trades materials. Extract the products listed. For each product capture: a clear description, the manufacturer/supplier part or product code if shown, the manufacturer or brand, the pack/unit if shown, and a datasheet or product-page URL ONLY if one is explicitly printed. NEVER invent part numbers or URLs — leave them blank if not shown. Return ONLY valid JSON, no markdown:
+{"supplier":"the catalogue's supplier or brand if identifiable, else ''","items":[{"description":"...","partNumber":"...","manufacturer":"...","pack":"...","datasheetUrl":"","notes":""}]}
+Always return the JSON, even if the list is short.`;
+  try {
+    const name = file.name || "catalogue";
+    const isImage = (file.type || "").startsWith("image/");
+    const isPDF = (file.type || "") === "application/pdf";
+    const isCsv = /\.csv$/i.test(name) || (file.type || "").includes("csv") || (file.type || "").startsWith("text/");
+    let text = "";
+    if (isCsv) {
+      const csv = await file.text();
+      if (!csv.trim()) return { error: "That file looks empty." };
+      text = await callAI(sys, `Catalogue data (CSV / text):\n${csv.slice(0, 60000)}`);
+    } else if (isImage || isPDF) {
+      let imageUrls = [];
+      if (isImage) {
+        const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(file); });
+        imageUrls = [dataUrl];
+      } else {
+        imageUrls = await pdfToImages(file, 8); // first pages keep cost/latency sensible
+      }
+      if (!imageUrls.length) return { error: "Couldn't read that file \u2014 try a clearer PDF or image." };
+      const userContent = [...imageUrls.map(url => ({ type: "image_url", image_url: { url } })), { type: "text", text: "Extract the products from this catalogue." }];
+      const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0 }) });
+      if (!r.ok) return { error: "The AI couldn't read that catalogue \u2014 try a clearer PDF or image." };
+      const j = await r.json(); reportAiUsage(j.cost, false); text = j.text || "";
+    } else {
+      return { error: "Please upload a PDF, image, or CSV catalogue." };
+    }
+    const data = JSON.parse(omStripFences(text || ""));
+    const items = (data.items || []).slice(0, 500).map((it, i) => ({
+      id: Date.now() + i,
+      description: String(it.description || "").trim() || "Item",
+      partNumber: String(it.partNumber || it.part || "").trim(),
+      manufacturer: String(it.manufacturer || "").trim(),
+      pack: String(it.pack || "").trim(),
+      datasheetUrl: /^https?:\/\//i.test(it.datasheetUrl || "") ? String(it.datasheetUrl).trim() : "",
+      notes: String(it.notes || "").trim(),
+    }));
+    if (!items.length) return { error: "No products could be read from that catalogue. Try a clearer copy or a CSV." };
+    return { supplier: String(data.supplier || "").trim(), items };
+  } catch (e) {
+    return { error: "Couldn't read that catalogue \u2014 please try a clearer PDF, image, or CSV." };
+  }
+}
+
+// Phase 2: on-demand, metered web lookup for a specific product/datasheet not in
+// the user's own library. Links to the manufacturer's page (we don't re-host).
+async function catalogueFindOnline(query) {
+  const sys = `You find a specific UK building / trades product and its OFFICIAL manufacturer datasheet or product page on the web. Strongly prefer the manufacturer's own website and a PDF datasheet; never return a search-engine results page. Return ONLY valid JSON, no markdown:
+{"results":[{"description":"...","partNumber":"...","manufacturer":"...","datasheetUrl":"official URL, '' if none found","notes":"one short line"}]}
+Return up to 4 of the best matches. If you genuinely find nothing credible, return {"results":[]}.`;
+  try {
+    const { text } = await callAIWeb(sys, `Find this product and its datasheet: ${query}`, 4);
+    const data = JSON.parse(omStripFences(text || ""));
+    const results = (data.results || []).slice(0, 4).map((it, i) => ({
+      id: Date.now() + i,
+      description: String(it.description || query).trim(),
+      partNumber: String(it.partNumber || "").trim(),
+      manufacturer: String(it.manufacturer || "").trim(),
+      datasheetUrl: /^https?:\/\//i.test(it.datasheetUrl || "") ? String(it.datasheetUrl).trim() : "",
+      notes: String(it.notes || "").trim(),
+    }));
+    return { results };
+  } catch (e) {
+    return { error: "Couldn't search online right now \u2014 please try again." };
+  }
+}
+
 // --- Tiny shared components ---------------------------------------------------
 const Btn = ({ onClick, disabled, color="#15824F", outline=false, children }) => (
   <button onClick={onClick} disabled={disabled} style={{
@@ -2167,6 +2241,8 @@ function ProQureApp({ session, companyId }) {
 
   // Requests
   const [requests, setRequests] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_requests")||"[]")}catch{return []} });
+  // Supplier Catalogues: each entry = { id, supplier, name, uploadedAt, uploadedBy, items:[{id,description,partNumber,manufacturer,pack,datasheetUrl,notes}] }
+  const [catalogues, setCatalogues] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_catalogues")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
   const [omJob, setOmJob] = useState(null);       // jobRef being generated
   const [omBusy, setOmBusy] = useState(false);
@@ -3458,7 +3534,7 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 RFQ REVISIONS: a sent request can be revised and re-sent. On All Requests, tap 'Revise' on a sent request (Buyers/Managers) - it reopens in the wizard with everything pre-filled and the original suppliers/contacts selected. Edit anything, then re-send: it updates the SAME request (bumps the version, e.g. v2), re-sends to the chosen suppliers and resets their quote boxes for the new revision, rather than creating a duplicate.
 AUTOCOMPLETE: the Job reference and Site fields suggest values from your past requests as you type; the alternative-address field suggests past addresses; and the Collect-from field suggests your suppliers' branches plus places you've collected from before.
 
-O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule (with a separate spares & consumables list), manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules with their governing standards. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.\n\nACCOUNTS, FREE TRIAL & GETTING SET UP: ProQure starts as a free trial - there is no card or payment needed to begin. A business gets started from the ProQure website by tapping 'Get your licence'. You then receive an email, click the link, set a password, then complete a short onboarding (company name, your contact details, main trade, team size, address, and the email address you want quotes and POs to be sent from). The first person to set a company up becomes its Manager, and each company's data is completely separate and private to that company. To bring colleagues in, a Manager opens the team settings and invites them by email as a Buyer or an Engineer; the invited person gets an email, clicks it, sets their own password, and joins the same shared workspace. If an invite email does not arrive, that person can use 'Forgot password' on the sign-in screen to set a password and still get in. There are never any API keys for anyone to enter - AI and email are managed centrally.
+O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule (with a separate spares & consumables list), manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules with their governing standards. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSUPPLIER CATALOGUES: On the 'Catalogues' tab (everyone) a user can upload a supplier's product catalogue (PDF, image or CSV) and ProQure reads it with AI into a private, searchable index of products - description, part/product number, manufacturer, pack and any printed datasheet link. Search by product, part number or supplier, then add items straight onto a new request, or open the datasheet link. Catalogues are private to the company (not shared with other companies). If a product isn't in the user's own catalogues, 'Find online' does a metered web search for the product and its official manufacturer datasheet (this uses the catalogue online-lookup allowance, like Measure/O&M web search). ProQure indexes products and keeps datasheet links rather than re-hosting supplier files.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.\n\nACCOUNTS, FREE TRIAL & GETTING SET UP: ProQure starts as a free trial - there is no card or payment needed to begin. A business gets started from the ProQure website by tapping 'Get your licence'. You then receive an email, click the link, set a password, then complete a short onboarding (company name, your contact details, main trade, team size, address, and the email address you want quotes and POs to be sent from). The first person to set a company up becomes its Manager, and each company's data is completely separate and private to that company. To bring colleagues in, a Manager opens the team settings and invites them by email as a Buyer or an Engineer; the invited person gets an email, clicks it, sets their own password, and joins the same shared workspace. If an invite email does not arrive, that person can use 'Forgot password' on the sign-in screen to set a password and still get in. There are never any API keys for anyone to enter - AI and email are managed centrally.
 
 TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
@@ -3677,6 +3753,8 @@ ${settings.company||""}`;
   }, [cloudUserId]);
 
   useEffect(()=>{ queueCloudPush("piq_requests", requests); }, [requests, queueCloudPush]);
+  useEffect(()=>{ try{localStorage.setItem("piq_catalogues",JSON.stringify(catalogues))}catch{} },[catalogues]);
+  useEffect(()=>{ queueCloudPush("piq_catalogues", catalogues); }, [catalogues, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_orders", orders); }, [orders, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
   // Compute hire-vs-buy suggestions (only for cost-viewers, only with enough history)
@@ -3911,6 +3989,85 @@ ${settings.company||""}`;
     showToast("Take-off loaded into a new request - review and send.");
   };
 
+  // --- Supplier Catalogues ---------------------------------------------------
+  const [catBusy, setCatBusy] = useState(false);
+  const [catErr, setCatErr] = useState("");
+  const [catName, setCatName] = useState("");
+  const [catSearch, setCatSearch] = useState("");
+  const [catSel, setCatSel] = useState([]); // selected items -> basket for a request
+  const [catOnlineBusy, setCatOnlineBusy] = useState(false);
+  const [catOnlineResults, setCatOnlineResults] = useState(null);
+
+  const runCatalogueUpload = async (file) => {
+    if (!file || catBusy) return;
+    setCatBusy(true); setCatErr(""); setCatName(file.name || "catalogue");
+    try {
+      const res = await parseCatalogue(file);
+      if (res.error) { setCatErr(res.error); return; }
+      const entry = {
+        id: Date.now(),
+        supplier: res.supplier || "",
+        name: file.name || "catalogue",
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: myEmail,
+        items: res.items,
+      };
+      setCatalogues(p => [entry, ...p]);
+      showToast(`Catalogue added \u2014 ${res.items.length} product${res.items.length !== 1 ? "s" : ""} indexed.`);
+    } catch (e) {
+      setCatErr("Couldn't read that catalogue \u2014 please try a clearer PDF, image, or CSV.");
+    } finally { setCatBusy(false); setCatName(""); }
+  };
+
+  const deleteCatalogue = (id) => {
+    setCatalogues(p => p.filter(c => c.id !== id));
+    setCatSel(s => s.filter(it => it._cat !== id));
+    showToast("Catalogue removed.");
+  };
+
+  const toggleCatSel = (item) => {
+    setCatSel(s => s.some(x => x._k === item._k) ? s.filter(x => x._k !== item._k) : [...s, item]);
+  };
+
+  const addCatSelToRequest = () => {
+    if (!catSel.length) return;
+    setTrade("General");
+    setParsed({
+      jobRef: "", trade: "General",
+      items: catSel.map((it, i) => ({
+        id: Date.now() + i,
+        description: it.partNumber ? `${it.description} (${it.partNumber})` : it.description,
+        quantity: 1,
+        unit: "no",
+        category: it.manufacturer || it._supplier || "General",
+        notes: [it.pack ? `Pack: ${it.pack}` : "", it.datasheetUrl ? `Datasheet: ${it.datasheetUrl}` : ""].filter(Boolean).join(" \u00B7 "),
+      })),
+    });
+    setStep(2);
+    setView("new");
+    const n = catSel.length;
+    setCatSel([]);
+    showToast(`${n} item${n !== 1 ? "s" : ""} added to a new request \u2014 review and send.`);
+  };
+
+  const runCatalogueOnline = async () => {
+    const q = catSearch.trim();
+    if (!q || catOnlineBusy) return;
+    if (!featureAllowed("catalogueWeb")) {
+      showToast("Catalogue online-lookup allowance reached this month \u2014 add a pack or upgrade for more.", "warn");
+      return;
+    }
+    setCatOnlineBusy(true); setCatOnlineResults(null);
+    try {
+      recordFeatureUse("catalogueWeb");
+      const res = await catalogueFindOnline(q);
+      if (res.error) { showToast(res.error, "warn"); return; }
+      setCatOnlineResults(res.results || []);
+      if (!res.results || !res.results.length) showToast("Nothing credible found online for that search.", "warn");
+    } catch (e) { showToast("Couldn't search online right now \u2014 please try again.", "warn"); }
+    finally { setCatOnlineBusy(false); }
+  };
+
   const navItems = [
           {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
           {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
@@ -3920,6 +4077,7 @@ ${settings.company||""}`;
           {id:"om",       label:"O&M files",      min:2, d:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M8 13h8M8 17h5"},
           {id:"reports",  label:"Reports",        min:2, d:"M3 3v18h18M7 16V9M12 16V5M17 16v-7"},
           {id:"measure",  label:"Measure",        d:"M3 7l4-4 14 14-4 4zM7 7l2 2M11 11l2 2M15 15l2 2"},
+          {id:"catalogues",label:"Catalogues",     d:"M4 5a1 1 0 011-1h5v16H5a1 1 0 01-1-1zM14 4h5a1 1 0 011 1v13a1 1 0 01-1 1h-5z"},
           {id:"hire",     label:"Hire",           d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
           {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
@@ -6762,6 +6920,92 @@ Rules:
             </>)}
 
             <p style={{fontSize:11.5,color:"var(--text-muted)",marginTop:16,lineHeight:1.5}}>Coming with the native app: walk a room with the camera and have ProQure capture the area automatically.</p>
+          </div>);
+        })()}
+        {view==="catalogues"&&(()=>{
+          const allCatItems = catalogues.flatMap(c => (c.items||[]).map(it => ({ ...it, _cat:c.id, _supplier:c.supplier||c.name, _k:c.id+"-"+it.id })));
+          const q = catSearch.trim().toLowerCase();
+          const filtered = q ? allCatItems.filter(it => (it.description+" "+it.partNumber+" "+it.manufacturer+" "+it._supplier).toLowerCase().includes(q)).slice(0,80) : [];
+          const isSel = (it) => catSel.some(x => x._k === it._k);
+          const onlineLeft = featureLeft("catalogueWeb");
+          const itemRow = (it, online) => (
+            <div key={it._k||it.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:"1px solid var(--border)"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13.5,fontWeight:600,color:"var(--text-primary)"}}>{it.description}</div>
+                <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2,display:"flex",gap:10,flexWrap:"wrap"}}>
+                  {it.partNumber && <span style={{fontFamily:"ui-monospace,monospace",background:"var(--green-light)",color:"var(--green-deep)",padding:"1px 6px",borderRadius:5}}>{it.partNumber}</span>}
+                  {(it.manufacturer||it._supplier) && <span>{it.manufacturer||it._supplier}</span>}
+                  {it.pack && <span>{it.pack}</span>}
+                  {it.datasheetUrl && <a href={it.datasheetUrl} target="_blank" rel="noopener noreferrer" style={{color:"var(--green)",fontWeight:600,textDecoration:"none"}}>Datasheet &rsaquo;</a>}
+                </div>
+              </div>
+              <button onClick={()=>toggleCatSel(online?{...it,_k:it._k||("online-"+it.id),_supplier:it.manufacturer||"Found online"}:it)} style={{flexShrink:0,padding:"7px 13px",fontSize:12.5,fontWeight:600,borderRadius:"var(--radius-sm)",cursor:"pointer",border:"1px solid var(--green)",background:isSel(online?{_k:it._k||("online-"+it.id)}:it)?"var(--green)":"transparent",color:isSel(online?{_k:it._k||("online-"+it.id)}:it)?"#fff":"var(--green-dark)"}}>{isSel(online?{_k:it._k||("online-"+it.id)}:it)?"\u2713 Added":"Add to list"}</button>
+            </div>
+          );
+          return (
+          <div className="stagger-in" style={{maxWidth:980,paddingBottom:catSel.length?70:0}}>
+            <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Supplier Catalogues</h1>
+            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Upload a supplier's catalogue and ProQure indexes the products, so you can search them, grab datasheets, and drop items straight onto a request.</p>
+
+            <div style={{display:"grid",gap:16}}>
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:14}}>Add a catalogue</div>
+                <label onDragOver={e=>{e.preventDefault();}} onDrop={e=>{e.preventDefault(); if(e.dataTransfer.files&&e.dataTransfer.files[0]) runCatalogueUpload(e.dataTransfer.files[0]);}} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:"30px 20px",border:"2px dashed var(--border)",borderRadius:"var(--radius-md)",background:"var(--bg-subtle)",cursor:catBusy?"default":"pointer",textAlign:"center"}}>
+                  <input type="file" accept="application/pdf,image/*,.csv,text/csv" disabled={catBusy} onChange={e=>{ const f=e.target.files&&e.target.files[0]; if(f) runCatalogueUpload(f); e.target.value=""; }} style={{display:"none"}}/>
+                  <div style={{fontSize:14,fontWeight:600,color:catBusy?"var(--text-secondary)":"var(--green-dark)"}}>{catBusy?`Reading ${catName}\u2026`:"Drag a catalogue here, or tap to choose"}</div>
+                  <div style={{fontSize:12,color:"var(--text-secondary)"}}>PDF, image or CSV</div>
+                </label>
+                {catErr && <div style={{marginTop:10,fontSize:12.5,color:"#B42318",background:"#FEF3F2",border:"1px solid #FDA29B",borderRadius:8,padding:"9px 12px"}}>{catErr}</div>}
+                <div style={{fontSize:11.5,color:"var(--text-muted)",marginTop:12,lineHeight:1.5}}>ProQure indexes the products and keeps datasheet links \u2014 it doesn't store a copy of your file. Your catalogues are private to your company. Large PDFs are read from their first pages.</div>
+              </Card>
+
+              <Card>
+                <input value={catSearch} onChange={e=>setCatSearch(e.target.value)} placeholder="Search by product, part number or supplier\u2026" style={{width:"100%",padding:"11px 14px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:14,outline:"none",background:"var(--bg-subtle)",color:"var(--text-primary)"}}/>
+                {q && (
+                  <div style={{marginTop:14}}>
+                    {filtered.length>0
+                      ? <>{filtered.map(it=>itemRow(it,false))}<div style={{fontSize:11.5,color:"var(--text-muted)",marginTop:10}}>{filtered.length} match{filtered.length!==1?"es":""} in your catalogues{filtered.length===80?" (showing first 80)":""}.</div></>
+                      : <div style={{fontSize:13,color:"var(--text-secondary)",padding:"10px 0"}}>Nothing in your catalogues matches \u201C{catSearch}\u201D.</div>}
+                    <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid var(--border)",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                      <button onClick={runCatalogueOnline} disabled={catOnlineBusy||onlineLeft<=0} style={{padding:"9px 16px",fontSize:13,fontWeight:600,borderRadius:"var(--radius-sm)",border:"1px solid var(--green)",background:"transparent",color:"var(--green-dark)",cursor:(catOnlineBusy||onlineLeft<=0)?"default":"pointer",opacity:(catOnlineBusy||onlineLeft<=0)?0.55:1}}>{catOnlineBusy?"Searching online\u2026":"Find online"}</button>
+                      <span style={{fontSize:11.5,color:"var(--text-muted)"}}>{onlineLeft>0?`${onlineLeft} online lookup${onlineLeft!==1?"s":""} left this month`:"No online lookups left this month \u2014 add a pack or upgrade"}</span>
+                    </div>
+                    {catOnlineResults && catOnlineResults.length>0 && (
+                      <div style={{marginTop:12,padding:"4px 14px 8px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)"}}>
+                        <div style={{fontSize:11,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",color:"var(--green-dark)",margin:"10px 0 2px"}}>Found online</div>
+                        {catOnlineResults.map(r=>itemRow({...r,_k:"online-"+r.id},true))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!q && <div style={{marginTop:12,fontSize:12.5,color:"var(--text-secondary)"}}>{allCatItems.length>0?`${allCatItems.length} products indexed across ${catalogues.length} catalogue${catalogues.length!==1?"s":""}. Start typing to search.`:"Upload a catalogue above to start building your searchable library."}</div>}
+              </Card>
+
+              {catalogues.length>0 && (
+                <Card>
+                  <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:12}}>Your catalogues ({catalogues.length})</div>
+                  {catalogues.map(c=>(
+                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"1px solid var(--border)"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13.5,fontWeight:600,color:"var(--text-primary)"}}>{c.supplier||c.name}</div>
+                        <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>{(c.items||[]).length} products \u00B7 {new Date(c.uploadedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div>
+                      </div>
+                      <button onClick={()=>deleteCatalogue(c.id)} style={{flexShrink:0,padding:"6px 12px",fontSize:12,fontWeight:600,borderRadius:"var(--radius-sm)",border:"1px solid var(--border)",background:"transparent",color:"var(--text-secondary)",cursor:"pointer"}}>Remove</button>
+                    </div>
+                  ))}
+                </Card>
+              )}
+            </div>
+
+            {catSel.length>0 && (
+              <div style={{position:"fixed",left:0,right:0,bottom:0,background:"var(--bg-card-solid)",borderTop:"1px solid var(--border)",boxShadow:"0 -4px 20px rgba(0,0,0,0.08)",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,zIndex:40}}>
+                <span style={{fontSize:13.5,fontWeight:600,color:"var(--text-primary)"}}>{catSel.length} item{catSel.length!==1?"s":""} selected</span>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setCatSel([])} style={{padding:"9px 14px",fontSize:13,fontWeight:600,borderRadius:"var(--radius-sm)",border:"1px solid var(--border)",background:"transparent",color:"var(--text-secondary)",cursor:"pointer"}}>Clear</button>
+                  <button onClick={addCatSelToRequest} style={{padding:"9px 18px",fontSize:13,fontWeight:700,borderRadius:"var(--radius-sm)",border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",cursor:"pointer"}}>Add to a request</button>
+                </div>
+              </div>
+            )}
           </div>);
         })()}
         {view==="help"&&(
