@@ -217,6 +217,16 @@ const STATUS = {
 };
 
 // --- AI helpers ---------------------------------------------------------------
+// Per-company AI usage metering. The app component registers a recorder on
+// mount; callAI / callAIWeb and the raw /api/ai vision callsites report the
+// OpenRouter cost so the admin dashboard can show spend per company. The usage
+// object is already cloud-synced per tenant (piq_usage), so simply incrementing
+// it attributes cost to the right company. No-op until a recorder is registered.
+let __usageRecorder = null;
+function reportAiUsage(cost, web = false) {
+  try { if (__usageRecorder) __usageRecorder(Number(cost) || 0, !!web); } catch (e) { /* never break an AI call over metering */ }
+}
+
 async function callAI(system, user, history=[], temperature=0.1) {
   const models = [
     "deepseek/deepseek-chat",
@@ -239,7 +249,7 @@ async function callAI(system, user, history=[], temperature=0.1) {
     });
     if (res.ok) {
       const d = await res.json();
-      if (d.text) return d.text;
+      if (d.text) { reportAiUsage(d.cost, false); return d.text; }
       if (d.error && !d.error.includes("not configured")) throw new Error(d.error);
       // if "not configured", fall through to the user-key path below
     }
@@ -335,6 +345,7 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
     const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1 }) });
     if (!res.ok) return null;
     const d = await res.json();
+    reportAiUsage(d.cost, false);
     if (!d.text) return null;
     return JSON.parse(d.text.replace(/```json|```/g,"").trim());
   } catch { return null; }
@@ -1064,6 +1075,7 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           from: sender.from,
+          company_id: cloudUserId,
           to:   [s.email],
           reply_to: replyTo,
           subject,
@@ -1329,7 +1341,7 @@ async function callAIWeb(system, user, maxResults = 4) {
     });
     if (res.ok) {
       const d = await res.json();
-      if (d.text) return { text: d.text, citations: d.citations || [] };
+      if (d.text) { reportAiUsage(d.cost, true); return { text: d.text, citations: d.citations || [] }; }
       if (d.error && !d.error.includes("not configured")) throw new Error(d.error);
     }
   } catch (e) { /* fall through */ }
@@ -1936,6 +1948,7 @@ Always return the JSON, even if the list is short.`;
     });
     if (!r.ok) return { error: "The AI couldn't read that drawing — try a clearer PDF or image." };
     const d = await r.json();
+    reportAiUsage(d.cost, false);
     const data = JSON.parse(omStripFences(d.text || ""));
     if (!data.items || !Array.isArray(data.items) || !data.items.length) return { error: "No materials could be read from that drawing. Try a clearer copy, or a PDF export." };
     const items = data.items.slice(0, 100).map((it, i) => ({
@@ -2701,7 +2714,7 @@ function ProQureApp({ session, companyId }) {
       let extracted="";
       try {
         const sres = await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"system",content:sys},userMsg],models,temperature:0.1})});
-        if (sres.ok){ const sd=await sres.json(); if(sd.text) extracted=sd.text; }
+        if (sres.ok){ const sd=await sres.json(); reportAiUsage(sd.cost,false); if(sd.text) extracted=sd.text; }
       } catch(e){}
       if (!extracted.trim() && settings.openRouterKey) {
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+settings.openRouterKey,"HTTP-Referer":"https://proqure.app","X-Title":"ProQure"},body:JSON.stringify({model:models[0],messages:[{role:"system",content:sys},userMsg]})});
@@ -2887,7 +2900,7 @@ function ProQureApp({ session, companyId }) {
       const subject = `Off-hire / collection request - ${h.hireRef} - ${h.description}`;
       const body = `Hello ${h.supplier||""}\n\nPlease arrange collection of the following hired equipment:\n\nEquipment: ${h.description}\nHire reference: ${h.hireRef}\nSite: ${h.site||"-"}\nRequested collection date: ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}\nCollection address: ${collectionAddress||h.site||"-"}\n\nPlease confirm the collection and provide an off-hire / collection reference number.\n\nKind regards\n${settings.contactName||settings.company||"The Procurement Team"}\n${settings.company||""}`;
       try {
-        await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), to:[h.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
+        await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), company_id: cloudUserId, to:[h.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
       } catch(e) { showToast("Off-hire email may not have sent; record updated anyway.","warn"); }
     }
     updateHire(id, {
@@ -3506,7 +3519,7 @@ ${settings.company||""}`;
       const res = await fetch("/api/send-email", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings), ...(attachments?{attachments}:{}) })
+        body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), company_id: cloudUserId, to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings), ...(attachments?{attachments}:{}) })
       });
       const d = await res.json();
       if (res.ok && d.success) {
@@ -3619,6 +3632,17 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_templates", templates); }, [templates, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_quote_sets", savedQuoteSets.slice(0,100)); }, [savedQuoteSets, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_usage", usage); }, [usage, queueCloudPush]);
+  // Register the module-level AI usage recorder: every AI call increments this
+  // company's spend/calls so the admin dashboard shows cost per company.
+  useEffect(()=>{
+    __usageRecorder = (cost, web)=> setUsage(u=>({
+      ...u,
+      aiSpend: Number(((Number(u.aiSpend)||0) + (Number(cost)||0)).toFixed(6)),
+      aiCalls: (Number(u.aiCalls)||0) + 1,
+      webCalls: (Number(u.webCalls)||0) + (web ? 1 : 0),
+    }));
+    return ()=>{ __usageRecorder = null; };
+  }, [setUsage]);
   useEffect(()=>{ queueCloudPush("piq_team", team); }, [team, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
   // Allow real changes to sync only after the initial mount pushes above have run (and been skipped).
@@ -4106,6 +4130,7 @@ Rules:
         });
         if (sres.ok) {
           const sd = await sres.json();
+          reportAiUsage(sd.cost, false);
           if (sd.text) extracted = sd.text;
           else if (sd.error && !sd.error.includes("not configured")) throw new Error(sd.error);
         }
