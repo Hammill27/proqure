@@ -167,6 +167,8 @@
   .badge{display:inline-block;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:99px;border:1px solid transparent;white-space:nowrap}
   .b-trial{background:rgba(224,162,59,.13);color:var(--amber);border-color:rgba(224,162,59,.3)}
   .b-active,.b-paid,.b-on{background:var(--tint);color:var(--accent);border-color:var(--tint-line)}
+  .b-sole,.b-team,.b-business,.b-enterprise{background:var(--tint);color:var(--accent);border-color:var(--tint-line)}
+  .b-trial{background:var(--chip);color:var(--soft)}
   .b-suspended,.b-cancelled{background:rgba(229,100,92,.12);color:var(--red);border-color:rgba(229,100,92,.3)}
   .b-role{background:rgba(91,141,239,.13);color:var(--blue);border-color:rgba(91,141,239,.3)}
   .b-owner{background:var(--tint);color:var(--accent);border-color:var(--tint-line)}
@@ -412,7 +414,7 @@ function renderOverview(){
   const maxN=Math.max(1,...DATA.signupHistogram.map(h=>h.n));
   const bars=DATA.signupHistogram.map(h=>'<div class="b" style="height:'+Math.round(h.n/maxN*100)+'%"><span>'+h.n+'</span></div>').join("");
   const xlab=DATA.signupHistogram.map((h,i)=>i%3===0?'<div>'+h.d.slice(5)+'</div>':'<div></div>').join("");
-  const planColors={trial:"var(--amber)",active:"var(--green-glow)",paid:"var(--green-glow)",suspended:"var(--red)",cancelled:"var(--red)"};
+  const planColors={trial:"var(--amber)",sole:"var(--green-glow)",team:"var(--accent)",business:"var(--green-glow)",enterprise:"var(--accent)",active:"var(--green-glow)",paid:"var(--green-glow)",suspended:"var(--red)",cancelled:"var(--red)"};
   const pd=k.planDist||{}; const pdTotal=Object.values(pd).reduce((a,b)=>a+b,0)||1;
   const planBarHtml=Object.entries(pd).map(([p,n])=>'<i style="width:'+(n/pdTotal*100)+'%;background:'+(planColors[p]||"var(--soft)")+'"></i>').join("");
   const planLegend=Object.entries(pd).map(([p,n])=>'<div class="pl"><span class="lab"><span class="dot" style="background:'+(planColors[p]||"var(--soft)")+'"></span>'+esc(p)+'</span><span class="v">'+n+'</span></div>').join("") || '<div class="muted">No companies yet.</div>';
@@ -427,6 +429,8 @@ function renderOverview(){
       kpi("users",k.totalUsers,"Users",k.pendingInvites+" pending","goTab('users')")+
       kpi("trial",k.activeTrials,"Active trials",null,"goTab('companies','trial')")+
       kpi("paid",k.paid,"Paid",null,"goTab('companies','paid')")+
+      kpi("coin",fmtMoney(k.mrr||0),"MRR",(k.paid||0)+" paying")+
+      kpi("alert",k.pastDue||0,"Past due",null,"goTab('companies')")+
     '</div>'+
     '<div class="strip">'+
       stat(k.signupsLast30d,"Signups (30d)","goTab('signups')")+stat(k.activeLast7d,"Active (7d)","goTab('companies')")+stat(k.totalSuppliers,"Suppliers","goTab('companies')")+
@@ -456,7 +460,7 @@ function renderOverview(){
 }
 
 function renderCompanies(){
-  const paidSet=["active","paid"];
+  const paidSet=["sole","team","business","enterprise","active","paid"];
   const list=DATA.companies.filter(c=>(!companyPlanFilter||(companyPlanFilter==="paid"?paidSet.includes(c.plan):c.plan===companyPlanFilter)) && (!search||(c.name+" "+(c.fromEmail||"")+" "+(c.trade||"")).toLowerCase().includes(search.toLowerCase())));
   const rows=list.map(c=>'<tr class="crow" data-i="'+DATA.companies.indexOf(c)+'">'+
     '<td><div class="ct-name">'+esc(c.name)+'</div><div class="ct-sub">'+esc(c.fromEmail||"")+'</div></td>'+
@@ -578,7 +582,9 @@ function openCompany(c){
   $("drawer").innerHTML=
     '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+'</div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
     '<div class="dbody">'+
-      '<div class="sec-title">Plan</div><div class="planrow"><select id="planSel">'+["trial","active","paid","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button></div>'+
+      '<div class="sec-title">Plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button></div>'+
+      '<div class="sec-title">Billing</div><div class="meta">'+meta("Status",c.subscriptionStatus||"trial")+meta("Plan",c.plan||"trial")+meta("MRR",fmtMoney(c.mrr||0))+(c.stripeCustomerId?meta("Stripe customer",c.stripeCustomerId):"")+'</div>'+
+      '<div class="sec-title">Web lookups this month <span style="font-weight:500;text-transform:none;letter-spacing:0">('+esc((c.webAllowanceUsed&&c.webAllowanceUsed.period)||"-")+')</span></div><div class="countpills">'+cp((c.webAllowanceUsed&&c.webAllowanceUsed.measureWeb)||0,"Measure")+cp((c.webAllowanceUsed&&c.webAllowanceUsed.omWeb)||0,"O&amp;M packs")+cp((c.webAllowanceUsed&&c.webAllowanceUsed.catalogueWeb)||0,"Catalogue")+'</div>'+
       '<div class="sec-title">Details</div><div class="meta">'+
         meta("Onboarded",c.onboarded?"Yes":"No")+meta("Primary trade",c.trade)+meta("Team size",c.teamSize)+meta("Reply-to",c.fromEmail)+meta("Address",c.address)+meta("VAT no.",c.vat)+meta("Company reg.",c.companyReg)+meta("Created",fmtDate(c.createdAt))+meta("Last active",fmtAgo(c.lastActive))+meta("Pending invites",c.pendingInvites)+
       '</div>'+
