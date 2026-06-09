@@ -21,7 +21,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { messages, models, temperature, web, maxResults } = req.body || {};
+    const { messages, models, temperature, web, maxResults, user } = req.body || {};
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: "Missing messages" });
     }
@@ -57,6 +57,10 @@ export default async function handler(req, res) {
           temperature: typeof temperature === "number" ? temperature : 0.1,
         };
         if (plugins) body.plugins = plugins;
+        // Optional end-user/company tag for OpenRouter's own reporting.
+        if (typeof user === "string" && user) body.user = user.slice(0, 128);
+        // Ask OpenRouter to include usage accounting (cost) in the response.
+        body.usage = { include: true };
 
         const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
@@ -78,7 +82,14 @@ export default async function handler(req, res) {
           .map(a => (a.url_citation || a))
           .map(c => ({ url: c.url, title: c.title || "" }))
           .filter(c => c.url);
-        if (text) return res.status(200).json({ text, citations });
+        if (text) {
+          // Usage accounting: OpenRouter returns token counts and the actual
+          // request cost (USD) in `usage`. We surface it so the app can record
+          // per-company spend for the admin cost dashboard.
+          const usage = d.usage || null;
+          const cost = usage && usage.cost != null ? Number(usage.cost) : null;
+          return res.status(200).json({ text, citations, usage, cost, model, web: !!web });
+        }
       } catch (e) {
         lastErr = e.message;
       }
