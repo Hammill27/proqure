@@ -318,13 +318,13 @@ const ICON = {
   users:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   signup:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>',
   trial:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>',
-  paid:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+  paid:'<svg viewBox="0 0 24 24"><text x="12" y="18.5" text-anchor="middle" font-family="ui-sans-serif,system-ui,Segoe UI,sans-serif" font-size="20" font-weight="800" fill="currentColor">\u00A3</text></svg>',
   sun:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M5 5l1.5 1.5M17.5 17.5L19 19M2 12h2M20 12h2M5 19l1.5-1.5M17.5 6.5L19 5"/></svg>',
   moon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
   invite:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>',
   alert:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   zzz:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h6l-6 8h6M14 4h6l-6 6h6"/></svg>',
-  coin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M14.5 9a2.5 2 0 0 0-2.5-1.5c-1.5 0-2.5.8-2.5 2s1 1.7 2.5 2 2.5.9 2.5 2-1 2-2.5 2A2.5 2 0 0 1 9.5 16M12 6v1.5M12 16.5V18"/></svg>',
+  coin:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="16.5" text-anchor="middle" font-family="ui-sans-serif,system-ui,Segoe UI,sans-serif" font-size="12" font-weight="800" fill="currentColor">\u00A3</text></svg>',
   shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
 };
 function ic(name){ return '<span class="ic">'+(ICON[name]||"")+'</span>'; }
@@ -419,7 +419,8 @@ function renderOverview(){
   const attn=(cls,icon,t,s,v,act)=>'<div class="a'+(act?' clickable':'')+'"'+(act?' onclick="'+act+'"':'')+'><span class="ai '+cls+'">'+ICON[icon]+'</span><div><div class="at">'+t+'</div><div class="as">'+s+'</div></div><div class="av v-'+cls.split("-")[1]+'">'+v+'</div></div>';
   const signups=DATA.recentSignups.length?DATA.recentSignups.slice(0,7).map(s=>'<div class="row clickable" onclick="openCompanyByEmail(\''+esc(s.email)+'\')"><div><div class="e">'+esc(s.company||s.name||s.email)+'</div><div class="m">'+esc(s.email)+'</div></div><div style="text-align:right"><div class="m">'+fmtAgo(s.createdAt)+'</div>'+(s.confirmed?'<span class="badge b-on">confirmed</span>':'<span class="badge b-pending">pending</span>')+'</div></div>').join(""):'<div class="muted" style="padding:8px 0">No signups yet.</div>';
   const topSpend=(DATA.costRanking||[]).slice(0,5);
-  const spendRows=topSpend.length?topSpend.map(c=>'<div class="row clickable" onclick="openCompanyById(\''+esc(c.companyId)+'\')"><div><div class="e">'+esc(c.name)+'</div><div class="m">'+c.aiCalls+' AI calls &middot; '+c.email.sent+' emails</div></div><div style="text-align:right"><div class="e mono">'+fmtMoney(c.aiSpend)+'</div><div class="m">'+esc(c.plan)+'</div></div></div>').join(""):'<div class="muted" style="padding:8px 0">No per-company usage recorded yet. This populates once the app reports cost per company (next app deploy).</div>';
+  const byStorage=[...(DATA.companies||[])].sort((a,b)=>(b.storageBytes||0)-(a.storageBytes||0)).slice(0,6);
+  const costRows=byStorage.length?byStorage.map(c=>'<div class="row clickable" onclick="openCompanyById(\''+esc(c.companyId)+'\')"><div><div class="e">'+esc(c.name)+'</div><div class="m">'+(c.aiCalls||0)+' AI calls &middot; '+(c.email.sent||0)+' emails</div></div><div style="text-align:right"><div class="e mono">'+fmtBytes(c.storageBytes||0)+'</div><div class="m">'+fmtMoney(c.aiSpend)+'</div></div></div>').join(""):'<div class="muted" style="padding:8px 0">No companies yet.</div>';
   $("view").innerHTML=
     '<div class="kpis">'+
       kpi("building",k.totalCompanies,"Companies",k.onboardedCount+" onboarded","goTab('companies')")+
@@ -436,12 +437,12 @@ function renderOverview(){
       '<div class="panel"><h2>Plans</h2><div class="planbar">'+planBarHtml+'</div><div class="planlegend">'+planLegend+'</div></div>'+
     '</div>'+
     '<div class="cols">'+
-      '<div class="panel"><h2>AI spend <span class="hint">top companies &middot; GBP</span></h2><div class="feed">'+spendRows+'</div></div>'+
+      '<div class="panel"><h2>Cost &amp; storage <span class="hint">by company</span></h2><div class="feed">'+costRows+'</div><div class="muted" style="font-size:11.5px;margin-top:10px">Total data stored '+fmtBytes(k.totalStorageBytes)+' &middot; total AI spend '+fmtMoney(k.totalAiSpend)+(k.totalAiSpend?'':' (per-company cost fills in once the app metering hook ships)')+'</div></div>'+
       '<div class="panel"><h2>Email deliverability</h2>'+
         '<div class="strip" style="grid-template-columns:repeat(3,1fr);margin:0">'+
           stat(k.emailsSent,"Sent")+stat(pct(k.emailsDelivered,k.emailsSent),"Delivered")+stat(k.emailsBounced+k.emailsComplained,"Bounced / spam")+
         '</div>'+
-        '<div class="muted" style="font-size:11.5px;margin-top:13px">Total AI spend '+fmtMoney(k.totalAiSpend)+' &middot; '+k.totalAiCalls+' calls &middot; '+k.totalWebCalls+' web searches.</div>'+
+        '<div class="muted" style="font-size:11.5px;margin-top:13px">'+(k.emailsSent?(k.totalWebCalls+' web searches &middot; '+k.emailsDelivered+' delivered'):'Email &amp; reply stats fill in once the Resend webhooks are connected.')+'</div>'+
       '</div>'+
     '</div>'+
     '<div class="cols">'+
@@ -479,16 +480,16 @@ function renderCompanies(){
 function renderUsers(){
   const all=[]; DATA.companies.forEach(c=>c.users.forEach(u=>all.push({...u,company:c.name})));
   const list=all.filter(u=>!search||(u.email+" "+u.company+" "+u.role).toLowerCase().includes(search.toLowerCase()));
-  const rows=list.map(u=>'<tr>'+
+  const rows=list.map(u=>'<tr class="crow" onclick="openCompanyByEmail(\''+esc(u.email)+'\')">'+
     '<td><div style="font-weight:600;word-break:break-all">'+esc(u.email)+'</div></td>'+
     '<td class="hide">'+esc(u.company)+'</td>'+
     '<td>'+(u.isOwner?'<span class="badge b-owner">owner</span>':'<span class="badge b-role">'+esc(u.role)+'</span>')+'</td>'+
     '<td>'+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+'</td>'+
     '<td class="hide muted">'+fmtAgo(u.lastSignIn)+'</td>'+
-    '<td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend</button><button class="btn btn-ghost btn-sm" onclick="doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Reset</button></div></td></tr>').join("")
+    '<td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Reset</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openCompanyByEmail(\''+esc(u.email)+'\')">Manage</button></div></td></tr>').join("")
     || '<tr><td colspan="6" class="muted" style="padding:26px;text-align:center">No users match.</td></tr>';
   $("view").innerHTML=
-    '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' user'+(list.length===1?"":"s")+'</div><input class="search" id="uSearch" placeholder="Search users..." value="'+esc(search)+'"></div>'+
+    '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' user'+(list.length===1?"":"s")+' &middot; click a row to manage</div><input class="search" id="uSearch" placeholder="Search users..." value="'+esc(search)+'"></div>'+
     '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Email</th><th class="hide">Company</th><th>Role</th><th>Status</th><th class="hide">Last sign-in</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   $("uSearch").addEventListener("input",e=>{ search=e.target.value; const p=e.target.selectionStart; renderUsers(); const s=$("uSearch"); s.focus(); s.setSelectionRange(p,p); });
 }
