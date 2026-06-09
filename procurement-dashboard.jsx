@@ -74,6 +74,10 @@ const ENTITLEMENTS = {
   enterprise: { seats: Infinity, measureWeb: 3000, omWeb: 150, catalogueWeb: 1500, aiBudget: 150 },
 };
 const planOf = (settings) => ENTITLEMENTS[settings && settings.plan] || ENTITLEMENTS.trial;
+// OpenRouter reports AI cost in USD; the aiBudget caps above are GBP. This rate
+// converts recorded spend for the cap check and the Settings display. Keep in
+// sync with /api/ai (server wall) and the admin console.
+const USD_TO_GBP = 0.75;
 const billingPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", business: "Business", enterprise: "Enterprise" };
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
@@ -99,8 +103,27 @@ async function cloudPull(userId) {
 // Push one key's value up to the cloud (on change), debounced by caller
 async function cloudPush(userId, storeKey, valueObj) {
   if (!supabase || !userId) return;
+  let out = valueObj;
+  // Billing truth (plan / subscriptionStatus / stripeCustomerId) is written ONLY by
+  // the Stripe webhook and the admin console, server-side. A device holding a stale
+  // copy of settings must never overwrite it, so we overlay the cloud's current
+  // billing fields onto whatever we push. Best-effort: if the read fails we push
+  // as-is (same as before) rather than blocking the save.
+  if (storeKey === "piq_settings") {
+    try {
+      const { data } = await supabase.from("proqure_data").select("value")
+        .eq("user_id", userId).eq("store_key", "piq_settings").maybeSingle();
+      const cv = data && data.value;
+      if (cv && typeof cv === "object") {
+        out = { ...valueObj };
+        if (cv.plan != null) out.plan = cv.plan;
+        if (cv.subscriptionStatus != null) out.subscriptionStatus = cv.subscriptionStatus;
+        if (cv.stripeCustomerId != null) out.stripeCustomerId = cv.stripeCustomerId;
+      }
+    } catch (e) { /* best-effort */ }
+  }
   const { error } = await supabase.from("proqure_data").upsert(
-    { user_id: userId, store_key: storeKey, value: valueObj, updated_at: new Date().toISOString() },
+    { user_id: userId, store_key: storeKey, value: out, updated_at: new Date().toISOString() },
     { onConflict: "user_id,store_key" }
   );
   if (error) { console.warn("cloudPush failed", storeKey, error); throw error; }
@@ -264,6 +287,18 @@ const AI_BUDGET_MSG = "Your team has reached this month's AI limit. It resets on
 // SERVER can enforce the monthly AI budget authoritatively (the client gate above is
 // only the fast first line and can be bypassed; the server is the real wall).
 let __companyId = null;
+// Attach the signed-in user's access token to server calls (/api/ai, /api/send-email,
+// billing). The server verifies it and resolves the company from membership, so a
+// stranger can't use ProQure's AI/email keys and a tenant can't spoof another tenant.
+// Returns {} when logged out so the request still goes (the server then decides).
+async function authHeaders() {
+  try {
+    if (!supabase) return {};
+    const { data } = await supabase.auth.getSession();
+    const t = data && data.session && data.session.access_token;
+    return t ? { Authorization: "Bearer " + t } : {};
+  } catch (e) { return {}; }
+}
 
 async function callAI(system, user, history=[], temperature=0.1) {
   if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
@@ -283,7 +318,7 @@ async function callAI(system, user, history=[], temperature=0.1) {
   try {
     const res = await fetch("/api/ai", {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:{"Content-Type":"application/json", ...(await authHeaders())},
       body: JSON.stringify({ messages, models, temperature, companyId: __companyId })
     });
     if (res.status === 402) throw new Error(AI_BUDGET_MSG);
@@ -298,7 +333,7 @@ async function callAI(system, user, history=[], temperature=0.1) {
 
   // Fallback: user-provided key (legacy / if server key isn't set up yet).
   const key = window.__piq_or_key__ || "";
-  if (!key) throw new Error("NO_KEY");
+  if (!key) throw new Error("AI is temporarily unavailable \u2014 please try again in a moment.");
   let lastErr = "";
   for (const model of models) {
     try {
@@ -384,7 +419,7 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
   ];
   try {
     if (!aiBudgetOk()) return null;
-    const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1, companyId: __companyId }) });
+    const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json", ...(await authHeaders())}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1, companyId: __companyId }) });
     if (!res.ok) return null;
     const d = await res.json();
     reportAiUsage(d.cost, false);
@@ -1114,10 +1149,10 @@ async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settin
     try {
       const res = await fetch("/api/send-email", {
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{"Content-Type":"application/json", ...(await authHeaders())},
         body: JSON.stringify({
           from: sender.from,
-          company_id: cloudUserId,
+          company_id: __companyId,
           to:   [s.email],
           reply_to: replyTo,
           subject,
@@ -1379,7 +1414,7 @@ async function callAIWeb(system, user, maxResults = 4) {
   try {
     const res = await fetch("/api/ai", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({ messages, web: true, maxResults, temperature: 0, companyId: __companyId }),
     });
     if (res.status === 402) throw new Error(AI_BUDGET_MSG);
@@ -1985,7 +2020,7 @@ Always return the JSON, even if the list is short.`;
       { type: "text", text: "Do a materials take-off from this drawing." },
     ];
     const r = await fetch("/api/ai", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({
         messages: [{ role: "system", content: sys }, { role: "user", content: userContent }],
         models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"],
@@ -2041,7 +2076,8 @@ Always return the JSON, even if the list is short.`;
       }
       if (!imageUrls.length) return { error: "Couldn't read that file \u2014 try a clearer PDF or image." };
       const userContent = [...imageUrls.map(url => ({ type: "image_url", image_url: { url } })), { type: "text", text: "Extract the products from this catalogue." }];
-      const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0, companyId: __companyId }) });
+      const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0, companyId: __companyId }) });
+      if (r.status === 402) return { error: AI_BUDGET_MSG };
       if (!r.ok) return { error: "The AI couldn't read that catalogue \u2014 try a clearer PDF or image." };
       const j = await r.json(); reportAiUsage(j.cost, false); text = j.text || "";
     } else {
@@ -2887,7 +2923,7 @@ function ProQureApp({ session, companyId }) {
       let extracted="";
       try {
         if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
-        const sres = await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"system",content:sys},userMsg],models,temperature:0.1,companyId:__companyId})});
+        const sres = await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())},body:JSON.stringify({messages:[{role:"system",content:sys},userMsg],models,temperature:0.1,companyId:__companyId})});
         if (sres.ok){ const sd=await sres.json(); reportAiUsage(sd.cost,false); if(sd.text) extracted=sd.text; }
       } catch(e){}
       if (!extracted.trim() && settings.openRouterKey) {
@@ -3074,7 +3110,7 @@ function ProQureApp({ session, companyId }) {
       const subject = `Off-hire / collection request - ${h.hireRef} - ${h.description}`;
       const body = `Hello ${h.supplier||""}\n\nPlease arrange collection of the following hired equipment:\n\nEquipment: ${h.description}\nHire reference: ${h.hireRef}\nSite: ${h.site||"-"}\nRequested collection date: ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}\nCollection address: ${collectionAddress||h.site||"-"}\n\nPlease confirm the collection and provide an off-hire / collection reference number.\n\nKind regards\n${settings.contactName||settings.company||"The Procurement Team"}\n${settings.company||""}`;
       try {
-        await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), company_id: cloudUserId, to:[h.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
+        await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json", ...(await authHeaders())}, body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), company_id: cloudUserId, to:[h.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
       } catch(e) { showToast("Off-hire email may not have sent; record updated anyway.","warn"); }
     }
     updateHire(id, {
@@ -3692,7 +3728,7 @@ ${settings.company||""}`;
     try {
       const res = await fetch("/api/send-email", {
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{"Content-Type":"application/json", ...(await authHeaders())},
         body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), company_id: cloudUserId, to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings), ...(attachments?{attachments}:{}) })
       });
       const d = await res.json();
@@ -3830,8 +3866,8 @@ ${settings.company||""}`;
       const cap = (planOf(settings).aiBudget) || 0;
       if (cap <= 0) return true;
       const p = billingPeriod();
-      const spent = usage.period === p ? (Number(usage.costPeriod)||0) : 0;
-      return spent < cap;
+      const spentUsd = usage.period === p ? (Number(usage.costPeriod)||0) : 0;
+      return spentUsd * USD_TO_GBP < cap; // costPeriod is USD (OpenRouter); cap is GBP
     };
     return ()=>{ __budgetCheck = null; };
   }, [usage, settings]);
@@ -3856,7 +3892,7 @@ ${settings.company||""}`;
   // --- Billing: send the manager to Stripe-hosted Checkout / Customer Portal ---
   const startCheckout = async (body) => {
     try {
-      const r = await fetch("/api/create-checkout-session", { method: "POST", headers: { "Content-Type": "application/json" },
+      const r = await fetch("/api/create-checkout-session", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ companyId: cloudUserId, email: session && session.user && session.user.email, ...body }) });
       const d = await r.json();
       if (d && d.url) window.location.href = d.url;
@@ -3865,7 +3901,7 @@ ${settings.company||""}`;
   };
   const openBillingPortal = async () => {
     try {
-      const r = await fetch("/api/create-portal-session", { method: "POST", headers: { "Content-Type": "application/json" },
+      const r = await fetch("/api/create-portal-session", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ companyId: cloudUserId }) });
       const d = await r.json();
       if (d && d.url) window.location.href = d.url;
@@ -4447,7 +4483,7 @@ Rules:
         if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
         const sres = await fetch("/api/ai", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await authHeaders()) },
           body: JSON.stringify({ messages: [{ role: "system", content: systemPrompt }, userMsg], models: scanModels, temperature: 0.1, companyId: __companyId })
         });
         if (sres.ok) {
@@ -7349,8 +7385,8 @@ Rules:
                         "",
                         contactForm.description.trim(),
                       ].filter(Boolean).join("\n");
-                      const res = await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json"},
-                        body: JSON.stringify({ from:sender.from, to:[FEEDBACK_EMAIL], reply_to:contactForm.email||undefined, subject, text:body })});
+                      const res = await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())},
+                        body: JSON.stringify({ from:sender.from, company_id: cloudUserId, to:[FEEDBACK_EMAIL], reply_to:contactForm.email||undefined, subject, text:body })});
                       if(!res.ok) throw new Error("send failed");
                       showToast("Support request sent");
                       setContactSent(true);
@@ -7412,7 +7448,7 @@ Rules:
                     );
                   })}
                 </div>
-                {(()=>{ const sp=usage.period===billingPeriod(); const cap=planOf(settings).aiBudget||0; const spent=sp?(Number(usage.costPeriod)||0):0; const pctv=cap>0?Math.min(100,Math.round(spent/cap*100)):0; const col=pctv>=100?"#B42318":pctv>=80?"#B45309":"var(--green)"; return cap>0?(
+                {(()=>{ const sp=usage.period===billingPeriod(); const cap=planOf(settings).aiBudget||0; const spent=(sp?(Number(usage.costPeriod)||0):0)*USD_TO_GBP; const pctv=cap>0?Math.min(100,Math.round(spent/cap*100)):0; const col=pctv>=100?"#B42318":pctv>=80?"#B45309":"var(--green)"; return cap>0?(
                   <div style={{margin:"0 0 16px"}}>
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:5}}>
                       <span style={{color:"var(--text-secondary)"}}>AI usage <span style={{opacity:.65}}>this month</span></span>
