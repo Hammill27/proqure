@@ -791,6 +791,16 @@ async function analyseQuote(items, quoteText, supplierName, onProgress) {
 }
 
 // --- Extract quote text from uploaded file using AI --------------------------
+// Convert a stored base64 data URL (e.g. an emailed supplier attachment) back into a
+// File so it can go through the exact same extraction path as a manual upload.
+function dataUrlToFile(dataUrl, name) {
+  const [meta, b64] = String(dataUrl).split(",");
+  const mime = ((meta || "").match(/data:([^;]+)/) || [])[1] || "application/octet-stream";
+  const bin = atob(b64 || "");
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new File([arr], name || "attachment", { type: mime });
+}
 async function extractQuoteFromFile(fileContent, fileName, fileType) {
   const sys = `You are a procurement data extraction specialist. A supplier has sent a quote document. Extract ALL pricing information, stock availability, delivery charges, lead times, and any other relevant procurement data from the document content provided. Return the extracted information as clean, structured plain text that clearly lists each item with its price, availability, and any other details. Preserve all numbers and prices exactly. If the document appears to be a table or spreadsheet, convert it to a clear line-by-line format. Start directly with the extracted data, no preamble.`;
   const prompt = `File name: ${fileName}
@@ -3929,6 +3939,48 @@ ${settings.company||""}`;
     setFileExtracting(prev=>({...prev,[si]:false}));
   };
 
+  // Auto-read emailed supplier attachments into the quote box using the SAME extractor
+  // as a manual upload, so the AI reads everything in the box. Runs when a request is
+  // open; each attachment is processed once (extracted flag), sequentially.
+  const autoExtractRef = useRef(false);
+  useEffect(() => {
+    if (!activeReq || autoExtractRef.current) return;
+    if (!(AI_VIA_SERVER || settings.openRouterKey)) return;
+    const pending = [];
+    (activeReq.sentTo||[]).forEach((s,si)=>(s.attachments||[]).forEach((a,ai)=>{
+      if (a && a.dataUrl && !a.extracted && !a.extractError) pending.push({si,ai,name:a.name,dataUrl:a.dataUrl});
+    }));
+    if (!pending.length) return;
+    autoExtractRef.current = true;
+    const reqId = activeReq.id;
+    (async () => {
+      window.__piq_or_key__ = settings.openRouterKey;
+      for (const job of pending) {
+        try {
+          setFileExtracting(p=>({...p,[job.si]:true}));
+          const { content, type } = await readFileForExtraction(dataUrlToFile(job.dataUrl, job.name));
+          const extracted = await extractQuoteFromFile(content, job.name, type);
+          const tag = "--- From " + (job.name||"attachment") + " (emailed) ---\n";
+          const apply = (s,i)=> i===job.si ? {
+            ...s,
+            quote: (s.quote && s.quote.trim() ? s.quote + "\n\n" : "") + tag + extracted,
+            saved: true,
+            attachments: (s.attachments||[]).map((x,xi)=> xi===job.ai ? {...x, extracted:true} : x),
+          } : s;
+          setRequests(p=>p.map(r=> r.id===reqId ? {...r, sentTo:r.sentTo.map(apply)} : r));
+          setActiveReq(p=> p && p.id===reqId ? {...p, sentTo:p.sentTo.map(apply)} : p);
+        } catch (err) {
+          const mark = (s,i)=> i===job.si ? {...s, attachments:(s.attachments||[]).map((x,xi)=> xi===job.ai ? {...x, extractError:true} : x)} : s;
+          setRequests(p=>p.map(r=> r.id===reqId ? {...r, sentTo:r.sentTo.map(mark)} : r));
+          setActiveReq(p=> p && p.id===reqId ? {...p, sentTo:p.sentTo.map(mark)} : p);
+        } finally {
+          setFileExtracting(p=>({...p,[job.si]:false}));
+        }
+      }
+      autoExtractRef.current = false;
+    })();
+  }, [activeReq, settings]);
+
   // Bulk CSV/spreadsheet import — parses a materials list directly into items (no AI needed)
   const importMaterialsCSV = async (file) => {
     if (!file) return;
@@ -5296,6 +5348,15 @@ Rules:
                                 <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.txt" style={{display:"none"}} disabled={!!fileExtracting[si]} onChange={e=>{if(e.target.files[0])processQuoteFile(e.target.files[0],si,sup,activeReq.id);e.target.value="";}}/>
                               </label>
                             </div>
+                            {(sup.attachments||[]).length>0&&(
+                              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+                                {sup.attachments.map((a,ai)=>a.dataUrl?(
+                                  <a key={ai} href={a.dataUrl} download={a.name} style={{fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:8,background:"var(--green-light)",color:"var(--green-deep)",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:5,border:"1px solid var(--green-deep)"}}><Icon name="paperclip" size={11} color="var(--green-deep)" strokeWidth={2.5}/>{a.name}{a.extracted?<span style={{opacity:.7,fontWeight:500}}> · read in</span>:a.extractError?<span style={{opacity:.7,fontWeight:500}}> · couldn't read</span>:fileExtracting[si]?<span style={{opacity:.7,fontWeight:500}}> · reading...</span>:null}</a>
+                                ):(
+                                  <span key={ai} style={{fontSize:11,fontWeight:500,padding:"4px 10px",borderRadius:8,background:"var(--bg-subtle)",color:"var(--text-tertiary)",border:"1px solid var(--border)"}}>{a.name} {a.tooLarge?"(too large to attach)":"(unavailable)"}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
