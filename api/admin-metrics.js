@@ -32,6 +32,7 @@ const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", 
 // - Email stats: per-company deliverability counters, written by the Resend webhook.
 const AUDIT_KEY = "piq_admin_audit";
 const EMAIL_STATS_KEY = "piq_email_stats";
+const EVENTS_KEY = "piq_email_events";
 const AUDIT_CAP = 1000; // keep the most recent N entries per admin row
 
 // ---- Pure assembly: turn raw rows into the metadata-only summary the UI needs -------
@@ -73,12 +74,45 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const usageByCo = new Map();
   for (const r of usageRows) usageByCo.set(r.user_id, r.value || {});
   const emailByCo = new Map();
+  let platformEmail = { receivedUnmatched: 0 };
   for (const r of emailStatsRows) {
     const v = r.value || {};
+    if (r.user_id === "platform-email") { platformEmail = { receivedUnmatched: Number(v.receivedUnmatched || 0) }; continue; }
     emailByCo.set(r.user_id, {
       sent: Number(v.sent || 0), delivered: Number(v.delivered || 0),
       bounced: Number(v.bounced || 0), complained: Number(v.complained || 0),
+      received: Number(v.received || 0), receivedAttachments: Number(v.receivedAttachments || 0),
       lastEventAt: v.lastEventAt || null,
+    });
+  }
+
+  // Supplier-reply metadata, derived from piq_requests. We read the request data
+  // ONLY to count — supplier counts, reply counts, timestamps — and never copy any
+  // quote text into the output. Pure metadata for the compliance/observability view.
+  const replyByCo = new Map();
+  for (const r of countRows) {
+    if (r.store_key !== "piq_requests") continue;
+    const requests = Array.isArray(r.value) ? r.value : [];
+    let emailed = 0, replied = 0, rfqs = 0, byAddress = 0, lastReply = 0;
+    for (const req of requests) {
+      const sentTo = (req && Array.isArray(req.sentTo)) ? req.sentTo : [];
+      if (sentTo.length) rfqs++;
+      emailed += sentTo.length;
+      for (const s of sentTo) {
+        if (s && s.replyReceivedAt) {
+          replied++;
+          const t = Date.parse(s.replyReceivedAt) || 0;
+          if (t > lastReply) lastReply = t;
+        }
+      }
+      const acts = (req && Array.isArray(req.activity)) ? req.activity : [];
+      for (const a of acts) {
+        if (a && a.action === "Supplier reply captured" && /sender address/i.test(a.detail || "")) byAddress++;
+      }
+    }
+    replyByCo.set(r.user_id, {
+      suppliersEmailed: emailed, suppliersReplied: replied, rfqsSent: rfqs,
+      repliesByAddress: byAddress, lastReplyAt: lastReply ? new Date(lastReply).toISOString() : null,
     });
   }
 
@@ -158,7 +192,8 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       aiSpend: Number((usageByCo.get(c.companyId) || {}).aiSpend || 0),
       aiCalls: Number((usageByCo.get(c.companyId) || {}).aiCalls || 0),
       webCalls: Number((usageByCo.get(c.companyId) || {}).webCalls || 0),
-      email: emailByCo.get(c.companyId) || { sent: 0, delivered: 0, bounced: 0, complained: 0, lastEventAt: null },
+      email: emailByCo.get(c.companyId) || { sent: 0, delivered: 0, bounced: 0, complained: 0, received: 0, receivedAttachments: 0, lastEventAt: null },
+      replies: replyByCo.get(c.companyId) || { suppliersEmailed: 0, suppliersReplied: 0, rfqsSent: 0, repliesByAddress: 0, lastReplyAt: null },
     });
   }
   list.sort((a, b) => (Date.parse(b.lastActive || 0) || 0) - (Date.parse(a.lastActive || 0) || 0));
@@ -188,6 +223,12 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const emailsDelivered = list.reduce((n, c) => n + (c.email.delivered || 0), 0);
   const emailsBounced = list.reduce((n, c) => n + (c.email.bounced || 0), 0);
   const emailsComplained = list.reduce((n, c) => n + (c.email.complained || 0), 0);
+  // inbound / supplier-reply totals (metadata only)
+  const totalSuppliersEmailed = list.reduce((n, c) => n + (c.replies.suppliersEmailed || 0), 0);
+  const totalSupplierReplies = list.reduce((n, c) => n + (c.replies.suppliersReplied || 0), 0);
+  const totalReceivedMatched = list.reduce((n, c) => n + (c.email.received || 0), 0);
+  const totalReceivedAttachments = list.reduce((n, c) => n + (c.email.receivedAttachments || 0), 0);
+  const totalReceivedUnmatched = platformEmail.receivedUnmatched || 0;
   // companies ranked by spend (then email volume) — the "who costs us most" view
   const costRanking = [...list]
     .filter(c => (c.aiSpend || 0) > 0 || (c.email.sent || 0) > 0)
@@ -230,6 +271,8 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       pendingInvites, unconfirmedUsers, planDist,
       totalAiSpend, totalAiCalls, totalWebCalls,
       emailsSent, emailsDelivered, emailsBounced, emailsComplained,
+      totalSuppliersEmailed, totalSupplierReplies,
+      totalReceivedMatched, totalReceivedUnmatched, totalReceivedAttachments,
     },
     costRanking,
     signupHistogram: hist,
@@ -382,6 +425,22 @@ export default async function handler(req, res) {
       }
       entries.sort((a, b) => Date.parse(b.ts || 0) - Date.parse(a.ts || 0));
       res.status(200).json({ ok: true, entries: entries.slice(0, 500) });
+      return;
+    }
+
+    if (action === "events") {
+      // recent webhook events (delivered/bounced/received/...) — platform-wide,
+      // or for one company when companyId is supplied. Metadata only.
+      const companyId = (body.companyId || "").trim();
+      let q = admin.from("proqure_data").select("user_id,value").eq("store_key", EVENTS_KEY);
+      if (companyId) q = q.eq("user_id", companyId);
+      const { data: rows } = await q;
+      const out = [];
+      for (const r of (rows || [])) {
+        if (Array.isArray(r.value)) for (const e of r.value) out.push({ company: r.user_id, ...e });
+      }
+      out.sort((a, b) => Date.parse(b.ts || 0) - Date.parse(a.ts || 0));
+      res.status(200).json({ ok: true, events: out.slice(0, companyId ? 100 : 300) });
       return;
     }
 
