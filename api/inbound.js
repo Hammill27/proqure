@@ -159,10 +159,36 @@ async function forwardCopy(inbox, supName, fromAddr, subject, replyText) {
   } catch (e) { console.warn("api/inbound: forward failed (non-fatal)", e && e.message); }
 }
 
+const STATS_KEY = "piq_email_stats";
+const EVENTS_KEY = "piq_email_events";
+const PLATFORM_BUCKET = "platform-email";
+const EVENTS_CAP = 200;
+
+// Metadata-only observability writes. These never carry subjects or body/quote text —
+// only counts, the supplier address, a matched-by flag and an attachment count. They
+// must never block reply capture, so all errors are swallowed.
+async function bumpStat(companyId, fields) {
+  if (!supabase) return;
+  try {
+    const { data } = await supabase.from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", STATS_KEY).maybeSingle();
+    const v = (data && data.value) || {};
+    for (const [k, n] of Object.entries(fields)) v[k] = Number(v[k] || 0) + Number(n || 0);
+    v.lastEventAt = new Date().toISOString();
+    await supabase.from("proqure_data").upsert({ user_id: companyId, store_key: STATS_KEY, value: v, updated_at: v.lastEventAt }, { onConflict: "user_id,store_key" });
+  } catch (e) { /* non-fatal */ }
+}
+async function pushEvent(companyId, evt) {
+  if (!supabase) return;
+  try {
+    const { data } = await supabase.from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", EVENTS_KEY).maybeSingle();
+    const log = Array.isArray(data && data.value) ? data.value : [];
+    log.push({ ts: new Date().toISOString(), ...evt });
+    await supabase.from("proqure_data").upsert({ user_id: companyId, store_key: EVENTS_KEY, value: log.slice(-EVENTS_CAP), updated_at: new Date().toISOString() }, { onConflict: "user_id,store_key" });
+  } catch (e) { /* non-fatal */ }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
-  const { raw, src } = await readRaw(req);
   console.log("api/inbound: POST received | rawLen", raw.length, "| src", src);
 
   let event;
@@ -186,6 +212,7 @@ export default async function handler(req, res) {
     const emailId = data.email_id || data.id;
     let email = emailId ? await getEmail(emailId) : null;
     if (!email) email = data;
+    const attN = Array.isArray(email && email.attachments) ? email.attachments.length : 0;
 
     const token = extractToken((email && email.to) || data.to);
     if (!supabase) { console.error("api/inbound: Supabase not configured (URL / SERVICE key)"); return res.status(200).json({ ok: true, note: "storage not configured" }); }
@@ -235,7 +262,7 @@ export default async function handler(req, res) {
       }
       if (best) { target = best; matchedBy = "sender address"; }
     }
-    if (!target) { console.warn("api/inbound: not matched - token", token, "from", fromEmail); return res.status(200).json({ ok: true, note: "not matched" }); }
+    if (!target) { console.warn("api/inbound: not matched - token", token, "from", fromEmail); await bumpStat(PLATFORM_BUCKET, { receivedUnmatched: 1 }); await pushEvent(PLATFORM_BUCKET, { type: "received-unmatched", from: fromEmail, att: attN }); return res.status(200).json({ ok: true, note: "not matched" }); }
 
     const { userId, requests, ri, si } = target;
     const sup = requests[ri].sentTo[si];
@@ -253,6 +280,8 @@ export default async function handler(req, res) {
     const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: requests, updated_at: stamp }, { onConflict: "user_id,store_key" });
     if (upErr) { console.error("api/inbound: save error", upErr.message); return res.status(200).json({ ok: true }); }
     console.log("api/inbound: MATCHED & SAVED | user", userId, "| req", ri, "| supplier", si);
+    await bumpStat(userId, { received: 1, receivedAttachments: attN });
+    await pushEvent(userId, { type: "received", from: fromEmail, matchedBy, att: attN });
 
     try {
       const { data: sRows } = await supabase.from("proqure_data").select("value").eq("store_key", "piq_settings").eq("user_id", userId).limit(1);
