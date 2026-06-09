@@ -26,9 +26,17 @@ const ADMIN_EMAILS  = (process.env.ADMIN_CONSOLE_EMAILS || "")
 
 const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", "piq_activity", "piq_quote_sets", "piq_quote_library", "piq_templates"];
 
+// Owner-tooling stores (proqure_data store_keys).
+// - Audit log: append-only, written under the ACTING ADMIN's own user_id so it
+//   needs no new table or magic UUID; the console merges every admin's rows.
+// - Email stats: per-company deliverability counters, written by the Resend webhook.
+const AUDIT_KEY = "piq_admin_audit";
+const EMAIL_STATS_KEY = "piq_email_stats";
+const AUDIT_CAP = 1000; // keep the most recent N entries per admin row
+
 // ---- Pure assembly: turn raw rows into the metadata-only summary the UI needs -------
 // Exported so it can be unit-tested without a live database.
-export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [], excludeEmails = [] }) {
+export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [], emailStatsRows = [], excludeEmails = [] }) {
   const now = Date.now();
   const DAY = 86400000;
 
@@ -64,6 +72,15 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   }
   const usageByCo = new Map();
   for (const r of usageRows) usageByCo.set(r.user_id, r.value || {});
+  const emailByCo = new Map();
+  for (const r of emailStatsRows) {
+    const v = r.value || {};
+    emailByCo.set(r.user_id, {
+      sent: Number(v.sent || 0), delivered: Number(v.delivered || 0),
+      bounced: Number(v.bounced || 0), complained: Number(v.complained || 0),
+      lastEventAt: v.lastEventAt || null,
+    });
+  }
 
   // group members into companies
   const companies = new Map(); // company_id -> company object
@@ -138,6 +155,10 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
         templates: counts.piq_templates || 0,
       },
       aiUsage: usageByCo.get(c.companyId) || null,
+      aiSpend: Number((usageByCo.get(c.companyId) || {}).aiSpend || 0),
+      aiCalls: Number((usageByCo.get(c.companyId) || {}).aiCalls || 0),
+      webCalls: Number((usageByCo.get(c.companyId) || {}).webCalls || 0),
+      email: emailByCo.get(c.companyId) || { sent: 0, delivered: 0, bounced: 0, complained: 0, lastEventAt: null },
     });
   }
   list.sort((a, b) => (Date.parse(b.lastActive || 0) || 0) - (Date.parse(a.lastActive || 0) || 0));
@@ -158,6 +179,21 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const signupsLast30d = authUsers.filter(u => u.created_at && (now - Date.parse(u.created_at)) < 30 * DAY).length;
   const activeLast7d = list.filter(c => c.lastActive && (now - Date.parse(c.lastActive)) < 7 * DAY).length;
   const staleCompanies = list.filter(c => c.onboarded && (!c.lastActive || (now - Date.parse(c.lastActive)) > 30 * DAY)).length;
+
+  // cost & deliverability totals
+  const totalAiSpend = list.reduce((n, c) => n + (c.aiSpend || 0), 0);
+  const totalAiCalls = list.reduce((n, c) => n + (c.aiCalls || 0), 0);
+  const totalWebCalls = list.reduce((n, c) => n + (c.webCalls || 0), 0);
+  const emailsSent = list.reduce((n, c) => n + (c.email.sent || 0), 0);
+  const emailsDelivered = list.reduce((n, c) => n + (c.email.delivered || 0), 0);
+  const emailsBounced = list.reduce((n, c) => n + (c.email.bounced || 0), 0);
+  const emailsComplained = list.reduce((n, c) => n + (c.email.complained || 0), 0);
+  // companies ranked by spend (then email volume) — the "who costs us most" view
+  const costRanking = [...list]
+    .filter(c => (c.aiSpend || 0) > 0 || (c.email.sent || 0) > 0)
+    .sort((a, b) => (b.aiSpend || 0) - (a.aiSpend || 0) || (b.email.sent || 0) - (a.email.sent || 0))
+    .slice(0, 25)
+    .map(c => ({ companyId: c.companyId, name: c.name, plan: c.plan, aiSpend: c.aiSpend, aiCalls: c.aiCalls, webCalls: c.webCalls, email: c.email }));
 
   // recent signups feed
   const recentSignups = [...authUsers]
@@ -192,7 +228,10 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       signupsLast30d, activeLast7d, staleCompanies, onboardedCount,
       totalOrders, totalRequests, totalSuppliers, totalHires, totalQuotes,
       pendingInvites, unconfirmedUsers, planDist,
+      totalAiSpend, totalAiCalls, totalWebCalls,
+      emailsSent, emailsDelivered, emailsBounced, emailsComplained,
     },
+    costRanking,
     signupHistogram: hist,
     recentSignups,
     companies: list,
@@ -210,6 +249,44 @@ function readBody(req) {
   if (!req.body) return {};
   if (typeof req.body === "string") { try { return JSON.parse(req.body); } catch { return {}; } }
   return req.body;
+}
+
+// Append one entry to the acting admin's audit row (read-merge-write, capped).
+// Failures here must never block the action itself, so this swallows errors.
+async function writeAudit(admin, actor, entry) {
+  try {
+    const actorId = actor && actor.id;
+    if (!actorId) return;
+    const { data } = await admin.from("proqure_data")
+      .select("value").eq("user_id", actorId).eq("store_key", AUDIT_KEY).maybeSingle();
+    const log = Array.isArray(data && data.value) ? data.value : [];
+    log.push({
+      ts: new Date().toISOString(),
+      actor: (actor.email || "").toLowerCase(),
+      action: entry.action,
+      target: entry.target || null,
+      detail: entry.detail || null,
+    });
+    const trimmed = log.slice(-AUDIT_CAP);
+    await admin.from("proqure_data").upsert(
+      { user_id: actorId, store_key: AUDIT_KEY, value: trimmed, updated_at: new Date().toISOString() },
+      { onConflict: "user_id,store_key" }
+    );
+  } catch { /* audit must not break the action */ }
+}
+
+// Resolve an auth user by email (paginates; small N in practice).
+async function findUserByEmail(admin, email) {
+  email = (email || "").toLowerCase();
+  for (let page = 1; page <= 10; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) break;
+    const users = (data && data.users) || [];
+    const hit = users.find(u => (u.email || "").toLowerCase() === email);
+    if (hit) return hit;
+    if (users.length < 1000) break;
+  }
+  return null;
 }
 
 // ---- handler ----------------------------------------------------------------
@@ -286,8 +363,25 @@ export default async function handler(req, res) {
       const { data: usageRows } = await admin
         .from("proqure_data").select("user_id,value").eq("store_key", "piq_usage");
 
-      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], excludeEmails: ADMIN_EMAILS });
+      // per-company email deliverability counters (written by the Resend webhook)
+      const { data: emailStatsRows } = await admin
+        .from("proqure_data").select("user_id,value").eq("store_key", EMAIL_STATS_KEY);
+
+      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], emailStatsRows: emailStatsRows || [], excludeEmails: ADMIN_EMAILS });
       res.status(200).json({ ok: true, ...summary, viewer: callerEmail });
+      return;
+    }
+
+    if (action === "audit") {
+      // merge every admin's audit row into one reverse-chronological feed
+      const { data: rows } = await admin
+        .from("proqure_data").select("value").eq("store_key", AUDIT_KEY);
+      const entries = [];
+      for (const r of (rows || [])) {
+        if (Array.isArray(r.value)) for (const e of r.value) entries.push(e);
+      }
+      entries.sort((a, b) => Date.parse(b.ts || 0) - Date.parse(a.ts || 0));
+      res.status(200).json({ ok: true, entries: entries.slice(0, 500) });
       return;
     }
 
@@ -296,6 +390,7 @@ export default async function handler(req, res) {
       if (!email) { res.status(400).json({ error: "Email required." }); return; }
       const { error } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo: process.env.APP_URL || undefined });
       if (error) { res.status(400).json({ error: error.message }); return; }
+      await writeAudit(admin, caller, { action: "resend-invite", target: email });
       res.status(200).json({ ok: true, message: `Invite re-sent to ${email}.` });
       return;
     }
@@ -305,6 +400,7 @@ export default async function handler(req, res) {
       if (!email) { res.status(400).json({ error: "Email required." }); return; }
       const { error } = await anon.auth.resetPasswordForEmail(email, { redirectTo: process.env.APP_URL || undefined });
       if (error) { res.status(400).json({ error: error.message }); return; }
+      await writeAudit(admin, caller, { action: "send-reset", target: email });
       res.status(200).json({ ok: true, message: `Password-reset link sent to ${email}.` });
       return;
     }
@@ -324,7 +420,56 @@ export default async function handler(req, res) {
         { onConflict: "user_id,store_key" }
       );
       if (wErr) { res.status(400).json({ error: wErr.message }); return; }
+      await writeAudit(admin, caller, { action: "set-plan", target: companyId, detail: `plan=${plan}` });
       res.status(200).json({ ok: true, message: `Plan set to "${plan}".`, plan });
+      return;
+    }
+
+    if (action === "verify-email") {
+      const email = (body.email || "").trim().toLowerCase();
+      if (!email) { res.status(400).json({ error: "Email required." }); return; }
+      const u = await findUserByEmail(admin, email);
+      if (!u) { res.status(404).json({ error: "No account found for " + email + "." }); return; }
+      const { error } = await admin.auth.admin.updateUserById(u.id, { email_confirm: true });
+      if (error) { res.status(400).json({ error: error.message }); return; }
+      await writeAudit(admin, caller, { action: "verify-email", target: email });
+      res.status(200).json({ ok: true, message: `Email confirmed for ${email}.` });
+      return;
+    }
+
+    if (action === "force-logout") {
+      const email = (body.email || "").trim().toLowerCase();
+      if (!email) { res.status(400).json({ error: "Email required." }); return; }
+      const u = await findUserByEmail(admin, email);
+      if (!u) { res.status(404).json({ error: "No account found for " + email + "." }); return; }
+      // GoTrue admin logout: revokes the user's refresh tokens so they're signed
+      // out everywhere (existing access tokens lapse at their normal expiry).
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${u.id}/logout`, {
+        method: "POST",
+        headers: { apikey: SERVICE_KEY, Authorization: "Bearer " + SERVICE_KEY },
+      });
+      if (!r.ok && r.status !== 204) {
+        const t = await r.text().catch(() => "");
+        res.status(400).json({ error: `Force-logout failed (${r.status}). If this persists, use Disable then Re-enable. ${t.slice(0, 100)}` });
+        return;
+      }
+      await writeAudit(admin, caller, { action: "force-logout", target: email });
+      res.status(200).json({ ok: true, message: `Signed ${email} out of all sessions.` });
+      return;
+    }
+
+    if (action === "disable-account" || action === "enable-account") {
+      const email = (body.email || "").trim().toLowerCase();
+      if (!email) { res.status(400).json({ error: "Email required." }); return; }
+      const u = await findUserByEmail(admin, email);
+      if (!u) { res.status(404).json({ error: "No account found for " + email + "." }); return; }
+      const disable = action === "disable-account";
+      const { error } = await admin.auth.admin.updateUserById(u.id, { ban_duration: disable ? "876000h" : "none" });
+      if (error) { res.status(400).json({ error: error.message }); return; }
+      await writeAudit(admin, caller, { action, target: email });
+      res.status(200).json({ ok: true, message: disable
+        ? `${email} disabled — they can no longer sign in. Reversible.`
+        : `${email} re-enabled.` });
       return;
     }
 
