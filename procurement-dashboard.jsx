@@ -57,6 +57,20 @@ const can = {
   viewAllJobs: (role) => roleRank(role) >= 2,   // buyer and above see all jobs; engineers see only their own
   manageSuppliers:(role)=> roleRank(role) >= 2, // buyer and above add/edit suppliers (remove stays manager-only)
 };
+
+// Per-tier MONTHLY allowances for the metered web-search features (the only
+// usage-variable costs). Everything else is unlimited. Catalogue online lookups
+// get their own line, separate from Measure and O&M (per Andy, Jun 2026).
+// Trial mirrors Sole-Trader allowances.
+const ENTITLEMENTS = {
+  trial:      { seats: 1,        measureWeb: 100,  omWeb: 5,   catalogueWeb: 50 },
+  sole:       { seats: 1,        measureWeb: 100,  omWeb: 5,   catalogueWeb: 50 },
+  team:       { seats: 10,       measureWeb: 300,  omWeb: 15,  catalogueWeb: 150 },
+  business:   { seats: 50,       measureWeb: 1000, omWeb: 50,  catalogueWeb: 500 },
+  enterprise: { seats: Infinity, measureWeb: 3000, omWeb: 150, catalogueWeb: 1500 },
+};
+const planOf = (settings) => ENTITLEMENTS[settings && settings.plan] || ENTITLEMENTS.trial;
+const billingPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
@@ -3699,6 +3713,22 @@ ${settings.company||""}`;
     }));
     return ()=>{ __usageRecorder = null; };
   }, [setUsage]);
+  // --- Metered web-search allowances (Measure online, O&M datasheets, Catalogues) ---
+  // Counters live on the cloud-synced `usage` object and reset each billing month.
+  // allowance = plan entitlement + any purchased add-on blocks for the period.
+  const _period = billingPeriod();
+  const _samePeriod = usage.period === _period;
+  const featureLeft = (feature) => {
+    const limit = (planOf(settings)[feature] || 0) + (_samePeriod ? ((usage.addons && usage.addons[feature]) || 0) : 0);
+    const used = _samePeriod ? (usage[feature + "Used"] || 0) : 0;
+    return Math.max(0, limit - used);
+  };
+  const featureAllowed = (feature) => featureLeft(feature) > 0;
+  const recordFeatureUse = (feature) => setUsage(u => {
+    const p = billingPeriod();
+    const fresh = u.period === p ? u : { ...u, period: p, measureWebUsed: 0, omWebUsed: 0, catalogueWebUsed: 0, addons: {} };
+    return { ...fresh, period: p, [feature + "Used"]: (fresh[feature + "Used"] || 0) + 1 };
+  });
   useEffect(()=>{ queueCloudPush("piq_team", team); }, [team, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
   // Allow real changes to sync only after the initial mount pushes above have run (and been skipped).
@@ -3778,14 +3808,20 @@ ${settings.company||""}`;
       if (!mats.length) { showToast("No procured items found for this project yet.","warn"); return; }
       setOmStage("Compiling equipment & maintenance schedules\u2026");
       const data = await omBuildData(mats);
-      if (omWeb) {
+      let omOnline = omWeb;
+      if (omWeb && !featureAllowed("omWeb")) {
+        omOnline = false;
+        showToast("O\u0026M online-datasheet allowance reached this month \u2014 generating without online links. Add an O\u0026M pack or upgrade for more.","warn");
+      }
+      if (omOnline) {
+        recordFeatureUse("omWeb");
         setOmStage("Searching manufacturers for datasheets\u2026");
         await omFindDatasheets(data.literature, (d,t)=>setOmStage(`Finding datasheets \u2026 ${d}/${t}`));
       }
       setOmStage("Building the document\u2026");
       const project = { jobRef: proj.jobRef, name: proj.jobRef, site: proj.site,
         items: mats.length, date: new Date().toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}) };
-      await omGeneratePdf(data, project, settings, { split: omSplit, web: omWeb });
+      await omGeneratePdf(data, project, settings, { split: omSplit, web: omOnline });
       logActivity("O&M file generated", `O&M pack for ${proj.jobRef} (${mats.length} items)`, { entity:"order", jobRef: proj.jobRef });
       showToast("O&M file generated and downloaded.");
     } catch (e) {
@@ -3815,7 +3851,13 @@ ${settings.company||""}`;
         if (coatsApplies) inputs.coats = Number(mCoats) || 1;
         basis = areaR; basisUnit = "m\u00B2";
       }
-      const res = await measureCompute(mMaterial, inputs, { product: mProduct, useDatasheet: mUseDatasheet });
+      let useDS = mUseDatasheet;
+      if (mUseDatasheet && !featureAllowed("measureWeb")) {
+        useDS = false;
+        showToast("Measure online-lookup allowance reached this month \u2014 using standard rates. Add a lookup pack or upgrade for more.","warn");
+      }
+      if (useDS) recordFeatureUse("measureWeb");
+      const res = await measureCompute(mMaterial, inputs, { product: mProduct, useDatasheet: useDS });
       setMResult({ ...res, basis, basisUnit });
     } catch (e) { showToast("Couldn't calculate: " + (e.message || "error"), "warn"); }
     finally { setMBusy(false); }
