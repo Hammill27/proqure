@@ -159,6 +159,52 @@ async function forwardCopy(inbox, supName, fromAddr, subject, replyText) {
   } catch (e) { console.warn("api/inbound: forward failed (non-fatal)", e && e.message); }
 }
 
+// ---- supplier quote attachments (PDF / Excel / CSV / image) -----------------
+// Inbound webhook payloads carry attachment METADATA only; the bytes are fetched
+// from Resend. We pull the quote documents a supplier attaches and store them on
+// the supplier's sentTo entry so they show in the quote box. Base64 in-record
+// (capped) keeps it dependency-free and matches the app's existing file handling.
+const ATT_MAX = 4 * 1024 * 1024; // 4MB per file cap for base64-in-record
+function isQuoteAttachment(type, name) {
+  type = (type || "").toLowerCase(); name = (name || "").toLowerCase();
+  if (/pdf|excel|spreadsheet|csv|image\//.test(type)) return true;
+  return /\.(pdf|xls|xlsx|csv|png|jpe?g|webp)$/.test(name);
+}
+async function bytesFromUrl(url) {
+  try { const r = await fetch(url); if (!r.ok) return null; return Buffer.from(await r.arrayBuffer()); }
+  catch { return null; }
+}
+async function fetchQuoteAttachments(emailId, email) {
+  let list = Array.isArray(email && email.attachments) ? email.attachments.slice() : [];
+  // If the receiving object didn't include attachments, ask the attachments API.
+  if (!list.length && emailId && RESEND_API_KEY) {
+    try {
+      const r = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments`, { headers: { Authorization: `Bearer ${RESEND_API_KEY}` } });
+      if (r.ok) { const j = await r.json(); const d = (j && (j.data || j)) || []; list = Array.isArray(d) ? d : []; }
+    } catch { /* ignore */ }
+  }
+  const out = [];
+  for (const a of list) {
+    const name = a.filename || a.name || "attachment";
+    const type = a.content_type || a.contentType || "";
+    if (!isQuoteAttachment(type, name)) continue;
+    let bytes = null;
+    try {
+      if (a.content) bytes = Buffer.from(a.content, "base64");
+      else if (a.download_url || a.url) bytes = await bytesFromUrl(a.download_url || a.url);
+      else if (a.id && emailId && RESEND_API_KEY) {
+        const r = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments/${a.id}`, { headers: { Authorization: `Bearer ${RESEND_API_KEY}` } });
+        if (r.ok) { const j = await r.json(); const d = (j && j.data) || j; if (d && d.content) bytes = Buffer.from(d.content, "base64"); else if (d && (d.download_url || d.url)) bytes = await bytesFromUrl(d.download_url || d.url); }
+      }
+    } catch { /* skip this one */ }
+    const size = bytes ? bytes.length : Number(a.size || 0);
+    if (!bytes) { out.push({ name, type, size, dataUrl: null, note: "fetch failed" }); continue; }
+    if (size > ATT_MAX) { out.push({ name, type, size, dataUrl: null, tooLarge: true }); continue; }
+    out.push({ name, type, size, dataUrl: `data:${type || "application/octet-stream"};base64,${bytes.toString("base64")}`, receivedAt: new Date().toISOString(), extracted: false });
+  }
+  return out;
+}
+
 const STATS_KEY = "piq_email_stats";
 const EVENTS_KEY = "piq_email_events";
 const PLATFORM_BUCKET = "platform-email";
@@ -271,10 +317,13 @@ export default async function handler(req, res) {
     sup.quote = (sup.quote && sup.quote.trim() ? sup.quote + "\n\n" : "") + header + (replyText || "(no readable text in reply)");
     sup.saved = true;
     sup.replyReceivedAt = stamp;
+    const quoteAtts = await fetchQuoteAttachments(emailId, email);
+    if (quoteAtts.length) sup.attachments = [...(Array.isArray(sup.attachments) ? sup.attachments : []), ...quoteAtts];
+    const keptAtts = quoteAtts.filter(a => a.dataUrl).length;
     requests[ri].sentTo[si] = sup;
     requests[ri].activity = [
       ...(requests[ri].activity || []),
-      { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box${matchedBy === "sender address" ? " (matched by sender address)" : ""}`, user: "Inbound" },
+      { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box${keptAtts ? ` with ${keptAtts} attachment${keptAtts === 1 ? "" : "s"}` : ""}${matchedBy === "sender address" ? " (matched by sender address)" : ""}`, user: "Inbound" },
     ];
 
     const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: requests, updated_at: stamp }, { onConflict: "user_id,store_key" });
