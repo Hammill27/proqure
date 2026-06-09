@@ -11,6 +11,41 @@
 //
 // NOTE: the "from" domain (proqure.co.uk) must be verified in Resend to deliver.
 
+import { createClient } from "@supabase/supabase-js";
+
+// Caller verification: this endpoint sends mail from ProQure's own domain with a
+// central key, so left open it is an open relay (anyone could spam AS proqure.co.uk
+// and torch the domain's reputation). With the Supabase env present, a valid
+// signed-in session is required and the company tag is resolved server-side from
+// membership. Without the env, behaviour falls back to the previous open mode.
+const SB_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
+const SB_ANON = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const SB_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const sbAnon = (SB_URL && SB_ANON) ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+const sbAdmin = (SB_URL && SB_SERVICE) ? createClient(SB_URL, SB_SERVICE, { auth: { persistSession: false } }) : null;
+// Only these envelope addresses may ever be used in "from".
+const ALLOWED_FROM = ["quotes@proqure.co.uk", "orders@proqure.co.uk"];
+
+async function verifyCaller(req) {
+  if (!sbAnon) return { mode: "open" };
+  const h = req.headers.authorization || req.headers.Authorization || "";
+  const token = h.startsWith("Bearer ") ? h.slice(7).trim() : null;
+  if (!token) return { mode: "deny" };
+  try {
+    const { data, error } = await sbAnon.auth.getUser(token);
+    if (error || !data || !data.user) return { mode: "deny" };
+    const uid = data.user.id;
+    let companyId = uid;
+    if (sbAdmin) {
+      try {
+        const { data: m } = await sbAdmin.from("members").select("company_id").eq("user_id", uid).limit(1).maybeSingle();
+        if (m && m.company_id) companyId = m.company_id;
+      } catch (e) { /* fall back to uid */ }
+    }
+    return { mode: "ok", companyId };
+  } catch (e) { return { mode: "deny" }; }
+}
+
 export default async function handler(req, res) {
   // CORS preflight
   if (req.method === "OPTIONS") {
@@ -29,6 +64,22 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing from, to, or subject" });
   }
 
+  // 1) Caller must be a signed-in ProQure user (when verification is configured).
+  const who = await verifyCaller(req);
+  if (who.mode === "deny") {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.status(401).json({ error: "Please sign in to send email." });
+  }
+  // 2) The envelope address must be one of ProQure's own (display name is free).
+  const addrMatch = String(from).match(/<([^>]+)>/);
+  const fromAddr = (addrMatch ? addrMatch[1] : String(from)).trim().toLowerCase();
+  if (!ALLOWED_FROM.includes(fromAddr)) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.status(400).json({ error: "Unsupported from address." });
+  }
+  // 3) Attribute the send to the VERIFIED company, not whatever the body claims.
+  const effectiveCompany = who.mode === "ok" ? who.companyId : company_id;
+
   try {
     // Build payload; only include optional fields when present.
     const payload = {
@@ -43,8 +94,8 @@ export default async function handler(req, res) {
     // Tag the send with the company id so the Resend webhook can attribute
     // delivered/bounced/complained events per company. Resend tags allow only
     // [A-Za-z0-9_-]; a UUID passes cleanly.
-    if (company_id && typeof company_id === "string") {
-      const v = company_id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
+    if (effectiveCompany && typeof effectiveCompany === "string") {
+      const v = effectiveCompany.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
       if (v) payload.tags = [{ name: "company_id", value: v }];
     }
 
