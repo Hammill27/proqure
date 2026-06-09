@@ -235,6 +235,7 @@ async function pushEvent(companyId, evt) {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const { raw, src } = await readRaw(req);
   console.log("api/inbound: POST received | rawLen", raw.length, "| src", src);
 
   let event;
