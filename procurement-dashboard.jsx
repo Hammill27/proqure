@@ -62,12 +62,16 @@ const can = {
 // usage-variable costs). Everything else is unlimited. Catalogue online lookups
 // get their own line, separate from Measure and O&M (per Andy, Jun 2026).
 // Trial mirrors Sole-Trader allowances.
+// `aiBudget` is a HARD monthly ceiling on total AI cost (GBP, OpenRouter spend)
+// for the company — the circuit-breaker. When this month's spend reaches it, all
+// AI calls are blocked until the 1st (or an upgrade). Models are cheap and web
+// search is separately metered, so these are generous safety nets; tune freely.
 const ENTITLEMENTS = {
-  trial:      { seats: 1,        measureWeb: 100,  omWeb: 5,   catalogueWeb: 50 },
-  sole:       { seats: 1,        measureWeb: 100,  omWeb: 5,   catalogueWeb: 50 },
-  team:       { seats: 10,       measureWeb: 300,  omWeb: 15,  catalogueWeb: 150 },
-  business:   { seats: 50,       measureWeb: 1000, omWeb: 50,  catalogueWeb: 500 },
-  enterprise: { seats: Infinity, measureWeb: 3000, omWeb: 150, catalogueWeb: 1500 },
+  trial:      { seats: 1,        measureWeb: 100,  omWeb: 5,   catalogueWeb: 50,   aiBudget: 6 },
+  sole:       { seats: 1,        measureWeb: 100,  omWeb: 5,   catalogueWeb: 50,   aiBudget: 6 },
+  team:       { seats: 10,       measureWeb: 300,  omWeb: 15,  catalogueWeb: 150,  aiBudget: 20 },
+  business:   { seats: 50,       measureWeb: 1000, omWeb: 50,  catalogueWeb: 500,  aiBudget: 60 },
+  enterprise: { seats: Infinity, measureWeb: 3000, omWeb: 150, catalogueWeb: 1500, aiBudget: 150 },
 };
 const planOf = (settings) => ENTITLEMENTS[settings && settings.plan] || ENTITLEMENTS.trial;
 const billingPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
@@ -249,7 +253,16 @@ function reportAiUsage(cost, web = false) {
   try { if (__usageRecorder) __usageRecorder(Number(cost) || 0, !!web); } catch (e) { /* never break an AI call over metering */ }
 }
 
+// Circuit-breaker gate. The component registers a check that returns false once
+// this month's AI spend has reached the plan's aiBudget. The AI helpers consult
+// it BEFORE spending, so a runaway loop or accident can never outrun the monthly
+// ceiling. No recorder registered (e.g. logged out) => allowed.
+let __budgetCheck = null;
+function aiBudgetOk() { try { return __budgetCheck ? !!__budgetCheck() : true; } catch (e) { return true; } }
+const AI_BUDGET_MSG = "Your team has reached this month's AI limit. It resets on the 1st \u2014 or upgrade your plan for more headroom.";
+
 async function callAI(system, user, history=[], temperature=0.1) {
+  if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
   const models = [
     "deepseek/deepseek-chat",
     "meta-llama/llama-3.1-8b-instruct",
@@ -364,6 +377,7 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
     ]}
   ];
   try {
+    if (!aiBudgetOk()) return null;
     const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1 }) });
     if (!res.ok) return null;
     const d = await res.json();
@@ -1354,6 +1368,7 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
 // Returns { text, citations:[{url,title}] }. Falls back to a user key if the
 // server key isn't configured. Web search is metered, so only used on demand.
 async function callAIWeb(system, user, maxResults = 4) {
+  if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
   const messages = [{ role: "system", content: system }, { role: "user", content: user }];
   try {
     const res = await fetch("/api/ai", {
@@ -1939,6 +1954,7 @@ async function pdfToImages(file, maxPages = 3) {
 // materials take-off — the items shown on the drawing. PDFs are rasterised to
 // page images first; a true DWG/CAD file can't be read (export it to PDF first).
 async function takeoffFromDrawing(file) {
+  if (!aiBudgetOk()) return { error: AI_BUDGET_MSG };
   const sys = `You are a quantity surveyor doing a materials take-off from a construction drawing or specification. List the MATERIAL items shown, with quantities where they can reasonably be inferred from counts, schedules, legends or dimensions. Do NOT invent precise quantities you cannot see — use 1 and add a note if unsure. Ignore labour, prices and title-block text. Return ONLY valid JSON, no markdown:
 {"items":[{"description":"...","quantity":number,"unit":"e.g. no / m / m2 / each","category":"the trade, e.g. Electrical","notes":"short, e.g. 'counted from legend' or 'scale assumed'"}]}
 Always return the JSON, even if the list is short.`;
@@ -1992,6 +2008,7 @@ Always return the JSON, even if the list is short.`;
 // datasheet link if one is printed. We index the products; we do not re-host the
 // file. PDFs are rasterised to page images (first pages only, to bound cost).
 async function parseCatalogue(file) {
+  if (!aiBudgetOk()) return { error: AI_BUDGET_MSG };
   const sys = `You are reading a SUPPLIER PRODUCT CATALOGUE for UK building / trades materials. Extract the products listed. For each product capture: a clear description, the manufacturer/supplier part or product code if shown, the manufacturer or brand, the pack/unit if shown, and a datasheet or product-page URL ONLY if one is explicitly printed. NEVER invent part numbers or URLs — leave them blank if not shown. Return ONLY valid JSON, no markdown:
 {"supplier":"the catalogue's supplier or brand if identifiable, else ''","items":[{"description":"...","partNumber":"...","manufacturer":"...","pack":"...","datasheetUrl":"","notes":""}]}
 Always return the JSON, even if the list is short.`;
@@ -2860,6 +2877,7 @@ function ProQureApp({ session, companyId }) {
       const models = [ "google/gemini-2.5-flash", "google/gemini-flash-1.5" ];
       let extracted="";
       try {
+        if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
         const sres = await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"system",content:sys},userMsg],models,temperature:0.1})});
         if (sres.ok){ const sd=await sres.json(); reportAiUsage(sd.cost,false); if(sd.text) extracted=sd.text; }
       } catch(e){}
@@ -3784,14 +3802,30 @@ ${settings.company||""}`;
   // Register the module-level AI usage recorder: every AI call increments this
   // company's spend/calls so the admin dashboard shows cost per company.
   useEffect(()=>{
-    __usageRecorder = (cost, web)=> setUsage(u=>({
-      ...u,
-      aiSpend: Number(((Number(u.aiSpend)||0) + (Number(cost)||0)).toFixed(6)),
-      aiCalls: (Number(u.aiCalls)||0) + 1,
-      webCalls: (Number(u.webCalls)||0) + (web ? 1 : 0),
-    }));
+    __usageRecorder = (cost, web)=> setUsage(u=>{
+      const p = billingPeriod();
+      const base = u.period === p ? u : { ...u, period:p, measureWebUsed:0, omWebUsed:0, catalogueWebUsed:0, addons:{}, costPeriod:0 };
+      return {
+        ...base, period:p,
+        aiSpend: Number(((Number(base.aiSpend)||0) + (Number(cost)||0)).toFixed(6)),   // cumulative, all-time (admin telemetry)
+        aiCalls: (Number(base.aiCalls)||0) + 1,
+        webCalls: (Number(base.webCalls)||0) + (web ? 1 : 0),
+        costPeriod: Number(((Number(base.costPeriod)||0) + (Number(cost)||0)).toFixed(6)), // THIS month only (circuit-breaker)
+      };
+    });
     return ()=>{ __usageRecorder = null; };
   }, [setUsage]);
+  // Register the circuit-breaker gate: blocks AI once this month's spend hits the plan cap.
+  useEffect(()=>{
+    __budgetCheck = ()=>{
+      const cap = (planOf(settings).aiBudget) || 0;
+      if (cap <= 0) return true;
+      const p = billingPeriod();
+      const spent = usage.period === p ? (Number(usage.costPeriod)||0) : 0;
+      return spent < cap;
+    };
+    return ()=>{ __budgetCheck = null; };
+  }, [usage, settings]);
   // --- Metered web-search allowances (Measure online, O&M datasheets, Catalogues) ---
   // Counters live on the cloud-synced `usage` object and reset each billing month.
   // allowance = plan entitlement + any purchased add-on blocks for the period.
@@ -3805,7 +3839,7 @@ ${settings.company||""}`;
   const featureAllowed = (feature) => featureLeft(feature) > 0;
   const recordFeatureUse = (feature) => setUsage(u => {
     const p = billingPeriod();
-    const fresh = u.period === p ? u : { ...u, period: p, measureWebUsed: 0, omWebUsed: 0, catalogueWebUsed: 0, addons: {} };
+    const fresh = u.period === p ? u : { ...u, period: p, measureWebUsed: 0, omWebUsed: 0, catalogueWebUsed: 0, addons: {}, costPeriod: 0 };
     return { ...fresh, period: p, [feature + "Used"]: (fresh[feature + "Used"] || 0) + 1 };
   });
   // --- Billing: send the manager to Stripe-hosted Checkout / Customer Portal ---
@@ -4399,6 +4433,7 @@ Rules:
       let extracted = "";
       // Preferred path: central server key via /api/ai (no user key needed).
       try {
+        if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
         const sres = await fetch("/api/ai", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -7366,6 +7401,16 @@ Rules:
                     );
                   })}
                 </div>
+                {(()=>{ const sp=usage.period===billingPeriod(); const cap=planOf(settings).aiBudget||0; const spent=sp?(Number(usage.costPeriod)||0):0; const pctv=cap>0?Math.min(100,Math.round(spent/cap*100)):0; const col=pctv>=100?"#B42318":pctv>=80?"#B45309":"var(--green)"; return cap>0?(
+                  <div style={{margin:"0 0 16px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:5}}>
+                      <span style={{color:"var(--text-secondary)"}}>AI usage <span style={{opacity:.65}}>this month</span></span>
+                      <span style={{fontFamily:"ui-monospace,monospace",fontWeight:600,color:col}}>&pound;{spent.toFixed(2)} / &pound;{cap}</span>
+                    </div>
+                    <div style={{height:6,borderRadius:99,background:"var(--bg-subtle)",overflow:"hidden"}}><div style={{height:"100%",width:pctv+"%",background:col,borderRadius:99}}/></div>
+                    {pctv>=100 && <div style={{fontSize:11.5,color:"#B42318",marginTop:5}}>Monthly AI limit reached \u2014 AI features pause until the 1st, or upgrade for more.</div>}
+                  </div>
+                ):null; })()}
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {["sole","team","business"].map(p=>(
                     <button key={p} onClick={()=>startCheckout({plan:p})} style={{padding:"8px 14px",background:settings.plan===p?"var(--green)":"var(--bg-subtle)",color:settings.plan===p?"#fff":"var(--text-primary)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>{settings.plan===p?"\u2713 ":""}{PLAN_LABELS[p]}</button>
