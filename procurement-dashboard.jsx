@@ -71,6 +71,7 @@ const ENTITLEMENTS = {
 };
 const planOf = (settings) => ENTITLEMENTS[settings && settings.plan] || ENTITLEMENTS.trial;
 const billingPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
+const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", business: "Business", enterprise: "Enterprise" };
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
@@ -3729,6 +3730,25 @@ ${settings.company||""}`;
     const fresh = u.period === p ? u : { ...u, period: p, measureWebUsed: 0, omWebUsed: 0, catalogueWebUsed: 0, addons: {} };
     return { ...fresh, period: p, [feature + "Used"]: (fresh[feature + "Used"] || 0) + 1 };
   });
+  // --- Billing: send the manager to Stripe-hosted Checkout / Customer Portal ---
+  const startCheckout = async (body) => {
+    try {
+      const r = await fetch("/api/create-checkout-session", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: cloudUserId, email: session && session.user && session.user.email, ...body }) });
+      const d = await r.json();
+      if (d && d.url) window.location.href = d.url;
+      else showToast(d && d.error ? d.error : "Could not start checkout.", "warn");
+    } catch (e) { showToast("Billing isn't available right now.", "warn"); }
+  };
+  const openBillingPortal = async () => {
+    try {
+      const r = await fetch("/api/create-portal-session", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: cloudUserId }) });
+      const d = await r.json();
+      if (d && d.url) window.location.href = d.url;
+      else showToast(d && d.error ? d.error : "No billing account yet.", "warn");
+    } catch (e) { showToast("Billing isn't available right now.", "warn"); }
+  };
   useEffect(()=>{ queueCloudPush("piq_team", team); }, [team, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
   // Allow real changes to sync only after the initial mount pushes above have run (and been skipped).
@@ -7080,6 +7100,42 @@ Rules:
               </div>
             )}
             <div style={{display:"grid",gap:16}}>
+              {roleRank(myRole) >= 3 && (
+              <Card>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",flexWrap:"wrap",gap:8}}>
+                  <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)"}}>Plan &amp; billing</div>
+                  <div style={{fontSize:12.5,color:"var(--text-secondary)"}}>Current plan: <b style={{color:"var(--green-dark)"}}>{PLAN_LABELS[settings.plan]||"Trial"}</b>{settings.subscriptionStatus&&settings.subscriptionStatus!=="active"?` \u00B7 ${settings.subscriptionStatus}`:""}</div>
+                </div>
+                {settings.subscriptionStatus==="past_due" && (
+                  <div style={{background:"#fbf3df",border:"1px solid #e6d6a8",color:"#7a5a12",borderRadius:8,padding:"9px 12px",fontSize:12.5,margin:"10px 0 4px"}}>Your last payment failed. Tap <b>Manage billing</b> to update your card and keep your plan active.</div>
+                )}
+                <div style={{display:"grid",gap:7,margin:"14px 0 16px"}}>
+                  {[["measureWeb","Measure online lookups"],["omWeb","O\u0026M datasheet packs"],["catalogueWeb","Catalogue online lookups"]].map(([f,lbl])=>{
+                    const sp=usage.period===billingPeriod();
+                    const limit=(planOf(settings)[f]||0)+(sp&&usage.addons?(usage.addons[f]||0):0);
+                    const used=sp?(usage[f+"Used"]||0):0;
+                    return (
+                      <div key={f} style={{display:"flex",justifyContent:"space-between",fontSize:12.5}}>
+                        <span style={{color:"var(--text-secondary)"}}>{lbl} <span style={{opacity:.65}}>this month</span></span>
+                        <span style={{fontFamily:"ui-monospace,monospace",fontWeight:600,color:"var(--text-primary)"}}>{used} / {limit===Infinity?"\u221E":limit}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {["sole","team","business"].map(p=>(
+                    <button key={p} onClick={()=>startCheckout({plan:p})} style={{padding:"8px 14px",background:settings.plan===p?"var(--green)":"var(--bg-subtle)",color:settings.plan===p?"#fff":"var(--text-primary)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>{settings.plan===p?"\u2713 ":""}{PLAN_LABELS[p]}</button>
+                  ))}
+                  <button onClick={openBillingPortal} style={{padding:"8px 14px",background:"transparent",color:"var(--green-dark)",border:"1px solid var(--green)",borderRadius:"var(--radius-sm)",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>Manage billing</button>
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                  <button onClick={()=>startCheckout({kind:"measure_block"})} style={{padding:"7px 12px",background:"var(--bg-subtle)",color:"var(--text-secondary)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,fontWeight:600,cursor:"pointer"}}>+100 Measure &middot; \u00A39</button>
+                  <button onClick={()=>startCheckout({kind:"catalogue_block"})} style={{padding:"7px 12px",background:"var(--bg-subtle)",color:"var(--text-secondary)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,fontWeight:600,cursor:"pointer"}}>+100 Catalogue &middot; \u00A39</button>
+                  <button onClick={()=>startCheckout({kind:"om_block"})} style={{padding:"7px 12px",background:"var(--bg-subtle)",color:"var(--text-secondary)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,fontWeight:600,cursor:"pointer"}}>+10 O&amp;M &middot; \u00A329</button>
+                </div>
+                <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:12}}>Secure checkout by Stripe. In test mode use card 4242 4242 4242 4242, any future expiry and CVC.</div>
+              </Card>
+              )}
               <Card>
                 <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:16}}>Company details</div>
                 <div style={{display:"grid",gap:12}}>
