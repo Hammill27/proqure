@@ -64,11 +64,17 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing from, to, or subject" });
   }
 
-  // 1) Caller must be a signed-in ProQure user (when verification is configured).
+  // 1) Caller must be a signed-in ProQure user. This endpoint sends from a
+  //    reputation-critical domain, so unlike the AI proxy it FAILS CLOSED: if
+  //    verification isn't configured (no anon key), we refuse rather than revert
+  //    to an open relay.
   const who = await verifyCaller(req);
-  if (who.mode === "deny") {
+  if (who.mode !== "ok") {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    return res.status(401).json({ error: "Please sign in to send email." });
+    const msg = who.mode === "open"
+      ? "Email sending is not configured (missing auth)."
+      : "Please sign in to send email.";
+    return res.status(who.mode === "open" ? 500 : 401).json({ error: msg });
   }
   // 2) The envelope address must be one of ProQure's own (display name is free).
   const addrMatch = String(from).match(/<([^>]+)>/);
@@ -77,19 +83,37 @@ export default async function handler(req, res) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(400).json({ error: "Unsupported from address." });
   }
-  // 3) Attribute the send to the VERIFIED company, not whatever the body claims.
-  const effectiveCompany = who.mode === "ok" ? who.companyId : company_id;
+  // 3) Validate + cap recipients so a real account can't be used to blast mail.
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const toList = (Array.isArray(to) ? to : [to])
+    .map(x => String(x || "").trim())
+    .filter(Boolean);
+  if (!toList.length || toList.length > 25 || !toList.every(e => EMAIL_RE.test(e))) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.status(400).json({ error: "Invalid or too many recipients (max 25)." });
+  }
+  // reply_to, if present, must be a single valid address.
+  let replyToClean;
+  if (reply_to != null && reply_to !== "") {
+    replyToClean = String(reply_to).trim();
+    if (!EMAIL_RE.test(replyToClean)) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      return res.status(400).json({ error: "Invalid reply-to address." });
+    }
+  }
+  // 4) Attribute the send to the VERIFIED company, not whatever the body claims.
+  const effectiveCompany = who.companyId;
 
   try {
     // Build payload; only include optional fields when present.
     const payload = {
       from,
-      to: Array.isArray(to) ? to : [to],
+      to: toList,
       subject,
     };
     if (text) payload.text = text;
     if (html) payload.html = html;
-    if (reply_to) payload.reply_to = reply_to;
+    if (replyToClean) payload.reply_to = replyToClean;
 
     // Tag the send with the company id so the Resend webhook can attribute
     // delivered/bounced/complained events per company. Resend tags allow only
