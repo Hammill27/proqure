@@ -93,6 +93,18 @@ export default async function handler(req, res) {
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: "Missing messages" });
     }
+    // Resource limits: cap the conversation size so a malformed or abusive caller
+    // can't push a multi-megabyte prompt (cost amplification / memory pressure).
+    // Vision images legitimately make messages large, so the ceiling is generous
+    // but finite. Counted on the serialised size of the messages array.
+    if (messages.length > 50) {
+      return res.status(400).json({ error: "Too many messages in one request." });
+    }
+    let approxBytes = 0;
+    try { approxBytes = JSON.stringify(messages).length; } catch { approxBytes = Infinity; }
+    if (approxBytes > 6_000_000) { // ~6 MB of prompt+images
+      return res.status(413).json({ error: "Request too large." });
+    }
 
     // Caller verification (closes the open-proxy hole): a valid signed-in session
     // is required, and the company is resolved SERVER-SIDE from membership.
