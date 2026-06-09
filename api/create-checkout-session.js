@@ -12,7 +12,7 @@
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" }) : null;
 const APP = (process.env.APP_URL || "https://app.proqure.co.uk").replace(/\/+$/, "");
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -108,6 +108,18 @@ export default async function handler(req, res) {
     // Subscription (a plan)
     const price = PLAN_PRICES[plan];
     if (!price) return res.status(400).json({ error: "Unknown or unconfigured plan" });
+    // Guard against double subscriptions: if this customer already has a live
+    // subscription, send them to the Customer Portal to CHANGE plan instead of
+    // creating a second concurrent subscription (which would double-bill them).
+    if (customer) {
+      try {
+        const subs = await stripe.subscriptions.list({ customer, status: "all", limit: 10 });
+        const live = (subs.data || []).some(su => ["active", "trialing", "past_due", "unpaid"].includes(su.status));
+        if (live) {
+          return res.status(409).json({ error: "You already have a subscription. Use ‘Manage billing’ to change your plan.", alreadySubscribed: true });
+        }
+      } catch (e) { /* if the check fails, fall through rather than block a genuine purchase */ }
+    }
     const sess = await stripe.checkout.sessions.create({
       ...base,
       mode: "subscription",
