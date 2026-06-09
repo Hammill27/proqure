@@ -156,8 +156,25 @@ export default async function handler(req, res) {
       }
       case "invoice.paid":
       case "invoice.payment_succeeded": {
-        const companyId = await companyByCustomer(event.data.object.customer);
-        if (companyId) { await mergeBilling(companyId, { status: "active" }); await mergeSettings(companyId, { subscriptionStatus: "active" }); }
+        const inv = event.data.object;
+        const companyId = await companyByCustomer(inv.customer);
+        if (companyId) {
+          // Don't blindly flip to "active": a delayed/final invoice for a sub that
+          // has since been cancelled could otherwise resurrect access. Re-fetch the
+          // subscription's CURRENT state and apply that; only treat truly-live
+          // statuses as active. If there's no subscription on the invoice (e.g. a
+          // one-off), or the lookup fails, fall back to "active" as before.
+          let status = "active";
+          const subId = inv.subscription;
+          if (subId) {
+            try {
+              const sub = await stripe.subscriptions.retrieve(typeof subId === "string" ? subId : subId.id);
+              status = normStatus(sub.status);
+            } catch (e) { /* keep optimistic "active" on lookup failure */ }
+          }
+          await mergeBilling(companyId, { status });
+          await mergeSettings(companyId, { subscriptionStatus: status });
+        }
         break;
       }
       default: break;
