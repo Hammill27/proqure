@@ -37,7 +37,7 @@ const AUDIT_CAP = 1000; // keep the most recent N entries per admin row
 
 // ---- Pure assembly: turn raw rows into the metadata-only summary the UI needs -------
 // Exported so it can be unit-tested without a live database.
-export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [], emailStatsRows = [], excludeEmails = [] }) {
+export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [], emailStatsRows = [], storageRows = [], excludeEmails = [] }) {
   const now = Date.now();
   const DAY = 86400000;
 
@@ -84,6 +84,17 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       received: Number(v.received || 0), receivedAttachments: Number(v.receivedAttachments || 0),
       lastEventAt: v.lastEventAt || null,
     });
+  }
+
+  // per-company Supabase data size (bytes), from the proqure_storage_stats RPC.
+  // Rows: { user_id, store_key, bytes }. Summed per company with a per-store breakdown.
+  const storageByCo = new Map();
+  for (const r of storageRows) {
+    const id = r.user_id; const b = Number(r.bytes || 0);
+    if (!storageByCo.has(id)) storageByCo.set(id, { bytes: 0, byKey: {} });
+    const e = storageByCo.get(id);
+    e.bytes += b;
+    e.byKey[r.store_key] = (e.byKey[r.store_key] || 0) + b;
   }
 
   // Supplier-reply metadata, derived from piq_requests. We read the request data
@@ -194,6 +205,8 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       webCalls: Number((usageByCo.get(c.companyId) || {}).webCalls || 0),
       email: emailByCo.get(c.companyId) || { sent: 0, delivered: 0, bounced: 0, complained: 0, received: 0, receivedAttachments: 0, lastEventAt: null },
       replies: replyByCo.get(c.companyId) || { suppliersEmailed: 0, suppliersReplied: 0, rfqsSent: 0, repliesByAddress: 0, lastReplyAt: null },
+      storageBytes: (storageByCo.get(c.companyId) || {}).bytes || 0,
+      storageByKey: (storageByCo.get(c.companyId) || {}).byKey || {},
     });
   }
   list.sort((a, b) => (Date.parse(b.lastActive || 0) || 0) - (Date.parse(a.lastActive || 0) || 0));
@@ -229,6 +242,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const totalReceivedMatched = list.reduce((n, c) => n + (c.email.received || 0), 0);
   const totalReceivedAttachments = list.reduce((n, c) => n + (c.email.receivedAttachments || 0), 0);
   const totalReceivedUnmatched = platformEmail.receivedUnmatched || 0;
+  const totalStorageBytes = list.reduce((n, c) => n + (c.storageBytes || 0), 0);
   // companies ranked by spend (then email volume) — the "who costs us most" view
   const costRanking = [...list]
     .filter(c => (c.aiSpend || 0) > 0 || (c.email.sent || 0) > 0)
@@ -273,6 +287,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       emailsSent, emailsDelivered, emailsBounced, emailsComplained,
       totalSuppliersEmailed, totalSupplierReplies,
       totalReceivedMatched, totalReceivedUnmatched, totalReceivedAttachments,
+      totalStorageBytes,
     },
     costRanking,
     signupHistogram: hist,
@@ -410,7 +425,15 @@ export default async function handler(req, res) {
       const { data: emailStatsRows } = await admin
         .from("proqure_data").select("user_id,value").eq("store_key", EMAIL_STATS_KEY);
 
-      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], emailStatsRows: emailStatsRows || [], excludeEmails: ADMIN_EMAILS });
+      // per-company Supabase data size (RPC; sizes server-side without pulling the blobs).
+      // Gracefully empty until the proqure_storage_stats function is installed.
+      let storageRows = [];
+      try {
+        const { data: srows, error: stErr } = await admin.rpc("proqure_storage_stats");
+        if (!stErr && Array.isArray(srows)) storageRows = srows;
+      } catch { /* RPC not installed yet */ }
+
+      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], emailStatsRows: emailStatsRows || [], storageRows, excludeEmails: ADMIN_EMAILS });
       res.status(200).json({ ok: true, ...summary, viewer: callerEmail });
       return;
     }
