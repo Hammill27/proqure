@@ -55,6 +55,7 @@ const can = {
   raisePO:     (role) => roleRank(role) >= 2,   // buyer and above raise purchase orders
   viewCosts:   (role) => roleRank(role) >= 2,   // buyer and above see quote prices and spend
   viewAllJobs: (role) => roleRank(role) >= 2,   // buyer and above see all jobs; engineers see only their own
+  manageSuppliers:(role)=> roleRank(role) >= 2, // buyer and above add/edit suppliers (remove stays manager-only)
 };
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
@@ -2184,7 +2185,12 @@ function ProQureApp({ session, companyId }) {
   // default and wrongly kick a manager off Settings. Only redirect once we're
   // confident the team data is actually loaded.
   useEffect(() => {
-    const need = ({ library:2, team:3, settings:3 })[view];
+    // Hard-gated views: if a user lands here below the required rank (e.g. via a
+    // shortcut that bypassed handleNav), bounce them to the dashboard. This is the
+    // backstop behind handleNav's VIEW_MIN_ROLE check and must list EVERY restricted
+    // view. NB: "quotes" is intentionally omitted — engineers get a cost-stripped
+    // quotes view reached from dashboard/request cards (prices gated by can.viewCosts).
+    const need = ({ suppliers:2, om:2, reports:2, library:2, team:3, settings:3 })[view];
     if (!need) return;
     const teamLoaded = Array.isArray(team) && team.length > 0;
     const meKnown = !!myMember;
@@ -4705,7 +4711,7 @@ Rules:
                 {label:"New request",  sub:"Voice or type",         icon:"mic", action:()=>{setView("new");resetNewRequest();}, accent:"#5B5BD6"},
                 {label:"Analyse",      sub:"Compare quotes",        icon:"search", action:()=>{setView("quotes");}, accent:"#7E6DD6"},
                 {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"package", action:()=>setView("orders"), accent:"#1E9E63"},
-                ...(can.raisePO(myRole) ? [{label:"Quick PO", sub:"Phone-agreed order", icon:"clock", action:()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]}), accent:"#D97706"}] : [{label:"Suppliers", sub:"Manage accounts", icon:"building", action:()=>setView("suppliers"), accent:"#C77D2E"}]),
+                ...(can.raisePO(myRole) ? [{label:"Quick PO", sub:"Phone-agreed order", icon:"clock", action:()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]}), accent:"#D97706"}] : [{label:"Measure", sub:"Estimate materials", icon:"ruler", action:()=>setView("measure"), accent:"#C77D2E"}]),
               ].map((q,qi)=>(
                 <button key={q.label} onClick={q.action} className="stagger-in" style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"14px 16px":"18px 22px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:104,animationDelay:`${0.2+qi*0.04}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
@@ -6160,6 +6166,7 @@ Rules:
                   </div>
                 ))}
                 <Btn onClick={()=>{
+                  if(!can.manageSuppliers(myRole)){showToast("Only a Buyer or Manager can add suppliers.","warn");return;}
                   if(!newSup.name?.trim()||!newSup.email?.trim()){showToast("Name and email required","warn");return;}
                   const ns=normSupplier({id:Date.now(),name:newSup.name.trim(),email:newSup.email.trim(),categories:(newSup.categories||"General").split(",").map(s=>s.trim()).filter(Boolean)});
                   setSuppliers(p=>[...p,ns]);setNewSup({name:"",email:"",categories:""});showToast(`${ns.name} added`);
@@ -6735,11 +6742,11 @@ Rules:
                   <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Quick actions</div>
                   {[
                     {label:"Create a new request",action:()=>{setView("new");resetNewRequest();}},
-                    {label:"Analyse supplier quotes",action:()=>setView("quotes")},
+                    {label:"Analyse supplier quotes",min:2,action:()=>handleNav("quotes")},
                     {label:"View & send orders",action:()=>setView("orders")},
-                    {label:"Manage suppliers",action:()=>setView("suppliers")},
-                    {label:"Configure settings",action:()=>setView("settings")},
-                  ].map(l=>(
+                    {label:"Manage suppliers",min:2,action:()=>handleNav("suppliers")},
+                    {label:"Configure settings",min:3,action:()=>handleNav("settings")},
+                  ].filter(l=>!l.min||roleRank(myRole)>=l.min).map(l=>(
                     <button key={l.label} onClick={l.action} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"var(--radius-sm)",border:"none",background:"transparent",cursor:"pointer",textAlign:"left",marginBottom:2,fontSize:13,color:"var(--text-primary)",transition:"background 0.15s"}}
                       onMouseEnter={e=>e.currentTarget.style.background="var(--bg-subtle)"}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
@@ -7329,6 +7336,7 @@ Rules:
             <div style={{display:"flex",gap:10,marginTop:18}}>
               <Btn outline onClick={()=>setEditSup(null)}>Cancel</Btn>
               <Btn onClick={()=>{
+                if(!can.manageSuppliers(myRole)){showToast("Only a Buyer or Manager can edit suppliers.","warn");return;}
                 if(!editSup.name||!editSup.name.trim()){showToast("Company name required","warn");return;}
                 const clean={...editSup,name:editSup.name.trim(),branches:(editSup.branches||[]).map(b=>(b||"").trim()).filter(Boolean),contacts:(editSup.contacts||[]).map(c=>({...c,name:(c.name||"").trim(),email:(c.email||"").trim()})).filter(c=>c.email||c.name)};
                 const norm=normSupplier(clean);
