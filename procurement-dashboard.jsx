@@ -132,6 +132,12 @@ function useSpeechRecognition({ onTranscript, onFinal }) {
   const wantRef = useRef(false);
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(false);
+  // Keep the latest callbacks in refs so the once-only setup effect below never
+  // re-subscribes the mic, yet always invokes the current handler (avoids a
+  // stale-closure trap if a caller's onFinal/onTranscript closes over state).
+  const onFinalRef = useRef(onFinal);
+  const onTranscriptRef = useRef(onTranscript);
+  useEffect(() => { onFinalRef.current = onFinal; onTranscriptRef.current = onTranscript; });
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
@@ -144,7 +150,7 @@ function useSpeechRecognition({ onTranscript, onFinal }) {
         const t = e.results[i][0].transcript;
         if (e.results[i].isFinal) final += t + " "; else interim += t;
       }
-      if (final) onFinal(final); else onTranscript(interim);
+      if (final) onFinalRef.current(final); else onTranscriptRef.current(interim);
     };
     rec.onerror = (e) => {
       // Transient Android errors (no-speech, aborted, network) shouldn't end the
