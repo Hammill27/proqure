@@ -28,6 +28,8 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const supabase = (SUPABASE_URL && SERVICE_KEY) ? createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 
 const STATS_KEY = "piq_email_stats";
+const EVENTS_KEY = "piq_email_events";
+const EVENTS_CAP = 200;
 const PLATFORM_BUCKET = "platform-email"; // for events with no company tag
 
 async function readRaw(req) {
@@ -83,6 +85,21 @@ async function bump(companyId, field) {
   );
 }
 
+// Append to the rolling webhook-event feed (metadata only: type, recipient, time).
+async function pushEvent(companyId, evt) {
+  if (!supabase) return;
+  try {
+    const { data } = await supabase.from("proqure_data")
+      .select("value").eq("user_id", companyId).eq("store_key", EVENTS_KEY).maybeSingle();
+    const log = Array.isArray(data && data.value) ? data.value : [];
+    log.push({ ts: new Date().toISOString(), ...evt });
+    await supabase.from("proqure_data").upsert(
+      { user_id: companyId, store_key: EVENTS_KEY, value: log.slice(-EVENTS_CAP), updated_at: new Date().toISOString() },
+      { onConflict: "user_id,store_key" }
+    );
+  } catch (e) { /* non-fatal */ }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "Method not allowed" }); return; }
 
@@ -102,9 +119,11 @@ export default async function handler(req, res) {
   const data = evt.data || {};
   const tags = data.tags || {};
   const companyId = (tags.company_id && String(tags.company_id)) || PLATFORM_BUCKET;
+  const to = Array.isArray(data.to) ? (data.to[0] || "") : (data.to || "");
 
   try {
     await bump(companyId, field);
+    await pushEvent(companyId, { type: field, to: String(to).slice(0, 160) });
     res.status(200).json({ ok: true, recorded: { company: companyId, field } });
   } catch (e) {
     // Never make Resend retry storms over a transient write error.
