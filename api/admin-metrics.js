@@ -161,6 +161,10 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
     });
   }
 
+  // Billing: tier prices (GBP/mo) and which plans count as paying, for MRR/ARR.
+  const PLAN_PRICE = { sole: 29, team: 79, business: 199, enterprise: 399 };
+  const PAID_TIERS = new Set(["sole", "team", "business", "enterprise"]);
+
   // finalise each company with settings metadata + counts
   const list = [];
   for (const c of companies.values()) {
@@ -176,6 +180,13 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
         || (ownerAuth && ownerAuth.user_metadata && ownerAuth.user_metadata.company)
         || (owner && owner.email) || "(unnamed)",
       plan: sv.plan || "trial",
+      subscriptionStatus: sv.subscriptionStatus || ((sv.plan && sv.plan !== "trial") ? "active" : "trial"),
+      mrr: PAID_TIERS.has(sv.plan) ? (PLAN_PRICE[sv.plan] || 0) : 0,
+      stripeCustomerId: sv.stripeCustomerId || null,
+      webAllowanceUsed: (() => {
+        const u = usageByCo.get(c.companyId) || {};
+        return { period: u.period || null, measureWeb: Number(u.measureWebUsed || 0), omWeb: Number(u.omWebUsed || 0), catalogueWeb: Number(u.catalogueWebUsed || 0), addons: u.addons || {} };
+      })(),
       onboarded: !!sv.onboarded,
       trade: sv.primaryTrade || sv.trade || null,
       teamSize: sv.teamSize || null,
@@ -221,8 +232,11 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const pendingInvites = list.reduce((n, c) => n + c.pendingInvites, 0);
   const unconfirmedUsers = list.reduce((n, c) => n + c.unconfirmed, 0);
   const onboardedCount = list.filter(c => c.onboarded).length;
-  const activeTrials = list.filter(c => c.plan === "trial").length;
-  const paid = list.filter(c => c.plan === "active" || c.plan === "paid").length;
+  const activeTrials = list.filter(c => (c.plan || "trial") === "trial").length;
+  const paid = list.filter(c => PAID_TIERS.has(c.plan)).length;
+  const pastDue = list.filter(c => c.subscriptionStatus === "past_due").length;
+  const cancelledSubs = list.filter(c => c.subscriptionStatus === "cancelled").length;
+  const mrr = list.reduce((n, c) => n + (c.mrr || 0), 0);
   const planDist = list.reduce((m, c) => { const p = c.plan || "trial"; m[p] = (m[p] || 0) + 1; return m; }, {});
   const signupsLast30d = authUsers.filter(u => u.created_at && (now - Date.parse(u.created_at)) < 30 * DAY).length;
   const activeLast7d = list.filter(c => c.lastActive && (now - Date.parse(c.lastActive)) < 7 * DAY).length;
@@ -279,7 +293,8 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
 
   return {
     kpis: {
-      totalCompanies: list.length, totalUsers, activeTrials, paid,
+      totalCompanies: list.length, totalUsers, activeTrials, paid, pastDue, cancelledSubs,
+      mrr, arr: mrr * 12,
       signupsLast30d, activeLast7d, staleCompanies, onboardedCount,
       totalOrders, totalRequests, totalSuppliers, totalHires, totalQuotes,
       pendingInvites, unconfirmedUsers, planDist,
@@ -490,7 +505,7 @@ export default async function handler(req, res) {
     if (action === "set-plan") {
       const companyId = (body.companyId || "").trim();
       const plan = (body.plan || "").trim();
-      const allowed = ["trial", "active", "paid", "suspended", "cancelled"];
+      const allowed = ["trial", "sole", "team", "business", "enterprise", "active", "paid", "suspended", "cancelled"];
       if (!companyId || !allowed.includes(plan)) { res.status(400).json({ error: "companyId and a valid plan are required." }); return; }
       // read-merge-write so we only change the plan flag, never clobber other settings
       const { data: existing, error: rErr } = await admin
