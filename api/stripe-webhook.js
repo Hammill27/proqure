@@ -17,7 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 
 export const config = { api: { bodyParser: false } };
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2024-06-20" });
 const WHSEC = process.env.STRIPE_WEBHOOK_SECRET || "";
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -125,9 +125,15 @@ export default async function handler(req, res) {
         break;
       }
       case "customer.subscription.updated": {
-        const sub = event.data.object;
-        const companyId = (sub.metadata && sub.metadata.companyId) || await companyByCustomer(sub.customer);
+        const evtSub = event.data.object;
+        const companyId = (evtSub.metadata && evtSub.metadata.companyId) || await companyByCustomer(evtSub.customer);
         if (companyId) {
+          // Stripe does not guarantee event ordering. Re-fetch the subscription so
+          // we always apply its CURRENT state, never a stale snapshot from a
+          // delayed/out-of-order event (which could otherwise re-activate a
+          // just-cancelled sub, or vice-versa). Fall back to the event on failure.
+          let sub = evtSub;
+          try { sub = await stripe.subscriptions.retrieve(evtSub.id); } catch (e) { /* use event copy */ }
           const plan = planFromSub(sub);
           await mergeBilling(companyId, { customer: sub.customer, sub: sub.id, plan, status: normStatus(sub.status) });
           await mergeSettings(companyId, { plan, subscriptionStatus: normStatus(sub.status) });
