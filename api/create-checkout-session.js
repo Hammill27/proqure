@@ -31,6 +31,29 @@ const ADDONS = {
   catalogue_block: { price: process.env.STRIPE_PRICE_CATALOGUE_BLOCK, feature: "catalogueWeb", qty: 100 },
 };
 
+
+// Caller verification: billing actions must come from a signed-in MANAGER of the
+// company in question (when the anon key is configured; otherwise legacy open mode).
+const SB_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const sbAnon = (SUPABASE_URL && SB_ANON_KEY) ? createClient(SUPABASE_URL, SB_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+async function verifyManager(req, companyId) {
+  if (!sbAnon) return { ok: true, open: true };
+  const h = req.headers.authorization || req.headers.Authorization || "";
+  const token = h.startsWith("Bearer ") ? h.slice(7).trim() : null;
+  if (!token) return { ok: false, reason: "Please sign in." };
+  try {
+    const { data, error } = await sbAnon.auth.getUser(token);
+    if (error || !data || !data.user) return { ok: false, reason: "Session invalid or expired." };
+    const uid = data.user.id;
+    if (uid === companyId) return { ok: true }; // the company owner account itself
+    if (supabase) {
+      const { data: m } = await supabase.from("members").select("role").eq("user_id", uid).eq("company_id", companyId).limit(1).maybeSingle();
+      if (m && m.role === "manager") return { ok: true };
+    }
+    return { ok: false, reason: "Only a manager of this company can manage billing." };
+  } catch (e) { return { ok: false, reason: "Could not verify session." }; }
+}
+
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -54,6 +77,8 @@ export default async function handler(req, res) {
 
   const { companyId, plan, kind, email } = req.body || {};
   if (!companyId) return res.status(400).json({ error: "Missing companyId" });
+  const ver = await verifyManager(req, companyId);
+  if (!ver.ok) return res.status(401).json({ error: ver.reason });
 
   try {
     const customer = await existingCustomer(companyId);
@@ -88,7 +113,9 @@ export default async function handler(req, res) {
       mode: "subscription",
       line_items: [{ price, quantity: 1 }],
       metadata: { companyId, plan },
-      subscription_data: { trial_period_days: 14, metadata: { companyId } },
+      // No Stripe-side trial: ProQure's own free trial is the single trial, so
+      // paying here starts billing immediately (no confusing second trial email).
+      subscription_data: { metadata: { companyId } },
       allow_promotion_codes: true,
       success_url: `${APP}/?billing=success`,
     });
