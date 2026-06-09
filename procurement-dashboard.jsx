@@ -122,6 +122,26 @@ async function cloudPush(userId, storeKey, valueObj) {
       }
     } catch (e) { /* best-effort */ }
   }
+  // Add-on allowance credits (piq_usage.addons) are written server-side by the
+  // Stripe webhook when a customer buys a top-up pack. A stale client tab pushing
+  // its own usage must not wipe a just-purchased credit, so — for the CURRENT
+  // billing period only — overlay the cloud's addons onto the outgoing value,
+  // taking the larger of each feature's credit (a credit only ever grows within
+  // a period; it resets when the period rolls over, which both sides honour).
+  if (storeKey === "piq_usage") {
+    try {
+      const { data } = await supabase.from("proqure_data").select("value")
+        .eq("user_id", userId).eq("store_key", "piq_usage").maybeSingle();
+      const cv = data && data.value;
+      if (cv && typeof cv === "object" && cv.addons && cv.period === (valueObj && valueObj.period)) {
+        const merged = { ...((valueObj && valueObj.addons) || {}) };
+        for (const k of Object.keys(cv.addons)) {
+          merged[k] = Math.max(Number(merged[k]) || 0, Number(cv.addons[k]) || 0);
+        }
+        out = { ...valueObj, addons: merged };
+      }
+    } catch (e) { /* best-effort */ }
+  }
   const { error } = await supabase.from("proqure_data").upsert(
     { user_id: userId, store_key: storeKey, value: out, updated_at: new Date().toISOString() },
     { onConflict: "user_id,store_key" }
