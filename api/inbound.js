@@ -170,7 +170,23 @@ function isQuoteAttachment(type, name) {
   if (/pdf|excel|spreadsheet|csv|image\//.test(type)) return true;
   return /\.(pdf|xls|xlsx|csv|png|jpe?g|webp)$/.test(name);
 }
+// Fetch attachment bytes, with an SSRF guard: only https, and never a private/
+// internal host. The attachment URLs come from Resend's verified payload, but we
+// defend in depth in case a field is influenced by the sender.
+function safeFetchUrl(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== "https:") return false;
+    const h = u.hostname.toLowerCase();
+    if (h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "::1") return false;
+    if (/^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return false;
+    if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h)) return false;
+    if (h.endsWith(".internal") || h.endsWith(".local")) return false;
+    return true;
+  } catch { return false; }
+}
 async function bytesFromUrl(url) {
+  if (!safeFetchUrl(url)) return null;
   try { const r = await fetch(url); if (!r.ok) return null; return Buffer.from(await r.arrayBuffer()); }
   catch { return null; }
 }
