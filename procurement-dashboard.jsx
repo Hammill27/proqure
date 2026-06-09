@@ -2063,6 +2063,50 @@ const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) 
 };
 
 // --- App ----------------------------------------------------------------------
+// Lightweight, on-brand markdown for assistant chat replies (bold, inline code,
+// bullet + numbered lists, simple headings). Avoids shipping a markdown library.
+const RichInline = ({ text }) => {
+  const out = []; const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let last = 0, m, k = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) out.push(<strong key={k++} style={{fontWeight:700,color:"var(--green)"}}>{tok.slice(2,-2)}</strong>);
+    else out.push(<code key={k++} style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:"0.9em",background:"var(--green-light)",color:"var(--green-deep)",padding:"1px 5px",borderRadius:5}}>{tok.slice(1,-1)}</code>);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return <>{out}</>;
+};
+const RichText = ({ text }) => {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  const blocks = []; let list = null;
+  const flush = () => { if (list) { blocks.push(list); list = null; } };
+  lines.forEach(raw => {
+    const t = raw.trim();
+    const head = t.match(/^#{1,4}\s+(.*)$/);
+    const num = t.match(/^(\d+)[.)]\s+(.*)$/);
+    const bul = t.match(/^[-*\u2022]\s+(.*)$/);
+    if (head) { flush(); blocks.push({ type: "h", text: head[1] }); return; }
+    if (num) { if (!list || list.type !== "ol") { flush(); list = { type: "ol", items: [] }; } list.items.push(num[2]); return; }
+    if (bul) { if (!list || list.type !== "ul") { flush(); list = { type: "ul", items: [] }; } list.items.push(bul[1]); return; }
+    if (!t) { flush(); return; }
+    flush(); blocks.push({ type: "p", text: t });
+  });
+  flush();
+  return (
+    <div>
+      {blocks.map((b, i) => {
+        if (b.type === "h") return <div key={i} style={{ fontWeight: 700, fontSize: 13.5, color: "var(--green)", margin: i ? "11px 0 5px" : "0 0 5px" }}><RichInline text={b.text} /></div>;
+        if (b.type === "p") return <div key={i} style={{ margin: "0 0 7px" }}><RichInline text={b.text} /></div>;
+        if (b.type === "ol") return <div key={i} style={{ margin: "2px 0 8px" }}>{b.items.map((it, j) => (<div key={j} style={{ display: "flex", gap: 9, marginBottom: 5, alignItems: "flex-start" }}><span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: "50%", background: "var(--green)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>{j + 1}</span><span style={{ flex: 1 }}><RichInline text={it} /></span></div>))}</div>;
+        if (b.type === "ul") return <div key={i} style={{ margin: "2px 0 8px" }}>{b.items.map((it, j) => (<div key={j} style={{ display: "flex", gap: 9, marginBottom: 4, alignItems: "flex-start" }}><span style={{ flexShrink: 0, width: 5, height: 5, borderRadius: "50%", background: "var(--green)", marginTop: 7 }} /><span style={{ flex: 1 }}><RichInline text={it} /></span></div>))}</div>;
+        return null;
+      })}
+    </div>
+  );
+};
+
 function ProQureApp({ session, companyId }) {
   // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
   // user id (sole trader / pre-migration fallback). Declared up here because effects
@@ -6708,15 +6752,21 @@ Rules:
                       <div style={{width:30,height:30,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,background:m.role==="user"?"var(--bg-subtle2)":"linear-gradient(135deg,#1E9E63,#15824F)",color:m.role==="user"?"var(--text-secondary)":"white",fontWeight:700}}>
                         {m.role==="user"?(settings.contactName?settings.contactName[0].toUpperCase():"Y"):"AI"}
                       </div>
-                      <div style={{maxWidth:"82%",padding:"11px 15px",borderRadius:m.role==="user"?"14px 4px 14px 14px":"4px 14px 14px 14px",background:m.role==="user"?"linear-gradient(135deg,#1E9E63,#15824F)":"var(--bg-subtle)",color:m.role==="user"?"white":"var(--text-primary)",fontSize:13,lineHeight:1.65,whiteSpace:"pre-wrap"}}>
-                        {m.content}
-                      </div>
+                      {m.role==="user" ? (
+                        <div style={{maxWidth:"82%",padding:"11px 15px",borderRadius:"14px 4px 14px 14px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",boxShadow:"var(--shadow-sm)"}}>
+                          {m.content}
+                        </div>
+                      ) : (
+                        <div style={{maxWidth:"87%",padding:"13px 16px 9px",borderRadius:"4px 16px 16px 16px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderLeft:"3px solid var(--green)",color:"var(--text-primary)",fontSize:13,lineHeight:1.6,boxShadow:"var(--shadow-sm)"}}>
+                          <RichText text={m.content}/>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {helpLoading&&(
                     <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
                       <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,fontWeight:700,color:"white"}}>AI</div>
-                      <div style={{background:"var(--bg-subtle)",borderRadius:"4px 14px 14px 14px",padding:"14px 16px",display:"flex",gap:4,alignItems:"center"}}>
+                      <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderLeft:"3px solid var(--green)",borderRadius:"4px 16px 16px 16px",padding:"14px 16px",display:"flex",gap:4,alignItems:"center",boxShadow:"var(--shadow-sm)"}}>
                         <span style={{width:7,height:7,borderRadius:"50%",background:"var(--text-tertiary)",animation:"typingDot 1.2s infinite 0s"}}/>
                         <span style={{width:7,height:7,borderRadius:"50%",background:"var(--text-tertiary)",animation:"typingDot 1.2s infinite 0.2s"}}/>
                         <span style={{width:7,height:7,borderRadius:"50%",background:"var(--text-tertiary)",animation:"typingDot 1.2s infinite 0.4s"}}/>
