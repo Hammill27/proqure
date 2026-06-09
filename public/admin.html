@@ -168,7 +168,6 @@
   .b-trial{background:rgba(224,162,59,.13);color:var(--amber);border-color:rgba(224,162,59,.3)}
   .b-active,.b-paid,.b-on{background:var(--tint);color:var(--accent);border-color:var(--tint-line)}
   .b-sole,.b-team,.b-business,.b-enterprise{background:var(--tint);color:var(--accent);border-color:var(--tint-line)}
-  .b-trial{background:var(--chip);color:var(--soft)}
   .b-suspended,.b-cancelled{background:rgba(229,100,92,.12);color:var(--red);border-color:rgba(229,100,92,.3)}
   .b-role{background:rgba(91,141,239,.13);color:var(--blue);border-color:rgba(91,141,239,.3)}
   .b-owner{background:var(--tint);color:var(--accent);border-color:var(--tint-line)}
@@ -199,6 +198,14 @@
   .uitem .um{font-size:11.5px;color:var(--sub);margin-top:5px}
   .uitem .ua{display:flex;gap:7px;margin-top:11px;flex-wrap:wrap}
 
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--accent)}
+  .bar{height:7px;border-radius:99px;background:var(--chip);overflow:hidden;flex:1}
+  .bar i{display:block;height:100%;border-radius:99px;background:var(--accent);transition:width .4s}
+  .barrow{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .barrow .bl{font-size:12px;color:var(--sub);width:92px;flex-shrink:0}
+  .barrow .bv{font-family:var(--mono);font-size:11.5px;font-weight:700;width:88px;text-align:right;flex-shrink:0}
+  .filter-sel{max-width:170px}
   .loading{display:flex;align-items:center;justify-content:center;padding:80px;color:var(--sub);font-size:14px}
   .spin{width:18px;height:18px;border:2px solid var(--line-2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;margin-right:11px}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -290,7 +297,8 @@ const SUPABASE_URL = "https://pjltclnrjuvqqcxowamw.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_V8TuiFK-dvUeVFATxQ6YmQ_9SiYCJc8";
 const API_BASE = "";
 const ADMIN_GATE_CODE = "PQAD-9X4K-7M2R-VB6E";   // change to your own code
-const USD_TO_GBP = 0.75;   // OpenRouter bills in USD; AI spend is shown in £ at this rate. Update when it drifts.
+const USD_TO_GBP = 0.75;   // keep in sync with the app + /api/ai
+const STRIPE_DASH = "https://dashboard.stripe.com/test";   // drop "/test" at go-live   // OpenRouter bills in USD; AI spend is shown in £ at this rate. Update when it drifts.
 /* ========================================================================== */
 
 const $ = (id) => document.getElementById(id);
@@ -332,6 +340,18 @@ const ICON = {
 function ic(name){ return '<span class="ic">'+(ICON[name]||"")+'</span>'; }
 
 let sb=null, session=null, DATA=null, currentTab="overview", search="", companyPlanFilter="";
+let sortKey="", sortDir=-1;
+function sortBy(k){ if(sortKey===k) sortDir=-sortDir; else { sortKey=k; sortDir=(k==="name"||k==="plan")?1:-1; } render(); }
+const SORT_GET={ name:c=>(c.name||"").toLowerCase(), plan:c=>c.plan||"", users:c=>c.userCount||0, suppliers:c=>c.counts.suppliers||0, orders:c=>c.counts.orders||0, quotes:c=>c.counts.quotes||0, reqs:c=>c.counts.requests||0, mrr:c=>c.mrr||0, aimo:c=>c.aiMonthGbp||0, aipct:c=>c.aiBudgetPct||0, spend:c=>c.aiSpend||0, storage:c=>c.storageBytes||0, emails:c=>(c.email&&c.email.sent)||0, replies:c=>(c.replies&&c.replies.suppliersReplied)||0, last:c=>Date.parse(c.lastActive||0)||0 };
+function applySort(list){ const get=SORT_GET[sortKey]; if(!get) return list; return [...list].sort((a,b)=>{ const x=get(a),y=get(b); return (x<y?-1:x>y?1:0)*sortDir; }); }
+function th(label,k,cls){ return '<th class="'+(cls||"")+(k?" sortable":"")+'"'+(k?' onclick="sortBy(\''+k+'\')"':"")+'>'+label+(sortKey===k?(sortDir>0?" \u25B4":" \u25BE"):"")+'</th>'; }
+window.sortBy=sortBy;
+document.addEventListener("keydown",(e)=>{
+  if(e.key==="Escape"){ closeDrawer(); return; }
+  if(e.key==="/" && !/INPUT|SELECT|TEXTAREA/.test((document.activeElement&&document.activeElement.tagName)||"")){ const f=$("coSearch")||$("uSearch"); if(f){ e.preventDefault(); f.focus(); } }
+});
+// Quiet background refresh: keeps numbers current without blanking the screen.
+setInterval(()=>{ if(document.visibilityState==="visible" && session && DATA && $("app").style.display==="block" && !$("drawer").classList.contains("open")) loadData(true); }, 90000);
 function toast(msg,bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); setTimeout(()=>t.className="toast",2600); }
 
 function applyTheme(t){ document.documentElement.setAttribute("data-theme",t); try{localStorage.setItem("pq_admin_theme",t);}catch(e){} const b=$("themeBtn"); if(b) b.innerHTML = t==="dark"?ICON.sun:ICON.moon; }
@@ -394,9 +414,9 @@ async function api(action,payload){
   if(!r.ok){ const e=new Error((d&&d.error)||("Request failed ("+r.status+")")); e.status=r.status; throw e; }
   return d;
 }
-async function loadData(){
+async function loadData(quiet){
   $("banner").style.display="none";
-  $("view").innerHTML='<div class="loading"><span class="spin"></span>Loading platform data...</div>';
+  if(!quiet) $("view").innerHTML='<div class="loading"><span class="spin"></span>Loading platform data...</div>';
   try{ DATA=await api("summary"); $("genAt").textContent="Updated "+new Date(DATA.generatedAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}); render(); }
   catch(e){
     if(e.status===403){ $("view").innerHTML='<div class="panel"><h2>Not authorised</h2><p class="muted" style="margin-top:8px">This account isn\u2019t on the admin allow-list. Add its email to ADMIN_CONSOLE_EMAILS in Vercel, then redeploy.</p><button class="btn btn-ghost btn-sm" style="margin-top:14px" onclick="document.getElementById(\'signoutBtn\').click()">Sign out</button></div>'; }
@@ -429,8 +449,10 @@ function renderOverview(){
       kpi("users",k.totalUsers,"Users",k.pendingInvites+" pending","goTab('users')")+
       kpi("trial",k.activeTrials,"Active trials",null,"goTab('companies','trial')")+
       kpi("paid",k.paid,"Paid",null,"goTab('companies','paid')")+
-      kpi("coin",fmtMoney(k.mrr||0),"MRR",(k.paid||0)+" paying")+
-      kpi("alert",k.pastDue||0,"Past due",null,"goTab('companies')")+
+      kpi("coin","\u00A3"+Number(k.mrr||0).toLocaleString("en-GB"),"MRR","\u00A3"+Number((k.mrr||0)*12).toLocaleString("en-GB")+" ARR")+
+      kpi("alert",k.pastDue||0,"Past due",null,"goTab('companies','past_due')")+
+      kpi("coin","\u00A3"+Number(k.aiSpendMonthGbp||0).toFixed(2),"AI cost (month)","platform total, server meter","goTab('costs')")+
+      kpi("alert",k.nearAiCap||0,"Near AI cap","\u226580% of plan budget","goTab('costs')")+
     '</div>'+
     '<div class="strip">'+
       stat(k.signupsLast30d,"Signups (30d)","goTab('signups')")+stat(k.activeLast7d,"Active (7d)","goTab('companies')")+stat(k.totalSuppliers,"Suppliers","goTab('companies')")+
@@ -455,31 +477,64 @@ function renderOverview(){
         attn("ai-amber","invite","Pending invites","Invited but not yet joined",k.pendingInvites,"goTab('users')")+
         attn("ai-red","alert","Unconfirmed users","Accounts not yet confirmed",k.unconfirmedUsers,"goTab('users')")+
         attn("ai-amber","zzz","Quiet companies","Onboarded, no activity in 30 days",k.staleCompanies,"goTab('companies')")+
+        attn("ai-red","alert","Past due","Payment failed \u2014 Stripe is chasing",k.pastDue||0,"goTab('companies','past_due')")+
+        attn("ai-amber","coin","Near AI cap","\u226580% of monthly AI budget",k.nearAiCap||0,"goTab('costs')")+
       '</div></div>'+
     '</div>';
 }
 
 function renderCompanies(){
   const paidSet=["sole","team","business","enterprise","active","paid"];
-  const list=DATA.companies.filter(c=>(!companyPlanFilter||(companyPlanFilter==="paid"?paidSet.includes(c.plan):c.plan===companyPlanFilter)) && (!search||(c.name+" "+(c.fromEmail||"")+" "+(c.trade||"")).toLowerCase().includes(search.toLowerCase())));
+  const matchFilter=(c)=>{
+    if(!companyPlanFilter) return true;
+    if(companyPlanFilter==="paid") return paidSet.includes(c.plan);
+    if(companyPlanFilter==="past_due") return c.subscriptionStatus==="past_due";
+    if(companyPlanFilter==="cancelled") return c.plan==="cancelled"||c.subscriptionStatus==="cancelled";
+    if(companyPlanFilter==="suspended") return c.plan==="suspended";
+    return c.plan===companyPlanFilter;
+  };
+  let list=DATA.companies.filter(c=>matchFilter(c) && (!search||(c.name+" "+(c.fromEmail||"")+" "+(c.trade||"")+" "+(c.users||[]).map(u=>u.email).join(" ")).toLowerCase().includes(search.toLowerCase())));
+  list=applySort(list);
+  const aiCell=(c)=>{ const p=c.aiBudgetPct||0; const col=p>=100?"var(--red)":p>=80?"var(--amber)":"var(--accent)"; return '<div class="mono" style="font-weight:700">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+'</div><div class="ct-sub" style="color:'+col+'">'+p+'% of \u00A3'+(c.aiBudgetGbp||0)+'</div>'; };
   const rows=list.map(c=>'<tr class="crow" data-i="'+DATA.companies.indexOf(c)+'">'+
     '<td><div class="ct-name">'+esc(c.name)+'</div><div class="ct-sub">'+esc(c.fromEmail||"")+'</div></td>'+
-    '<td>'+planBadge(c.plan)+(c.onboarded?'':' <span class="badge b-pending">setup</span>')+'</td>'+
-    '<td class="hide">'+esc(c.trade||"-")+'</td>'+
+    '<td>'+planBadge(c.plan)+(c.subscriptionStatus==="past_due"?' <span class="badge b-cancelled">past due</span>':'')+(c.onboarded?'':' <span class="badge b-pending">setup</span>')+'</td>'+
     '<td class="num">'+c.userCount+'</td>'+
-    '<td class="num">'+c.counts.suppliers+'</td>'+
+    '<td class="num hide">'+c.counts.suppliers+'</td>'+
     '<td class="num">'+c.counts.orders+'</td>'+
     '<td class="num hide">'+c.counts.quotes+'</td>'+
-    '<td class="num hide">'+c.counts.requests+'</td>'+
+    '<td class="num">\u00A3'+(c.mrr||0)+'</td>'+
+    '<td class="num">'+aiCell(c)+'</td>'+
     '<td class="hide muted">'+fmtAgo(c.lastActive)+'</td></tr>').join("")
     || '<tr><td colspan="9" class="muted" style="padding:26px;text-align:center">No companies match.</td></tr>';
-  const chip=companyPlanFilter?' &middot; <span class="badge b-'+esc(companyPlanFilter)+'">'+esc(companyPlanFilter==="paid"?"paid/active":companyPlanFilter)+'</span> <button class="btn btn-ghost btn-sm" style="padding:3px 8px" onclick="goTab(\'companies\')">clear</button>':'';
+  const FILTERS=[["","All plans"],["trial","Trial"],["paid","Paid (any tier)"],["sole","Sole"],["team","Team"],["business","Business"],["enterprise","Enterprise"],["past_due","Past due"],["cancelled","Cancelled"],["suspended","Suspended"]];
   $("view").innerHTML=
-    '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' compan'+(list.length===1?"y":"ies")+chip+'</div><input class="search" id="coSearch" placeholder="Search companies..." value="'+esc(search)+'"></div>'+
-    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Company</th><th>Plan</th><th class="hide">Trade</th><th class="num">Users</th><th class="num">Suppliers</th><th class="num">Orders</th><th class="num hide">Quotes</th><th class="num hide">Reqs</th><th class="hide">Last active</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-  $("coSearch").addEventListener("input",e=>{ search=e.target.value; const p=e.target.selectionStart; renderCompanies(); const s=$("coSearch"); s.focus(); s.setSelectionRange(p,p); });
+    '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' compan'+(list.length===1?"y":"ies")+' &middot; click a column to sort</div>'+
+    '<div style="display:flex;gap:9px;align-items:center;flex:1;justify-content:flex-end">'+
+      '<select class="filter-sel" id="coFilter">'+FILTERS.map(([v,l])=>'<option value="'+v+'"'+(companyPlanFilter===v?" selected":"")+'>'+l+'</option>').join("")+'</select>'+
+      '<input class="search" id="coSearch" placeholder="Search name, email, trade..." value="'+esc(search)+'">'+
+      '<button class="btn btn-ghost btn-sm" id="csvBtn" title="Download the filtered list as CSV">Export CSV</button>'+
+    '</div></div>'+
+    '<div class="panel" style="padding:6px 10px"><table><thead><tr>'+
+      th("Company","name")+th("Plan","plan")+th("Users","users","num")+th("Suppliers","suppliers","num hide")+th("Orders","orders","num")+th("Quotes","quotes","num hide")+th("MRR","mrr","num")+th("AI (month)","aimo","num")+th("Last active","last","hide")+
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  $("coSearch").addEventListener("input",e=>{ search=e.target.value; const p=e.target.selectionStart; renderCompanies(); const x=$("coSearch"); x.focus(); x.setSelectionRange(p,p); });
+  $("coFilter").addEventListener("change",e=>{ companyPlanFilter=e.target.value; renderCompanies(); });
+  $("csvBtn").addEventListener("click",()=>exportCompaniesCsv(list));
   document.querySelectorAll("#view tr.crow").forEach(r=>r.addEventListener("click",()=>openCompany(DATA.companies[+r.dataset.i])));
 }
+function exportCompaniesCsv(list){
+  const cols=["name","plan","subscriptionStatus","mrr","userCount","orders","requests","quotes","suppliers","hires","aiMonthGbp","aiBudgetGbp","aiBudgetPct","aiSpendTotalGbp","emailsSent","storageBytes","fromEmail","trade","createdAt","lastActive","companyId"];
+  const row=(c)=>[c.name,c.plan,c.subscriptionStatus,c.mrr||0,c.userCount,c.counts.orders,c.counts.requests,c.counts.quotes,c.counts.suppliers,c.counts.hires,(c.aiMonthGbp||0).toFixed(2),c.aiBudgetGbp||0,(c.aiBudgetPct||0)+"%",((c.aiSpend||0)*USD_TO_GBP).toFixed(2),(c.email&&c.email.sent)||0,c.storageBytes||0,c.fromEmail||"",c.trade||"",c.createdAt||"",c.lastActive||"",c.companyId];
+  const q=(v)=>{ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const csv=[cols.join(",")].concat(list.map(c=>row(c).map(q).join(","))).join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download="proqure-companies-"+new Date().toISOString().slice(0,10)+".csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  toast("CSV downloaded ("+list.length+" companies).");
+}
+window.exportCompaniesCsv=exportCompaniesCsv;
 
 function renderUsers(){
   const all=[]; DATA.companies.forEach(c=>c.users.forEach(u=>all.push({...u,company:c.name})));
@@ -508,26 +563,29 @@ function renderCosts(){
   const k=DATA.kpis;
   const kpi=(icon,n,l,x)=>'<div class="kpi">'+ic(icon)+'<div class="n">'+n+'</div><div class="l">'+l+'</div>'+(x?'<div class="x">'+x+'</div>':'')+'</div>';
   const stat=(n,l)=>'<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';
-  const all=[...DATA.companies].sort((a,b)=>(b.aiSpend||0)-(a.aiSpend||0)||(b.email.sent||0)-(a.email.sent||0));
+  let all=[...DATA.companies].sort((a,b)=>(b.aiMonthGbp||0)-(a.aiMonthGbp||0)||(b.aiSpend||0)-(a.aiSpend||0)||(b.email.sent||0)-(a.email.sent||0));
+  if(sortKey) all=applySort(all);
   const withUsage=all.filter(c=>(c.aiSpend||0)>0||(c.email.sent||0)>0||(c.replies.suppliersEmailed||0)>0);
-  const maxSpend=Math.max(0.0001,...all.map(c=>c.aiSpend||0));
-  const top=all.slice(0,12).filter(c=>(c.aiSpend||0)>0);
-  const bars=top.map(c=>'<div class="b" style="height:'+Math.max(4,Math.round((c.aiSpend||0)/maxSpend*100))+'%"><span>'+fmtMoney(c.aiSpend)+'</span></div>').join("");
+  const maxSpend=Math.max(0.0001,...all.map(c=>c.aiMonthGbp||0));
+  const top=[...DATA.companies].sort((a,b)=>(b.aiMonthGbp||0)-(a.aiMonthGbp||0)).slice(0,12).filter(c=>(c.aiMonthGbp||0)>0);
+  const bars=top.map(c=>'<div class="b" style="height:'+Math.max(4,Math.round((c.aiMonthGbp||0)/maxSpend*100))+'%"><span>\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+'</span></div>').join("");
   const xlab=top.map(c=>'<div>'+esc((c.name||"").slice(0,9))+'</div>').join("");
+  const budgetCell=(c)=>{ const p=Math.min(100,c.aiBudgetPct||0); const col=(c.aiBudgetPct||0)>=100?"var(--red)":(c.aiBudgetPct||0)>=80?"var(--amber)":"var(--accent)"; return '<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end"><span class="bar" style="max-width:70px"><i style="width:'+p+'%;background:'+col+'"></i></span><span class="mono" style="font-size:11.5px;font-weight:700;color:'+col+'">'+(c.aiBudgetPct||0)+'%</span></div>'; };
   const rows=all.map(c=>'<tr class="crow" data-i="'+DATA.companies.indexOf(c)+'">'+
     '<td><div class="ct-name">'+esc(c.name)+'</div><div class="ct-sub">'+planBadge(c.plan)+'</div></td>'+
-    '<td class="num">'+fmtMoney(c.aiSpend)+'</td>'+
-    '<td class="num">'+fmtBytes(c.storageBytes||0)+'</td>'+
+    '<td class="num"><span class="mono" style="font-weight:700">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+'</span><div class="ct-sub">of \u00A3'+(c.aiBudgetGbp||0)+'</div></td>'+
+    '<td class="num">'+budgetCell(c)+'</td>'+
+    '<td class="num hide">'+fmtMoney(c.aiSpend)+'</td>'+
     '<td class="num hide">'+(c.aiCalls||0)+'</td>'+
+    '<td class="num">'+fmtBytes(c.storageBytes||0)+'</td>'+
     '<td class="num">'+(c.email.sent||0)+'</td>'+
-    '<td class="num">'+(c.replies.suppliersReplied||0)+'</td>'+
-    '<td class="num hide">'+(c.email.received||0)+'</td>'+
+    '<td class="num hide">'+(c.replies.suppliersReplied||0)+'</td>'+
     '<td class="num hide">'+((c.email.bounced||0)+(c.email.complained||0))+'</td></tr>').join("")
-    || '<tr><td colspan="8" class="muted" style="padding:26px;text-align:center">No companies yet.</td></tr>';
+    || '<tr><td colspan="9" class="muted" style="padding:26px;text-align:center">No companies yet.</td></tr>';
   const empty=withUsage.length===0;
   $("view").innerHTML=
     '<div class="kpis">'+
-      kpi("coin",fmtMoney(k.totalAiSpend),"AI spend",k.totalAiCalls+" calls")+
+      kpi("coin","\u00A3"+Number(k.aiSpendMonthGbp||0).toFixed(2),"AI cost this month",(k.nearAiCap||0)+" near cap \u00B7 "+fmtMoney(k.totalAiSpend)+" all-time")+
       kpi("trial",k.totalWebCalls,"Web searches","metered add-on")+
       kpi("invite",k.emailsSent,"Emails sent",pct(k.emailsDelivered,k.emailsSent)+" delivered")+
       kpi("alert",(k.emailsBounced+k.emailsComplained),"Bounced / spam")+
@@ -541,10 +599,10 @@ function renderCosts(){
     '<div class="muted" style="font-size:11.5px;margin:-6px 0 16px">AI spend shown in \u00A3 (OpenRouter bills in USD) at $1 = \u00A3'+USD_TO_GBP+' &middot; total data stored '+fmtBytes(k.totalStorageBytes)+'</div>'+
     (empty
       ? '<div class="panel" style="margin-bottom:18px"><div class="muted" style="font-size:13px;line-height:1.65">No per-company cost or email data yet. AI spend appears once the app reports cost per company (a small hook shipping with the next app deploy); email + reply stats appear once the Resend webhooks are connected. Every company is listed below and the figures fill in automatically.</div></div>'
-      : '<div class="cols" style="grid-template-columns:1fr"><div class="panel"><h2>AI spend by company <span class="hint">top 12 &middot; GBP</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div></div>')+
+      : '<div class="cols" style="grid-template-columns:1fr"><div class="panel"><h2>AI cost this month by company <span class="hint">top 12 &middot; GBP &middot; server meter</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div></div>')+
     '<div class="cols" style="grid-template-columns:1fr"><div class="panel"><h2>Recent webhook events <span class="hint">delivered &middot; bounced &middot; supplier replies</span></h2><div class="feed" id="evFeed"><div class="muted" style="padding:8px 0">Loading events...</div></div></div></div>'+
     '<div class="toolbar"><div class="muted" style="font-size:13px">'+all.length+' compan'+(all.length===1?"y":"ies")+' &middot; ranked by AI spend</div></div>'+
-    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Company</th><th class="num">AI spend</th><th class="num">Storage</th><th class="num hide">Calls</th><th class="num">Emails</th><th class="num">Replies</th><th class="num hide">Received</th><th class="num hide">Bounced</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div class="panel" style="padding:6px 10px"><table><thead><tr>'+th("Company","name")+th("AI (month)","aimo","num")+th("Budget used","aipct","num")+th("AI all-time","spend","num hide")+th("Calls","","num hide")+th("Storage","storage","num")+th("Emails","emails","num")+th("Replies","replies","num hide")+th("Bounced","","num hide")+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   document.querySelectorAll("#view tr.crow").forEach(r=>r.addEventListener("click",()=>openCompany(DATA.companies[+r.dataset.i])));
   loadEventsInto("evFeed", null, true, 40);
 }
@@ -580,11 +638,19 @@ function openCompany(c){
   '</div>';
   const users=c.users.map(u=>'<div class="uitem"><div class="ue">'+esc(u.email)+'</div><div class="um">'+(u.isOwner?'<span class="badge b-owner">owner</span> ':'<span class="badge b-role">'+esc(u.role)+'</span> ')+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+' &middot; joined '+fmtDate(u.joinedAt)+' &middot; last in '+fmtAgo(u.lastSignIn)+'</div>'+uact(u)+'</div>').join("");
   $("drawer").innerHTML=
-    '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+'</div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
+    '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10.5px;margin-left:6px" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(c.companyId)+'\').then(()=>toast(\'Company ID copied.\'))">Copy ID</button></div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
     '<div class="dbody">'+
       '<div class="sec-title">Plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button></div>'+
-      '<div class="sec-title">Billing</div><div class="meta">'+meta("Status",c.subscriptionStatus||"trial")+meta("Plan",c.plan||"trial")+meta("MRR",fmtMoney(c.mrr||0))+(c.stripeCustomerId?meta("Stripe customer",c.stripeCustomerId):"")+'</div>'+
-      '<div class="sec-title">Web lookups this month <span style="font-weight:500;text-transform:none;letter-spacing:0">('+esc((c.webAllowanceUsed&&c.webAllowanceUsed.period)||"-")+')</span></div><div class="countpills">'+cp((c.webAllowanceUsed&&c.webAllowanceUsed.measureWeb)||0,"Measure")+cp((c.webAllowanceUsed&&c.webAllowanceUsed.omWeb)||0,"O&amp;M packs")+cp((c.webAllowanceUsed&&c.webAllowanceUsed.catalogueWeb)||0,"Catalogue")+'</div>'+
+      '<div class="sec-title">Billing</div><div class="meta">'+meta("Status",c.subscriptionStatus||"trial")+meta("Plan",c.plan||"trial")+meta("MRR","\u00A3"+(c.mrr||0))+'</div>'+
+      (c.stripeCustomerId?'<div style="margin-top:9px"><a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none">Open in Stripe \u2197</a></div>':'')+
+      '<div class="sec-title">AI budget this month <span style="font-weight:500;text-transform:none;letter-spacing:0">(server meter \u00B7 circuit-breaker)</span></div>'+
+      (()=>{ const pcap=Math.min(100,c.aiBudgetPct||0); const col=(c.aiBudgetPct||0)>=100?"var(--red)":(c.aiBudgetPct||0)>=80?"var(--amber)":"var(--accent)";
+        return '<div class="barrow"><span class="bl">AI cost</span><span class="bar"><i style="width:'+pcap+'%;background:'+col+'"></i></span><span class="bv" style="color:'+col+'">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+' / \u00A3'+(c.aiBudgetGbp||0)+'</span></div>'+
+        ((c.aiBudgetPct||0)>=100?'<div class="muted" style="font-size:11.5px;margin-top:4px;color:var(--red)">At the cap \u2014 AI is paused for this company until the 1st (or a plan change).</div>':''); })()+
+      '<div class="sec-title">Web lookups this month <span style="font-weight:500;text-transform:none;letter-spacing:0">('+esc((c.webAllowanceUsed&&c.webAllowanceUsed.period)||"-")+' \u00B7 used / allowance)</span></div>'+
+      (()=>{ const u=c.webAllowanceUsed||{}; const L=c.allowanceLimits||{};
+        const row=(label,used,lim)=>{ const p=lim>0?Math.min(100,Math.round(used/lim*100)):0; const col=p>=100?"var(--red)":p>=80?"var(--amber)":"var(--accent)"; return '<div class="barrow"><span class="bl">'+label+'</span><span class="bar"><i style="width:'+p+'%;background:'+col+'"></i></span><span class="bv">'+(used||0)+' / '+(lim||0)+'</span></div>'; };
+        return row("Measure",u.measureWeb||0,L.measureWeb||0)+row("O&amp;M packs",u.omWeb||0,L.omWeb||0)+row("Catalogue",u.catalogueWeb||0,L.catalogueWeb||0); })()+
       '<div class="sec-title">Details</div><div class="meta">'+
         meta("Onboarded",c.onboarded?"Yes":"No")+meta("Primary trade",c.trade)+meta("Team size",c.teamSize)+meta("Reply-to",c.fromEmail)+meta("Address",c.address)+meta("VAT no.",c.vat)+meta("Company reg.",c.companyReg)+meta("Created",fmtDate(c.createdAt))+meta("Last active",fmtAgo(c.lastActive))+meta("Pending invites",c.pendingInvites)+
       '</div>'+
