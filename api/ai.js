@@ -18,10 +18,41 @@ import { createClient } from "@supabase/supabase-js";
 // endpoint refuses to spend. Per-company and per-plan: each tenant is measured
 // only against its own plan and its own spend — never any global total.
 const AI_BUDGET = { trial: 6, sole: 6, team: 20, business: 60, enterprise: 150 };
+// OpenRouter reports cost in USD; the budgets above are GBP. Keep this rate in
+// sync with the client (procurement-dashboard.jsx) and admin console.
+const USD_TO_GBP = 0.75;
 const SB_URL = process.env.SUPABASE_URL;
 const SB_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SB_ANON = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 const sb = (SB_URL && SB_SERVICE) ? createClient(SB_URL, SB_SERVICE, { auth: { persistSession: false } }) : null;
+const sbAnon = (SB_URL && SB_ANON) ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 const aiPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
+
+// Verify the caller is a signed-in ProQure user and resolve their REAL company id
+// from the members table (never trusted from the request body, so one tenant can
+// neither drain another tenant's AI budget nor dodge their own). If auth can't be
+// verified server-side (anon key not configured), behaviour falls back to the
+// previous open mode so nothing breaks — but with the env set, no token = no AI.
+async function verifyCaller(req) {
+  if (!sbAnon) return { mode: "open" }; // verification not configured: legacy behaviour
+  const h = req.headers.authorization || req.headers.Authorization || "";
+  const token = h.startsWith("Bearer ") ? h.slice(7).trim() : null;
+  if (!token) return { mode: "deny" };
+  try {
+    const { data, error } = await sbAnon.auth.getUser(token);
+    if (error || !data || !data.user) return { mode: "deny" };
+    const uid = data.user.id;
+    let companyId = uid; // a brand-new signup is their own company
+    if (sb) {
+      try {
+        const { data: m } = await sb.from("members").select("company_id").eq("user_id", uid).limit(1).maybeSingle();
+        if (m && m.company_id) companyId = m.company_id;
+      } catch (e) { /* fall back to uid */ }
+    }
+    return { mode: "ok", companyId };
+  } catch (e) { return { mode: "deny" }; }
+}
+
 
 // Read the company's plan + this-month authoritative spend (server-owned meter,
 // store_key piq_ai_meter — the client cannot write it once the RLS lock is run).
@@ -63,13 +94,22 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing messages" });
     }
 
+    // Caller verification (closes the open-proxy hole): a valid signed-in session
+    // is required, and the company is resolved SERVER-SIDE from membership.
+    const who = await verifyCaller(req);
+    if (who.mode === "deny") {
+      return res.status(401).json({ error: "Please sign in to use AI features." });
+    }
+    const effectiveCompany = who.mode === "ok" ? who.companyId : (companyId || null);
+
     // Circuit-breaker (server-authoritative): refuse to spend if this company is
     // already at/over its plan's monthly AI cost cap. Per-tenant, per-plan only.
-    if (sb && companyId) {
+    // The meter stores USD (OpenRouter's unit); budgets are GBP, so convert.
+    if (sb && effectiveCompany) {
       try {
-        const { plan, spent } = await meterRead(companyId);
+        const { plan, spent } = await meterRead(effectiveCompany);
         const cap = AI_BUDGET[plan] != null ? AI_BUDGET[plan] : AI_BUDGET.trial;
-        if (cap > 0 && spent >= cap) {
+        if (cap > 0 && spent * USD_TO_GBP >= cap) {
           return res.status(402).json({ error: "Monthly AI limit reached for this plan.", blocked: true });
         }
       } catch (e) { /* fail-open: never break the app over a metering read */ }
@@ -138,7 +178,7 @@ export default async function handler(req, res) {
           const usage = d.usage || null;
           const cost = usage && usage.cost != null ? Number(usage.cost) : null;
           // Record authoritative spend so the cap can't be bypassed client-side.
-          if (sb && companyId && cost != null) { try { await meterAdd(companyId, cost); } catch (e) { /* never break on meter write */ } }
+          if (sb && effectiveCompany && cost != null) { try { await meterAdd(effectiveCompany, cost); } catch (e) { /* never break on meter write */ } }
           return res.status(200).json({ text, citations, usage, cost, model, web: !!web });
         }
       } catch (e) {
