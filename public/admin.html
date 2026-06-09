@@ -48,6 +48,8 @@
   .btn-primary:hover{box-shadow:0 8px 22px rgba(30,158,99,.32)}
   .btn-ghost{background:var(--chip);border-color:var(--line-2);color:var(--text)}
   .btn-ghost:hover{border-color:var(--green);color:var(--accent)}
+  .btn-danger{background:rgba(229,100,92,.12);border-color:rgba(229,100,92,.4);color:var(--red)}
+  .btn-danger:hover{background:rgba(229,100,92,.2);border-color:var(--red)}
   .btn-sm{padding:7px 11px;font-size:12px;border-radius:9px}
   .btn:disabled{opacity:.5;cursor:not-allowed}
   input{width:100%;background:var(--card-2);border:1px solid var(--line-2);border-radius:11px;padding:11px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color .2s;font-family:inherit}
@@ -288,6 +290,8 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const fmtDate = (iso)=>{ if(!iso)return "-"; const d=new Date(iso); return isNaN(d)?"-":d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}); };
 const fmtAgo = (iso)=>{ if(!iso)return "never"; const ms=Date.now()-new Date(iso).getTime(); if(isNaN(ms))return "-"; const d=Math.floor(ms/86400000); if(d<=0)return "today"; if(d===1)return "yesterday"; if(d<30)return d+"d ago"; return Math.floor(d/30)+"mo ago"; };
+const fmtMoney = (n)=>{ n=Number(n||0); if(!n) return "$0.00"; return n<1 ? "$"+n.toFixed(4) : "$"+n.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2}); };
+const pct = (a,b)=> b>0 ? Math.round(a/b*100)+"%" : "\u2014";
 
 const ICON = {
   overview:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>',
@@ -301,6 +305,8 @@ const ICON = {
   invite:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>',
   alert:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   zzz:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h6l-6 8h6M14 4h6l-6 6h6"/></svg>',
+  coin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M14.5 9a2.5 2 0 0 0-2.5-1.5c-1.5 0-2.5.8-2.5 2s1 1.7 2.5 2 2.5.9 2.5 2-1 2-2.5 2A2.5 2 0 0 1 9.5 16M12 6v1.5M12 16.5V18"/></svg>',
+  shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
 };
 function ic(name){ return '<span class="ic">'+(ICON[name]||"")+'</span>'; }
 
@@ -311,7 +317,7 @@ function applyTheme(t){ document.documentElement.setAttribute("data-theme",t); t
 (function(){ let t="dark"; try{ t=localStorage.getItem("pq_admin_theme")||"dark"; }catch(e){} applyTheme(t); })();
 $("themeBtn").addEventListener("click",()=>applyTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark"));
 
-const TABS=[["overview","Overview","overview"],["companies","Companies","building"],["users","Users","users"],["signups","Signups","signup"]];
+const TABS=[["overview","Overview","overview"],["companies","Companies","building"],["costs","Cost & usage","coin"],["users","Users","users"],["signups","Signups","signup"],["audit","Audit log","shield"]];
 $("nav").innerHTML = TABS.map(([id,label,icon])=>'<button class="navitem'+(id==="overview"?" on":"")+'" data-tab="'+id+'">'+ic(icon)+'<span class="lbl">'+label+'</span></button>').join("");
 document.querySelectorAll(".navitem").forEach(b=>b.addEventListener("click",()=>{
   currentTab=b.dataset.tab; search="";
@@ -373,7 +379,7 @@ async function loadData(){
   }
 }
 
-function render(){ if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,users:renderUsers,signups:renderSignups}[currentTab])(); }
+function render(){ if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
 function planBadge(p){ p=esc(p||"trial"); return '<span class="badge b-'+p+'">'+p+'</span>'; }
 
 function renderOverview(){
@@ -389,6 +395,8 @@ function renderOverview(){
   const planLegend=Object.entries(pd).map(([p,n])=>'<div class="pl"><span class="lab"><span class="dot" style="background:'+(planColors[p]||"var(--soft)")+'"></span>'+esc(p)+'</span><span class="v">'+n+'</span></div>').join("") || '<div class="muted">No companies yet.</div>';
   const attn=(cls,icon,t,s,v)=>'<div class="a"><span class="ai '+cls+'">'+ICON[icon]+'</span><div><div class="at">'+t+'</div><div class="as">'+s+'</div></div><div class="av v-'+cls.split("-")[1]+'">'+v+'</div></div>';
   const signups=DATA.recentSignups.length?DATA.recentSignups.slice(0,7).map(s=>'<div class="row"><div><div class="e">'+esc(s.company||s.name||s.email)+'</div><div class="m">'+esc(s.email)+'</div></div><div style="text-align:right"><div class="m">'+fmtAgo(s.createdAt)+'</div>'+(s.confirmed?'<span class="badge b-on">confirmed</span>':'<span class="badge b-pending">pending</span>')+'</div></div>').join(""):'<div class="muted" style="padding:8px 0">No signups yet.</div>';
+  const topSpend=(DATA.costRanking||[]).slice(0,5);
+  const spendRows=topSpend.length?topSpend.map(c=>'<div class="row"><div><div class="e">'+esc(c.name)+'</div><div class="m">'+c.aiCalls+' AI calls &middot; '+c.email.sent+' emails</div></div><div style="text-align:right"><div class="e mono">'+fmtMoney(c.aiSpend)+'</div><div class="m">'+esc(c.plan)+'</div></div></div>').join(""):'<div class="muted" style="padding:8px 0">No per-company usage recorded yet. This populates once the app reports cost per company (next app deploy).</div>';
   $("view").innerHTML=
     '<div class="kpis">'+
       kpi("building",k.totalCompanies,"Companies",k.onboardedCount+" onboarded")+
@@ -403,6 +411,15 @@ function renderOverview(){
     '<div class="cols">'+
       '<div class="panel"><h2>Signups <span class="hint">last 14 days</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div>'+
       '<div class="panel"><h2>Plans</h2><div class="planbar">'+planBarHtml+'</div><div class="planlegend">'+planLegend+'</div></div>'+
+    '</div>'+
+    '<div class="cols">'+
+      '<div class="panel"><h2>AI spend <span class="hint">top companies &middot; USD</span></h2><div class="feed">'+spendRows+'</div></div>'+
+      '<div class="panel"><h2>Email deliverability</h2>'+
+        '<div class="strip" style="grid-template-columns:repeat(3,1fr);margin:0">'+
+          stat(k.emailsSent,"Sent")+stat(pct(k.emailsDelivered,k.emailsSent),"Delivered")+stat(k.emailsBounced+k.emailsComplained,"Bounced / spam")+
+        '</div>'+
+        '<div class="muted" style="font-size:11.5px;margin-top:13px">Total AI spend '+fmtMoney(k.totalAiSpend)+' &middot; '+k.totalAiCalls+' calls &middot; '+k.totalWebCalls+' web searches.</div>'+
+      '</div>'+
     '</div>'+
     '<div class="cols">'+
       '<div class="panel"><h2>Recent signups</h2><div class="feed">'+signups+'</div></div>'+
@@ -456,10 +473,70 @@ function renderSignups(){
   $("view").innerHTML='<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Company</th><th>Email</th><th>Status</th><th class="hide">Last sign-in</th><th>Signed up</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
+function renderCosts(){
+  const k=DATA.kpis;
+  const kpi=(icon,n,l,x)=>'<div class="kpi">'+ic(icon)+'<div class="n">'+n+'</div><div class="l">'+l+'</div>'+(x?'<div class="x">'+x+'</div>':'')+'</div>';
+  const all=[...DATA.companies].sort((a,b)=>(b.aiSpend||0)-(a.aiSpend||0)||(b.email.sent||0)-(a.email.sent||0));
+  const withUsage=all.filter(c=>(c.aiSpend||0)>0||(c.email.sent||0)>0);
+  const maxSpend=Math.max(0.0001,...all.map(c=>c.aiSpend||0));
+  const top=all.slice(0,12).filter(c=>(c.aiSpend||0)>0);
+  const bars=top.map(c=>'<div class="b" style="height:'+Math.max(4,Math.round((c.aiSpend||0)/maxSpend*100))+'%"><span>'+fmtMoney(c.aiSpend)+'</span></div>').join("");
+  const xlab=top.map(c=>'<div>'+esc((c.name||"").slice(0,9))+'</div>').join("");
+  const rows=all.map(c=>'<tr class="crow" data-i="'+DATA.companies.indexOf(c)+'">'+
+    '<td><div class="ct-name">'+esc(c.name)+'</div><div class="ct-sub">'+planBadge(c.plan)+'</div></td>'+
+    '<td class="num">'+fmtMoney(c.aiSpend)+'</td>'+
+    '<td class="num hide">'+(c.aiCalls||0)+'</td>'+
+    '<td class="num hide">'+(c.webCalls||0)+'</td>'+
+    '<td class="num">'+(c.email.sent||0)+'</td>'+
+    '<td class="num hide">'+(c.email.delivered||0)+'</td>'+
+    '<td class="num">'+((c.email.bounced||0)+(c.email.complained||0))+'</td></tr>').join("")
+    || '<tr><td colspan="7" class="muted" style="padding:26px;text-align:center">No companies yet.</td></tr>';
+  const empty=withUsage.length===0;
+  $("view").innerHTML=
+    '<div class="kpis">'+
+      kpi("coin",fmtMoney(k.totalAiSpend),"AI spend (USD)",k.totalAiCalls+" calls")+
+      kpi("trial",k.totalWebCalls,"Web searches","metered add-on")+
+      kpi("invite",k.emailsSent,"Emails sent",pct(k.emailsDelivered,k.emailsSent)+" delivered")+
+      kpi("alert",(k.emailsBounced+k.emailsComplained),"Bounced / spam")+
+    '</div>'+
+    (empty
+      ? '<div class="panel" style="margin-bottom:18px"><div class="muted" style="font-size:13px;line-height:1.65">No per-company cost or email data yet. AI spend appears once the app reports cost per company (a small hook shipping with the next app deploy); email stats appear once the Resend webhook is connected. Every company is listed below and the figures fill in automatically.</div></div>'
+      : '<div class="cols" style="grid-template-columns:1fr"><div class="panel"><h2>AI spend by company <span class="hint">top 12 &middot; USD</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div></div>')+
+    '<div class="toolbar"><div class="muted" style="font-size:13px">'+all.length+' compan'+(all.length===1?"y":"ies")+' &middot; ranked by AI spend</div></div>'+
+    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Company</th><th class="num">AI spend</th><th class="num hide">Calls</th><th class="num hide">Web</th><th class="num">Emails</th><th class="num hide">Delivered</th><th class="num">Bounced</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  document.querySelectorAll("#view tr.crow").forEach(r=>r.addEventListener("click",()=>openCompany(DATA.companies[+r.dataset.i])));
+}
+
+async function renderAudit(){
+  $("view").innerHTML='<div class="loading"><span class="spin"></span>Loading audit log...</div>';
+  let entries=[];
+  try{ const d=await api("audit"); entries=(d&&d.entries)||[]; }
+  catch(e){ $("view").innerHTML='<div class="panel"><h2>Audit log</h2><p class="muted" style="margin-top:8px">Could not load: '+esc(e.message)+'</p></div>'; return; }
+  if(currentTab!=="audit") return;
+  const label={'resend-invite':'Resent invite','send-reset':'Sent password reset','set-plan':'Changed plan','verify-email':'Confirmed email','force-logout':'Forced logout','disable-account':'Disabled account','enable-account':'Re-enabled account'};
+  const rows=entries.map(e=>'<tr>'+
+    '<td class="muted" style="white-space:nowrap"><div>'+fmtDate(e.ts)+'</div><div class="ct-sub">'+(e.ts&&!isNaN(new Date(e.ts))?new Date(e.ts).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"")+'</div></td>'+
+    '<td><span class="badge b-role">'+esc(label[e.action]||e.action)+'</span></td>'+
+    '<td style="word-break:break-all">'+esc(e.target||"-")+(e.detail?' <span class="muted">('+esc(e.detail)+')</span>':'')+'</td>'+
+    '<td class="hide muted" style="word-break:break-all">'+esc(e.actor||"-")+'</td></tr>').join("")
+    || '<tr><td colspan="4" class="muted" style="padding:26px;text-align:center">No admin actions recorded yet.</td></tr>';
+  $("view").innerHTML=
+    '<div class="toolbar"><div class="muted" style="font-size:13px">'+entries.length+' recent action'+(entries.length===1?"":"s")+' &middot; who did what, when</div></div>'+
+    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>When</th><th>Action</th><th>Target</th><th class="hide">By</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
 function openCompany(c){
   const meta=(k,v)=>'<div><div class="k">'+k+'</div><div class="v">'+esc(v==null||v===""?"-":v)+'</div></div>';
   const cp=(n,l)=>'<div class="cpill"><div class="pn">'+n+'</div><div class="pl">'+l+'</div></div>';
-  const users=c.users.map(u=>'<div class="uitem"><div class="ue">'+esc(u.email)+'</div><div class="um">'+(u.isOwner?'<span class="badge b-owner">owner</span> ':'<span class="badge b-role">'+esc(u.role)+'</span> ')+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+' &middot; joined '+fmtDate(u.joinedAt)+' &middot; last in '+fmtAgo(u.lastSignIn)+'</div><div class="ua"><button class="btn btn-ghost btn-sm" onclick="doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend invite</button><button class="btn btn-ghost btn-sm" onclick="doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Send reset</button></div></div>').join("");
+  const uact=(u)=>'<div class="ua">'+
+    '<button class="btn btn-ghost btn-sm" onclick="doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend invite</button>'+
+    '<button class="btn btn-ghost btn-sm" onclick="doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Send reset</button>'+
+    '<button class="btn btn-ghost btn-sm" onclick="doAction(\'verify-email\',{email:\''+esc(u.email)+'\'})">Verify email</button>'+
+    '<button class="btn btn-ghost btn-sm" onclick="doActionConfirm(\'force-logout\',{email:\''+esc(u.email)+'\'},\'Sign this user out of all sessions?\')">Force logout</button>'+
+    '<button class="btn btn-sm btn-danger" onclick="doActionConfirm(\'disable-account\',{email:\''+esc(u.email)+'\'},\'Disable this account? They will not be able to sign in until re-enabled.\')">Disable</button>'+
+    '<button class="btn btn-ghost btn-sm" onclick="doActionConfirm(\'enable-account\',{email:\''+esc(u.email)+'\'},\'Re-enable this account?\')">Re-enable</button>'+
+  '</div>';
+  const users=c.users.map(u=>'<div class="uitem"><div class="ue">'+esc(u.email)+'</div><div class="um">'+(u.isOwner?'<span class="badge b-owner">owner</span> ':'<span class="badge b-role">'+esc(u.role)+'</span> ')+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+' &middot; joined '+fmtDate(u.joinedAt)+' &middot; last in '+fmtAgo(u.lastSignIn)+'</div>'+uact(u)+'</div>').join("");
   $("drawer").innerHTML=
     '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+'</div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
     '<div class="dbody">'+
@@ -468,6 +545,7 @@ function openCompany(c){
         meta("Onboarded",c.onboarded?"Yes":"No")+meta("Primary trade",c.trade)+meta("Team size",c.teamSize)+meta("Reply-to",c.fromEmail)+meta("Address",c.address)+meta("VAT no.",c.vat)+meta("Company reg.",c.companyReg)+meta("Created",fmtDate(c.createdAt))+meta("Last active",fmtAgo(c.lastActive))+meta("Pending invites",c.pendingInvites)+
       '</div>'+
       '<div class="sec-title">Usage</div><div class="countpills">'+cp(c.counts.orders,"Orders")+cp(c.counts.requests,"Requests")+cp(c.counts.quotes,"Quotes")+cp(c.counts.suppliers,"Suppliers")+cp(c.counts.hires,"Hires")+cp(c.counts.library,"Library")+cp(c.counts.templates,"Templates")+cp(c.counts.activity,"Activity")+'</div>'+
+      '<div class="sec-title">Cost &amp; email</div><div class="countpills">'+cp(fmtMoney(c.aiSpend),"AI spend")+cp(c.aiCalls||0,"AI calls")+cp(c.webCalls||0,"Web search")+cp(c.email.sent||0,"Emails")+cp(c.email.delivered||0,"Delivered")+cp(c.email.bounced||0,"Bounced")+cp(c.email.complained||0,"Spam")+cp(fmtAgo(c.email.lastEventAt),"Last email")+'</div>'+
       '<div class="sec-title">Users ('+c.userCount+')</div>'+users+
     '</div>';
   $("scrim").classList.add("open"); $("drawer").classList.add("open");
@@ -476,7 +554,8 @@ function closeDrawer(){ $("scrim").classList.remove("open"); $("drawer").classLi
 $("scrim").addEventListener("click",closeDrawer);
 async function setPlan(id){ try{ const d=await api("set-plan",{companyId:id,plan:$("planSel").value}); toast(d.message||"Plan updated."); await loadData(); closeDrawer(); }catch(e){ toast(e.message,true); } }
 async function doAction(a,p){ try{ const d=await api(a,p); toast(d.message||"Done."); }catch(e){ toast(e.message,true); } }
-window.doAction=doAction; window.setPlan=setPlan; window.closeDrawer=closeDrawer;
+async function doActionConfirm(a,p,msg){ if(!window.confirm(msg)) return; try{ const d=await api(a,p); toast(d.message||"Done."); }catch(e){ toast(e.message,true); } }
+window.doAction=doAction; window.doActionConfirm=doActionConfirm; window.setPlan=setPlan; window.closeDrawer=closeDrawer;
 
 init();
 </script>
