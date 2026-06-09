@@ -37,7 +37,7 @@ const AUDIT_CAP = 1000; // keep the most recent N entries per admin row
 
 // ---- Pure assembly: turn raw rows into the metadata-only summary the UI needs -------
 // Exported so it can be unit-tested without a live database.
-export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [], emailStatsRows = [], storageRows = [], excludeEmails = [] }) {
+export function assembleSummary({ members = [], authUsers = [], settingsRows = [], countRows = [], usageRows = [], emailStatsRows = [], storageRows = [], meterRows = [], excludeEmails = [] }) {
   const now = Date.now();
   const DAY = 86400000;
 
@@ -164,6 +164,23 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   // Billing: tier prices (GBP/mo) and which plans count as paying, for MRR/ARR.
   const PLAN_PRICE = { sole: 29, team: 79, business: 199, enterprise: 399 };
   const PAID_TIERS = new Set(["sole", "team", "business", "enterprise"]);
+  // Mirrors of the app's ENTITLEMENTS + the AI circuit-breaker budgets (GBP) and the
+  // USD->GBP display rate. KEEP IN SYNC with procurement-dashboard.jsx and /api/ai.
+  const AI_BUDGET = { trial: 6, sole: 6, team: 20, business: 60, enterprise: 150 };
+  const ALLOWANCES = {
+    trial:      { measureWeb: 100,  omWeb: 5,   catalogueWeb: 50 },
+    sole:       { measureWeb: 100,  omWeb: 5,   catalogueWeb: 50 },
+    team:       { measureWeb: 300,  omWeb: 15,  catalogueWeb: 150 },
+    business:   { measureWeb: 1000, omWeb: 50,  catalogueWeb: 500 },
+    enterprise: { measureWeb: 3000, omWeb: 150, catalogueWeb: 1500 },
+  };
+  const USD_TO_GBP = 0.75;
+  const CUR_PERIOD = new Date().toISOString().slice(0, 7);
+  const meterByCo = new Map();
+  for (const r of meterRows) {
+    const v = r.value || {};
+    meterByCo.set(r.user_id, (v.period === CUR_PERIOD) ? (Number(v.costPeriod) || 0) : 0);
+  }
 
   // finalise each company with settings metadata + counts
   const list = [];
@@ -211,6 +228,20 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
         templates: counts.piq_templates || 0,
       },
       aiUsage: usageByCo.get(c.companyId) || null,
+      // This-month AI cost from the SERVER-authoritative meter (piq_ai_meter, USD),
+      // converted to GBP, against the plan's circuit-breaker budget.
+      aiMonthGbp: Number(((meterByCo.get(c.companyId) || 0) * USD_TO_GBP).toFixed(4)),
+      aiBudgetGbp: AI_BUDGET[sv.plan] != null ? AI_BUDGET[sv.plan] : AI_BUDGET.trial,
+      allowanceLimits: (() => {
+        const ent = ALLOWANCES[sv.plan] || ALLOWANCES.trial;
+        const u = usageByCo.get(c.companyId) || {};
+        const add = (u.period === CUR_PERIOD && u.addons) ? u.addons : {};
+        return {
+          measureWeb: ent.measureWeb + (Number(add.measureWeb) || 0),
+          omWeb: ent.omWeb + (Number(add.omWeb) || 0),
+          catalogueWeb: ent.catalogueWeb + (Number(add.catalogueWeb) || 0),
+        };
+      })(),
       aiSpend: Number((usageByCo.get(c.companyId) || {}).aiSpend || 0),
       aiCalls: Number((usageByCo.get(c.companyId) || {}).aiCalls || 0),
       webCalls: Number((usageByCo.get(c.companyId) || {}).webCalls || 0),
@@ -241,6 +272,11 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const signupsLast30d = authUsers.filter(u => u.created_at && (now - Date.parse(u.created_at)) < 30 * DAY).length;
   const activeLast7d = list.filter(c => c.lastActive && (now - Date.parse(c.lastActive)) < 7 * DAY).length;
   const staleCompanies = list.filter(c => c.onboarded && (!c.lastActive || (now - Date.parse(c.lastActive)) > 30 * DAY)).length;
+
+  for (const c of list) c.aiBudgetPct = c.aiBudgetGbp > 0 ? Math.round((c.aiMonthGbp / c.aiBudgetGbp) * 100) : 0;
+  const aiSpendMonthGbp = Number(list.reduce((n, c) => n + (c.aiMonthGbp || 0), 0).toFixed(2));
+  const nearAiCap = list.filter(c => c.aiBudgetPct >= 80).length;
+  const companiesNew30d = list.filter(c => c.createdAt && (now - Date.parse(c.createdAt)) < 30 * DAY).length;
 
   // cost & deliverability totals
   const totalAiSpend = list.reduce((n, c) => n + (c.aiSpend || 0), 0);
@@ -299,6 +335,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       totalOrders, totalRequests, totalSuppliers, totalHires, totalQuotes,
       pendingInvites, unconfirmedUsers, planDist,
       totalAiSpend, totalAiCalls, totalWebCalls,
+      aiSpendMonthGbp, nearAiCap, companiesNew30d,
       emailsSent, emailsDelivered, emailsBounced, emailsComplained,
       totalSuppliersEmailed, totalSupplierReplies,
       totalReceivedMatched, totalReceivedUnmatched, totalReceivedAttachments,
@@ -440,6 +477,10 @@ export default async function handler(req, res) {
       const { data: emailStatsRows } = await admin
         .from("proqure_data").select("user_id,value").eq("store_key", EMAIL_STATS_KEY);
 
+      // server-authoritative this-month AI meter (written only by /api/ai)
+      const { data: meterRows } = await admin
+        .from("proqure_data").select("user_id,value").eq("store_key", "piq_ai_meter");
+
       // per-company Supabase data size (RPC; sizes server-side without pulling the blobs).
       // Gracefully empty until the proqure_storage_stats function is installed.
       let storageRows = [];
@@ -448,7 +489,7 @@ export default async function handler(req, res) {
         if (!stErr && Array.isArray(srows)) storageRows = srows;
       } catch { /* RPC not installed yet */ }
 
-      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], emailStatsRows: emailStatsRows || [], storageRows, excludeEmails: ADMIN_EMAILS });
+      const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], emailStatsRows: emailStatsRows || [], storageRows, meterRows: meterRows || [], excludeEmails: ADMIN_EMAILS });
       res.status(200).json({ ok: true, ...summary, viewer: callerEmail });
       return;
     }
