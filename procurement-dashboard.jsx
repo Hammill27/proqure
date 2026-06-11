@@ -83,7 +83,7 @@ const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", busines
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects"];
 
 // Pull every key for this user from the cloud into localStorage (on login)
 async function cloudPull(userId) {
@@ -1931,6 +1931,116 @@ function gbp(n) {
   return "£" + (Math.round(n || 0)).toLocaleString("en-GB");
 }
 
+// ---- Project cost capture (Phase 1 financials) ------------------------------
+// Manual project costs live in piq_costs as an array of entries. They sit ALONGSIDE
+// the procurement orders (which stay the source of truth for materials), so the
+// true project cost = materials (from orders) + these manual costs. Per Andy:
+// subcontractor / labour / accommodation / expenses / misc, with a live running
+// total and a sell-price-vs-cost margin view.
+const COST_TYPES = [
+  { id: "subcontractor", label: "Subcontractor" },
+  { id: "labour",        label: "Labour / time" },
+  { id: "accommodation", label: "Accommodation" },
+  { id: "expense",       label: "Expenses" },
+  { id: "misc",          label: "Miscellaneous" },
+];
+const COST_TYPE_LABEL = COST_TYPES.reduce((m, t) => { m[t.id] = t.label; return m; }, {});
+
+// Normalise one manual cost entry's amount. labour can be entered as qty(hours) x rate.
+function costAmount(c) {
+  if (!c) return 0;
+  const direct = parsePrice(c.amount);
+  if (direct != null) return direct;
+  const q = Number(c.qty), r = parsePrice(c.rate);
+  if (q && r != null) return q * r;
+  return 0;
+}
+
+// All manual costs for a job, newest first.
+function costsForJob(costs, jobRef) {
+  const key = ((jobRef || "").toString().trim()) || "Unspecified";
+  return (costs || [])
+    .filter(c => c && (((c.jobRef || "").toString().trim()) || "Unspecified") === key)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+
+// Sum of manual costs for a job, broken down by type.
+function costTotals(costs, jobRef) {
+  const list = costsForJob(costs, jobRef);
+  const byType = {};
+  let total = 0;
+  list.forEach(c => {
+    const a = costAmount(c);
+    total += a;
+    byType[c.type] = (byType[c.type] || 0) + a;
+  });
+  return { total, byType, count: list.length };
+}
+
+// The full picture for one project: materials (orders) + manual costs vs sell price.
+// orderValue / marginManagerOnly come from piq_projects[jobRef].
+function projectFinancials(orders, costs, projects, jobRef) {
+  const rp = repProject(orders, jobRef);            // materials spend (existing engine)
+  const ct = costTotals(costs, jobRef);
+  const materials = rp.total;
+  const extraCosts = ct.total;
+  const totalCost = materials + extraCosts;
+  const pj = (projects && projects[jobRef]) || {};
+  const orderValue = parsePrice(pj.orderValue);     // null if not set
+  const hasSell = orderValue != null && orderValue > 0;
+  const profit = hasSell ? orderValue - totalCost : null;
+  const marginPct = hasSell && orderValue > 0 ? (profit / orderValue) * 100 : null;
+  return {
+    jobRef, site: rp.site,
+    materials, extraCosts, totalCost,
+    byTradeMaterials: rp.byTrade, bySupplier: rp.bySupplier,
+    costByType: ct.byType, costCount: ct.count,
+    orderValue, hasSell, profit, marginPct,
+    marginManagerOnly: !!pj.marginManagerOnly,
+  };
+}
+
+// Supplier price-change flagging: compare a freshly-analysed quote's lines against
+// this supplier's history in the quote library, and surface up/down moves. Pure
+// data (no AI cost) — uses the library we already keep.
+function priceChangeFlags(quoteLibrary, supplierName, lines) {
+  if (!supplierName || !Array.isArray(lines) || !lines.length) return [];
+  const norm = (s) => (s || "").toString().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const supKey = norm(supplierName);
+  // Build a "most recent previous unit price per item description" map for this supplier.
+  const hist = new Map();
+  (quoteLibrary || []).forEach(entry => {
+    if (norm(entry.supplier) !== supKey) return;
+    const when = entry.savedAt || entry.date || "";
+    (entry.lines || entry.items || []).forEach(li => {
+      const k = norm(li.description || li.item);
+      if (!k) return;
+      const up = parsePrice(li.unitPrice ?? li.price);
+      if (up == null) return;
+      const prev = hist.get(k);
+      if (!prev || (when && when > prev.when)) hist.set(k, { price: up, when });
+    });
+  });
+  const flags = [];
+  lines.forEach(li => {
+    const k = norm(li.description || li.item);
+    const up = parsePrice(li.unitPrice ?? li.price);
+    if (!k || up == null) return;
+    const prev = hist.get(k);
+    if (!prev || prev.price <= 0) return;
+    const delta = up - prev.price;
+    if (Math.abs(delta) < 0.005) return;
+    const pct = (delta / prev.price) * 100;
+    flags.push({
+      description: li.description || li.item,
+      was: prev.price, now: up, delta,
+      pct: Math.round(pct * 10) / 10,
+      direction: delta > 0 ? "up" : "down",
+    });
+  });
+  return flags.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+}
+
 // ---- Measuring tool (manual-input phase) ------------------------------------
 // Cross-references the material against coverage rates to give a quantity to
 // order. When a specific product/brand is given and useDatasheet is on, it first
@@ -2326,6 +2436,8 @@ function ProQureApp({ session, companyId }) {
   // Supplier Catalogues: each entry = { id, supplier, name, uploadedAt, uploadedBy, items:[{id,description,partNumber,manufacturer,pack,datasheetUrl,notes}] }
   const [catalogues, setCatalogues] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_catalogues")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
+  const [costs,    setCosts]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_costs")||"[]")}catch{return []} });
+  const [projects, setProjects] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_projects")||"{}")}catch{return {}} });
   const [omJob, setOmJob] = useState(null);       // jobRef being generated
   const [omBusy, setOmBusy] = useState(false);
   const [omStage, setOmStage] = useState("");
@@ -2333,6 +2445,8 @@ function ProQureApp({ session, companyId }) {
   const [omSplit, setOmSplit] = useState(false);   // also export sections separately
   const [repMode, setRepMode] = useState("overview");
   const [repOpen, setRepOpen] = useState(null);    // expanded project in reports
+  const [costJob, setCostJob] = useState(null);    // selected project in Project costs
+  const [costForm, setCostForm] = useState({ type:"subcontractor", label:"", amount:"", qty:"", rate:"", date:new Date().toISOString().slice(0,10), raisePO:false });
   const [mMaterial, setMMaterial] = useState("Emulsion paint");
   const [mLength, setMLength] = useState("");
   const [mHeight, setMHeight] = useState("");
@@ -2562,6 +2676,41 @@ function ProQureApp({ session, companyId }) {
   // Templates
   const [templates, setTemplates] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_templates")||"[]")}catch{return []} });
   const saveTemplates = (t) => { setTemplates(t); try{localStorage.setItem("piq_templates",JSON.stringify(t));}catch{} };
+
+  // --- Project costs (Phase 1 financials) -----------------------------------
+  // Add a manual project cost. Buyer+ only (enforced at the call sites and by the
+  // view's role gate). Subcontractor entries can optionally also raise a PO.
+  const addCost = (entry) => {
+    const jobRef = (entry.jobRef || "").toString().trim();
+    if (!jobRef) { showToast("Pick or enter a project (job ref) for this cost.","warn"); return null; }
+    if (costAmount(entry) <= 0) { showToast("Enter an amount (or hours and rate).","warn"); return null; }
+    const c = {
+      id: "cost_" + Date.now() + "_" + Math.random().toString(36).slice(2,7),
+      jobRef,
+      type: COST_TYPE_LABEL[entry.type] ? entry.type : "misc",
+      label: (entry.label || "").toString().slice(0,200),
+      amount: entry.amount != null && entry.amount !== "" ? Number(parsePrice(entry.amount)) : null,
+      qty: entry.qty ? Number(entry.qty) : null,
+      rate: entry.rate != null && entry.rate !== "" ? Number(parsePrice(entry.rate)) : null,
+      date: entry.date || new Date().toISOString().slice(0,10),
+      note: (entry.note || "").toString().slice(0,500),
+      createdBy: myEmail,
+      createdAt: new Date().toISOString(),
+    };
+    setCosts(p => [c, ...p]);
+    logActivity("Cost added", `${COST_TYPE_LABEL[c.type]} ${gbp(costAmount(c))} on ${jobRef}`);
+    return c;
+  };
+  const deleteCost = (id) => {
+    if (!can.deleteItems(myRole) && !can.viewCosts(myRole)) return;
+    setCosts(p => p.filter(c => c.id !== id));
+  };
+  // Set a project's sell price / margin-visibility (buyer+; manager-only toggle).
+  const setProjectField = (jobRef, patch) => {
+    const key = (jobRef || "").toString().trim();
+    if (!key) return;
+    setProjects(p => ({ ...p, [key]: { ...(p[key] || {}), ...patch } }));
+  };
   const [templateModal, setTemplateModal] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
 
@@ -3839,6 +3988,10 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_catalogues",JSON.stringify(catalogues))}catch{} },[catalogues]);
   useEffect(()=>{ queueCloudPush("piq_catalogues", catalogues); }, [catalogues, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_orders", orders); }, [orders, queueCloudPush]);
+  useEffect(()=>{ try{localStorage.setItem("piq_costs",JSON.stringify(costs))}catch{} },[costs]);
+  useEffect(()=>{ queueCloudPush("piq_costs", costs); }, [costs, queueCloudPush]);
+  useEffect(()=>{ try{localStorage.setItem("piq_projects",JSON.stringify(projects))}catch{} },[projects]);
+  useEffect(()=>{ queueCloudPush("piq_projects", projects); }, [projects, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
   // Compute hire-vs-buy suggestions (only for cost-viewers, only with enough history)
   useEffect(()=>{
@@ -4177,6 +4330,7 @@ ${settings.company||""}`;
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
           {id:"om",       label:"O&M files",      min:2, d:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M8 13h8M8 17h5"},
           {id:"reports",  label:"Reports",        min:2, d:"M3 3v18h18M7 16V9M12 16V5M17 16v-7"},
+          {id:"costs",    label:"Project costs",  min:2, d:"M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"},
           {id:"measure",  label:"Measure",        d:"M3 7l4-4 14 14-4 4zM7 7l2 2M11 11l2 2M15 15l2 2"},
           {id:"catalogues",label:"Catalogues",     d:"M4 5a1 1 0 011-1h5v16H5a1 1 0 01-1-1zM14 4h5a1 1 0 011 1v13a1 1 0 01-1 1h-5z"},
           {id:"hire",     label:"Hire",           d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
@@ -4187,7 +4341,7 @@ ${settings.company||""}`;
           {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
           {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
   ];
-  const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, om:2, reports:2, team:3, settings:3 };
+  const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, om:2, reports:2, costs:2, team:3, settings:3 };
   const handleNav = (id) => {
     const need = VIEW_MIN_ROLE[id];
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
@@ -5887,6 +6041,25 @@ Rules:
                                     </div>
                                   ))}
                                 </div>
+                                {qa.matched?.length>0&&(()=>{
+                                  // Phase-1 price-change flagging: compare this supplier's quoted unit
+                                  // prices against their history in the quote library (no AI cost).
+                                  const lines=(qa.matched||[]).map(m=>({description:m.item,unitPrice:m.unitPrice}));
+                                  const flags=priceChangeFlags(quoteLibrary,qa.supplierName,lines).slice(0,6);
+                                  if(!flags.length) return null;
+                                  return (
+                                    <div style={{marginBottom:14,border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",overflow:"hidden"}}>
+                                      <div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",padding:"8px 12px",background:"var(--bg-subtle)"}}>Price changes vs this supplier&rsquo;s previous quotes</div>
+                                      {flags.map((f,i)=>(
+                                        <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 12px",borderTop:"1px solid var(--border)"}}>
+                                          <div style={{flex:1,minWidth:0,fontSize:12,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.description}>{f.description}</div>
+                                          <div style={{fontSize:11.5,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-muted)"}}>{gbp(f.was)} → {gbp(f.now)}</div>
+                                          <div style={{flexShrink:0,fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:99,color:f.direction==="up"?"#C45D5D":"#15824F",background:f.direction==="up"?"rgba(196,93,93,0.12)":"var(--green-light)"}}>{f.direction==="up"?"▲":"▼"} {Math.abs(f.pct)}%</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
                                 {qa.matched?.length>0&&(
                                   <div style={{marginBottom:14}}>
                                     <div style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",marginBottom:8}}>Matched items ({qa.matched.length})</div>
@@ -6903,6 +7076,182 @@ Rules:
                 })}
               </div>
             )}
+          </div>);
+        })()}
+        {view==="costs"&&(()=>{
+          // Project list = every jobRef seen across orders + manual costs.
+          const jobSet = new Map();
+          (orders||[]).filter(o=>o.status!=="cancelled").forEach(o=>{ const k=((o.jobRef||"").toString().trim())||"Unspecified"; jobSet.set(k,(jobSet.get(k)||0)+1); });
+          (costs||[]).forEach(c=>{ const k=((c.jobRef||"").toString().trim())||"Unspecified"; if(!jobSet.has(k))jobSet.set(k,0); });
+          const jobRefs=[...jobSet.keys()].sort();
+          const cur = costJob && jobRefs.includes(costJob) ? costJob : (jobRefs[0]||null);
+          const isManager = roleRank(myRole)>=3;
+          const F = cur ? projectFinancials(orders, costs, projects, cur) : null;
+          // Margin can be hidden to manager-only per project (Andy's requirement).
+          const canSeeMargin = F && (!F.marginManagerOnly || isManager);
+          const COLORS=["#15824F","#2E9E68","#46B97F","#5FA8D3","#E0A458","#C45D5D","#8A7CC2","#6B8E23"];
+          const card=(label,val,sub,tone)=>(
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
+              <div style={{fontSize:10.5,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>{label}</div>
+              <div style={{fontSize:isMobile?19:23,fontWeight:800,color:tone||"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",marginTop:4,letterSpacing:"-1px"}}>{val}</div>
+              {sub&&<div style={{fontSize:11,color:"var(--text-muted)",marginTop:3}}>{sub}</div>}
+            </div>);
+          const exportCsv=()=>{
+            if(!F) return;
+            const rows=[["Project",cur],["",""],["Cost type","Label","Amount (GBP)","Date","Added by"]];
+            costsForJob(costs,cur).forEach(c=>rows.push([COST_TYPE_LABEL[c.type]||c.type,c.label||"",Math.round(costAmount(c)),c.date||"",c.createdBy||""]));
+            rows.push(["","",""]);
+            rows.push(["Materials (orders)","",Math.round(F.materials)]);
+            rows.push(["Other costs","",Math.round(F.extraCosts)]);
+            rows.push(["TOTAL COST","",Math.round(F.totalCost)]);
+            if(canSeeMargin&&F.hasSell){ rows.push(["Sell price","",Math.round(F.orderValue)]); rows.push(["Profit","",Math.round(F.profit)]); rows.push(["Margin %","",(Math.round((F.marginPct||0)*10)/10)+"%"]); }
+            const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+            const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob);
+            const a=document.createElement("a"); a.href=url; a.download=`ProQure-project-costs-${(cur||"project").replace(/[^a-z0-9\-]+/gi,"-")}.csv`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+          };
+          const inputStyle={width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"};
+          const labelStyle={fontSize:11,fontWeight:600,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4,display:"block"};
+          return (
+          <div style={{maxWidth:920,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
+              <div>
+                <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em",margin:0}}>Project costs</h1>
+                <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 0"}}>Every cost on a job &mdash; materials, subcontractors, labour, expenses &mdash; against your sell price, live.</p>
+              </div>
+              {F&&<button onClick={exportCsv} style={{flexShrink:0,padding:"9px 15px",background:"var(--bg-card)",color:"var(--text-primary)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Export CSV</button>}
+            </div>
+            {!jobRefs.length ? (
+              <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 24px",textAlign:"center"}}>
+                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:6}}>No projects yet</div>
+                <div style={{fontSize:13,color:"var(--text-muted)",maxWidth:440,margin:"0 auto"}}>Raise an order with a job reference, or add a cost below with a new job ref, and it&rsquo;ll appear here with a live running total.</div>
+              </div>
+            ) : (<>
+            {/* Project picker */}
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:16}}>
+              <span style={{fontSize:12.5,color:"var(--text-muted)",fontWeight:600}}>Project</span>
+              <select value={cur||""} onChange={e=>setCostJob(e.target.value)} style={{...inputStyle,width:"auto",minWidth:200,maxWidth:"100%"}}>
+                {jobRefs.map(j=><option key={j} value={j}>{j}</option>)}
+              </select>
+              {F&&F.site&&<span style={{fontSize:12.5,color:"var(--text-muted)"}}>{F.site}</span>}
+            </div>
+
+            {/* KPI row */}
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":(canSeeMargin&&F.hasSell?"repeat(4,1fr)":"repeat(3,1fr)"),gap:10,marginBottom:18}}>
+              {card("Materials",gbp(F.materials),`${F.bySupplier.length} supplier${F.bySupplier.length===1?"":"s"}`)}
+              {card("Other costs",gbp(F.extraCosts),`${F.costCount} entr${F.costCount===1?"y":"ies"}`)}
+              {card("Total cost",gbp(F.totalCost),"materials + costs")}
+              {canSeeMargin&&F.hasSell&&card(F.profit>=0?"Profit":"Loss",gbp(Math.abs(F.profit)),`${F.marginPct>=0?"":"-"}${Math.abs(Math.round((F.marginPct||0)*10)/10)}% margin`,F.profit>=0?"#15824F":"#C45D5D")}
+            </div>
+
+            {/* Sell price + margin (buyer+; per-project manager-only toggle) */}
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"18px 20px",marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:canSeeMargin?12:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>Sell price &amp; margin</div>
+                {isManager&&<label style={{display:"flex",alignItems:"center",gap:7,fontSize:12,color:"var(--text-muted)",cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!F.marginManagerOnly} onChange={e=>setProjectField(cur,{marginManagerOnly:e.target.checked})}/>
+                  Hide margin from buyers (managers only)
+                </label>}
+              </div>
+              {canSeeMargin ? (
+                <div style={{display:"flex",gap:16,alignItems:"flex-end",flexWrap:"wrap"}}>
+                  <div style={{flex:"1 1 200px"}}>
+                    <label style={labelStyle}>Total order value (sell price)</label>
+                    <input type="number" inputMode="decimal" placeholder="e.g. 48000" defaultValue={F.orderValue!=null?F.orderValue:""} onBlur={e=>setProjectField(cur,{orderValue:e.target.value})} style={inputStyle}/>
+                  </div>
+                  {F.hasSell&&<div style={{flex:"2 1 260px"}}>
+                    <label style={labelStyle}>Cost vs sell</label>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{flex:1,background:"var(--bg-subtle2)",borderRadius:6,height:22,overflow:"hidden",position:"relative"}}>
+                        <div style={{width:`${Math.min(100,Math.max(2,(F.totalCost/F.orderValue)*100))}%`,height:"100%",background:F.profit>=0?"linear-gradient(90deg,#15824F,#2E9E68)":"#C45D5D",borderRadius:6,transition:"width .5s cubic-bezier(0.16,1,0.3,1)"}}/>
+                      </div>
+                      <div style={{fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:F.profit>=0?"#15824F":"#C45D5D",whiteSpace:"nowrap"}}>{Math.round((F.totalCost/F.orderValue)*100)}% used</div>
+                    </div>
+                    <div style={{fontSize:11.5,color:"var(--text-muted)",marginTop:5}}>{gbp(F.totalCost)} cost against {gbp(F.orderValue)} sell &mdash; {F.profit>=0?`${gbp(F.profit)} profit`:`${gbp(-F.profit)} over`} ({Math.round((F.marginPct||0)*10)/10}% margin)</div>
+                  </div>}
+                </div>
+              ) : (
+                <div style={{fontSize:12.5,color:"var(--text-muted)"}}>Margin for this project is set to managers only.</div>
+              )}
+            </div>
+
+            {/* Add a cost */}
+            <details style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"14px 16px":"16px 20px",marginBottom:14}}>
+              <summary style={{cursor:"pointer",fontSize:13,fontWeight:700,color:"var(--text-primary)",listStyle:"none"}}>+ Add a cost to {cur}</summary>
+              <div style={{marginTop:14,display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:10}}>
+                <div style={{gridColumn:isMobile?"1 / -1":"auto"}}>
+                  <label style={labelStyle}>Type</label>
+                  <select value={costForm.type} onChange={e=>setCostForm(f=>({...f,type:e.target.value}))} style={inputStyle}>
+                    {COST_TYPES.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+                  </select>
+                </div>
+                <div style={{gridColumn:isMobile?"1 / -1":"span 3"}}>
+                  <label style={labelStyle}>Description</label>
+                  <input value={costForm.label} onChange={e=>setCostForm(f=>({...f,label:e.target.value}))} placeholder={costForm.type==="subcontractor"?"e.g. Smith Electrical - 2nd fix":costForm.type==="labour"?"e.g. Site labour week 12":"e.g. Travel & parking"} style={inputStyle}/>
+                </div>
+                {costForm.type==="labour" ? (<>
+                  <div><label style={labelStyle}>Hours</label><input type="number" inputMode="decimal" value={costForm.qty} onChange={e=>setCostForm(f=>({...f,qty:e.target.value}))} placeholder="40" style={inputStyle}/></div>
+                  <div><label style={labelStyle}>Rate £/hr</label><input type="number" inputMode="decimal" value={costForm.rate} onChange={e=>setCostForm(f=>({...f,rate:e.target.value}))} placeholder="28" style={inputStyle}/></div>
+                  <div><label style={labelStyle}>= Amount</label><div style={{...inputStyle,display:"flex",alignItems:"center",color:"var(--text-muted)"}}>{gbp((Number(costForm.qty)||0)*(parsePrice(costForm.rate)||0))}</div></div>
+                </>) : (
+                  <div><label style={labelStyle}>Amount £</label><input type="number" inputMode="decimal" value={costForm.amount} onChange={e=>setCostForm(f=>({...f,amount:e.target.value}))} placeholder="500" style={inputStyle}/></div>
+                )}
+                <div><label style={labelStyle}>Date</label><input type="date" value={costForm.date} onChange={e=>setCostForm(f=>({...f,date:e.target.value}))} style={inputStyle}/></div>
+              </div>
+              {costForm.type==="subcontractor"&&<label style={{display:"flex",alignItems:"center",gap:7,fontSize:12,color:"var(--text-muted)",marginTop:10,cursor:"pointer"}}>
+                <input type="checkbox" checked={!!costForm.raisePO} onChange={e=>setCostForm(f=>({...f,raisePO:e.target.checked}))}/>
+                Also raise a purchase order for this subcontractor
+              </label>}
+              <div style={{marginTop:12}}>
+                <button onClick={()=>{
+                  const made=addCost({...costForm,jobRef:cur});
+                  if(made){
+                    if(costForm.type==="subcontractor"&&costForm.raisePO&&can.raisePO(myRole)){
+                      const amt=costAmount(made);
+                      const po={id:"ord_"+Date.now(),jobRef:cur,trade:"Subcontract",supplier:costForm.label||"Subcontractor",status:"pending-send",createdAt:new Date().toISOString(),createdBy:myEmail,site:F&&F.site||"",items:[{description:(costForm.label||"Subcontractor")+" - works",qty:1,unitPrice:amt,lineTotal:amt}],fromCost:made.id};
+                      setOrders(p=>[po,...p]);
+                      showToast("Cost added and a draft PO raised for the subcontractor.");
+                    } else {
+                      showToast("Cost added to "+cur+".");
+                    }
+                    setCostForm(f=>({type:f.type,label:"",amount:"",qty:"",rate:"",date:new Date().toISOString().slice(0,10),raisePO:false}));
+                  }
+                }} style={{padding:"9px 16px",background:"#15824F",color:"#fff",border:"none",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:700,cursor:"pointer"}}>Add cost</button>
+              </div>
+            </details>
+
+            {/* Cost breakdown by type */}
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"16px":"18px 20px",marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Where the cost is</div>
+              {(()=>{
+                const rows=[{label:"Materials",value:F.materials},...COST_TYPES.map(t=>({label:t.label,value:F.costByType[t.id]||0}))].filter(r=>r.value>0);
+                const max=Math.max(1,...rows.map(r=>r.value));
+                return rows.length?rows.map((x,i)=>(
+                  <div key={x.label} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 0"}}>
+                    <div style={{width:isMobile?100:150,flexShrink:0,fontSize:12.5,color:"var(--text-primary)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={x.label}>{x.label}</div>
+                    <div style={{flex:1,background:"var(--bg-subtle2)",borderRadius:5,height:18,overflow:"hidden"}}>
+                      <div style={{width:`${Math.max(2,(x.value/max)*100)}%`,height:"100%",background:COLORS[i%COLORS.length],borderRadius:5,transition:"width .5s cubic-bezier(0.16,1,0.3,1)"}}/>
+                    </div>
+                    <div style={{width:isMobile?72:96,flexShrink:0,textAlign:"right",fontSize:12.5,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-primary)",fontWeight:600}}>{gbp(x.value)}</div>
+                  </div>)):<div style={{fontSize:13,color:"var(--text-muted)"}}>No costs yet.</div>;
+              })()}
+            </div>
+
+            {/* Manual cost entries list */}
+            {costsForJob(costs,cur).length>0&&<div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:isMobile?"14px 16px":"16px 20px"}}>
+              <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Cost entries</div>
+              {costsForJob(costs,cur).map(c=>(
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+                  <div style={{flexShrink:0,fontSize:10.5,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",padding:"2px 8px",borderRadius:99,textTransform:"uppercase",letterSpacing:"0.03em"}}>{COST_TYPE_LABEL[c.type]||c.type}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,color:"var(--text-primary)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label||COST_TYPE_LABEL[c.type]}</div>
+                    <div style={{fontSize:11,color:"var(--text-muted)"}}>{c.date}{c.qty&&c.rate?` · ${c.qty}h × ${gbp(c.rate)}`:""}{c.createdBy?` · ${c.createdBy}`:""}</div>
+                  </div>
+                  <div style={{fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-primary)"}}>{gbp(costAmount(c))}</div>
+                  <button onClick={()=>{ if(confirm("Delete this cost entry?")) deleteCost(c.id); }} title="Delete" style={{flexShrink:0,background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",fontSize:16,lineHeight:1,padding:"2px 4px"}}>×</button>
+                </div>
+              ))}
+            </div>}
+            </>)}
           </div>);
         })()}
         {view==="measure"&&(()=>{
