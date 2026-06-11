@@ -328,24 +328,59 @@ export default async function handler(req, res) {
     if (!target) { console.warn("api/inbound: not matched - token", token, "from", fromEmail); await bumpStat(PLATFORM_BUCKET, { receivedUnmatched: 1 }); await pushEvent(PLATFORM_BUCKET, { type: "received-unmatched", from: fromEmail, att: attN }); return res.status(200).json({ ok: true, note: "not matched" }); }
 
     const { userId, requests, ri, si } = target;
-    const sup = requests[ri].sentTo[si];
+
+    // Fetch attachments BEFORE the write so the slow network work (can be seconds)
+    // sits outside the read-modify-write window.
+    const quoteAtts = await fetchQuoteAttachments(emailId, email);
+
+    // Re-read this user's row FRESH immediately before writing. The scan above may be
+    // seconds old by now; if the user edited their requests in the app meanwhile, a
+    // write based on the stale copy would silently drop their change (or this reply).
+    // Re-locate the matched supplier entry in the fresh copy — by reply token first,
+    // then by request id + supplier email. If anything about the re-read fails, fall
+    // back to the original scanned copy so a reply is never lost.
+    let wRequests = requests, wRi = ri, wSi = si;
+    try {
+      const { data: freshRow } = await supabase.from("proqure_data")
+        .select("value").eq("user_id", userId).eq("store_key", "piq_requests").maybeSingle();
+      const fresh = Array.isArray(freshRow && freshRow.value) ? freshRow.value : null;
+      if (fresh) {
+        const origReq = requests[ri] || {};
+        const origSup = (origReq.sentTo || [])[si] || {};
+        const origTok = origSup.replyToken || null;
+        const origEmail = extractEmail(origSup.email || origSup.contactEmail || "");
+        let fri = -1, fsi = -1;
+        for (let i = 0; i < fresh.length && fri === -1; i++) {
+          const st = (fresh[i] && fresh[i].sentTo) || [];
+          for (let j = 0; j < st.length; j++) {
+            const s = st[j] || {};
+            const tokMatch = origTok && s.replyToken === origTok;
+            const idMatch = origReq.id != null && fresh[i].id === origReq.id &&
+              origEmail && extractEmail(s.email || s.contactEmail || "") === origEmail;
+            if (tokMatch || idMatch) { fri = i; fsi = j; break; }
+          }
+        }
+        if (fri !== -1) { wRequests = fresh; wRi = fri; wSi = fsi; }
+      }
+    } catch (e) { /* fall back to the scanned copy */ }
+
+    const sup = wRequests[wRi].sentTo[wSi];
     const stamp = new Date().toISOString();
     const header = `--- Reply from ${sup.name || fromAddr}${subject ? ` (re: ${subject})` : ""} received ${new Date().toLocaleString("en-GB")} ---\n`;
     sup.quote = (sup.quote && sup.quote.trim() ? sup.quote + "\n\n" : "") + header + (replyText || "(no readable text in reply)");
     sup.saved = true;
     sup.replyReceivedAt = stamp;
-    const quoteAtts = await fetchQuoteAttachments(emailId, email);
     if (quoteAtts.length) sup.attachments = [...(Array.isArray(sup.attachments) ? sup.attachments : []), ...quoteAtts];
     const keptAtts = quoteAtts.filter(a => a.dataUrl).length;
-    requests[ri].sentTo[si] = sup;
-    requests[ri].activity = [
-      ...(requests[ri].activity || []),
+    wRequests[wRi].sentTo[wSi] = sup;
+    wRequests[wRi].activity = [
+      ...(wRequests[wRi].activity || []),
       { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box${keptAtts ? ` with ${keptAtts} attachment${keptAtts === 1 ? "" : "s"}` : ""}${matchedBy === "sender address" ? " (matched by sender address)" : ""}`, user: "Inbound" },
     ];
 
-    const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: requests, updated_at: stamp }, { onConflict: "user_id,store_key" });
+    const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: wRequests, updated_at: stamp }, { onConflict: "user_id,store_key" });
     if (upErr) { console.error("api/inbound: save error", upErr.message); return res.status(200).json({ ok: true }); }
-    console.log("api/inbound: MATCHED & SAVED | user", userId, "| req", ri, "| supplier", si);
+    console.log("api/inbound: MATCHED & SAVED | user", userId, "| req", wRi, "| supplier", wSi);
     await bumpStat(userId, { received: 1, receivedAttachments: attN });
     await pushEvent(userId, { type: "received", from: fromEmail, matchedBy, att: attN });
 
