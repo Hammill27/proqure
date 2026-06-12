@@ -98,11 +98,43 @@ async function checkOpenRouter() {
     const metrics = [
       { label: "Credit remaining", value: "$" + remaining.toFixed(2) },
       { label: "≈ GBP", value: "£" + (remaining * USD_TO_GBP).toFixed(2) },
-      { label: "Used to date", value: "$" + used.toFixed(2) },
     ];
-    // Degraded if running low so it shows amber on the board.
-    const status = remaining <= 0 ? "down" : remaining < 10 ? "degraded" : "up";
-    const detail = remaining <= 0 ? "Out of credit - AI will fail." : remaining < 10 ? "Credit running low - top up soon." : "Reachable, credit healthy.";
+
+    // Spend trend: the /key endpoint exposes current period spend for this key.
+    // We use the weekly figure to estimate a daily burn rate and a rough
+    // "days of credit left" so the warning is actionable, not just a balance.
+    let weekSpend = null, daysLeft = null;
+    try {
+      const kr = await timedFetch("https://openrouter.ai/api/v1/key", { headers: { Authorization: "Bearer " + OPENROUTER_KEY } }, 5000);
+      if (kr.res.ok) {
+        const kj = await kr.res.json().catch(() => ({}));
+        const kd = (kj && kj.data) || {};
+        // Field names vary by account; try the common ones, else fall back to usage.
+        const wk = kd.usage_weekly ?? kd.weekly_usage ?? (kd.usage && kd.usage.weekly);
+        if (wk != null && !isNaN(Number(wk))) weekSpend = Number(wk);
+      }
+    } catch { /* trend is best-effort; balance still shown */ }
+
+    if (weekSpend != null) {
+      metrics.push({ label: "Spent this week", value: "$" + weekSpend.toFixed(2) });
+      const perDay = weekSpend / 7;
+      if (perDay > 0 && remaining > 0) {
+        daysLeft = Math.floor(remaining / perDay);
+        metrics.push({ label: "At this rate", value: daysLeft + " days left" });
+      }
+    } else {
+      metrics.push({ label: "Used to date", value: "$" + used.toFixed(2) });
+    }
+
+    // Degraded if balance low OR burn rate would exhaust it within ~7 days.
+    const lowBalance = remaining <= 0 ? "down" : remaining < 10 ? "degraded" : "up";
+    const lowRunway = (daysLeft != null && daysLeft <= 7 && remaining > 0) ? "degraded" : "up";
+    const rank = { up: 0, degraded: 1, down: 2 };
+    const status = rank[lowRunway] > rank[lowBalance] ? lowRunway : lowBalance;
+    const detail = remaining <= 0 ? "Out of credit - AI will fail."
+      : status === "degraded" && lowRunway === "degraded" && lowBalance !== "degraded" ? "Spending fast - about " + daysLeft + " days of credit left at this rate."
+      : remaining < 10 ? "Credit running low - top up soon."
+      : "Reachable, credit healthy.";
     return mk("OpenRouter (AI)", status, detail, metrics, ms);
   } catch (e) {
     return mk("OpenRouter (AI)", "down", e.name === "AbortError" ? "Timed out." : "Unreachable.");
