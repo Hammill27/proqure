@@ -1970,6 +1970,7 @@ function costTotals(costs, jobRef) {
   const byType = {};
   let total = 0;
   list.forEach(c => {
+    if (c.poRaised) return; // counted in materials via its purchase order - never twice
     const a = costAmount(c);
     total += a;
     byType[c.type] = (byType[c.type] || 0) + a;
@@ -2010,7 +2011,7 @@ function priceChangeFlags(quoteLibrary, supplierName, lines) {
   // Build a "most recent previous unit price per item description" map for this supplier.
   const hist = new Map();
   (quoteLibrary || []).forEach(entry => {
-    if (norm(entry.supplier) !== supKey) return;
+    if (norm(entry.supplier || entry.supplierName) !== supKey) return;
     const when = entry.savedAt || entry.date || "";
     (entry.lines || entry.items || []).forEach(li => {
       const k = norm(li.description || li.item);
@@ -2683,13 +2684,17 @@ function ProQureApp({ session, companyId }) {
   const addCost = (entry) => {
     const jobRef = (entry.jobRef || "").toString().trim();
     if (!jobRef) { showToast("Pick or enter a project (job ref) for this cost.","warn"); return null; }
-    if (costAmount(entry) <= 0) { showToast("Enter an amount (or hours and rate).","warn"); return null; }
+    const type = COST_TYPE_LABEL[entry.type] ? entry.type : "misc";
+    // Labour is hours x rate; ignore any amount left in the form from another type,
+    // otherwise it would silently take precedence in costAmount().
+    const e2 = type === "labour" ? { ...entry, amount: null } : entry;
+    if (costAmount(e2) <= 0) { showToast(type === "labour" ? "Enter hours and a rate." : "Enter an amount (or hours and rate).","warn"); return null; }
     const c = {
       id: "cost_" + Date.now() + "_" + Math.random().toString(36).slice(2,7),
       jobRef,
-      type: COST_TYPE_LABEL[entry.type] ? entry.type : "misc",
+      type,
       label: (entry.label || "").toString().slice(0,200),
-      amount: entry.amount != null && entry.amount !== "" ? Number(parsePrice(entry.amount)) : null,
+      amount: e2.amount != null && e2.amount !== "" ? Number(parsePrice(e2.amount)) : null,
       qty: entry.qty ? Number(entry.qty) : null,
       rate: entry.rate != null && entry.rate !== "" ? Number(parsePrice(entry.rate)) : null,
       date: entry.date || new Date().toISOString().slice(0,10),
@@ -7156,7 +7161,7 @@ Rules:
                 <div style={{display:"flex",gap:16,alignItems:"flex-end",flexWrap:"wrap"}}>
                   <div style={{flex:"1 1 200px"}}>
                     <label style={labelStyle}>Total order value (sell price)</label>
-                    <input type="number" inputMode="decimal" placeholder="e.g. 48000" defaultValue={F.orderValue!=null?F.orderValue:""} onBlur={e=>setProjectField(cur,{orderValue:e.target.value})} style={inputStyle}/>
+                    <input key={cur} type="number" inputMode="decimal" placeholder="e.g. 48000" defaultValue={F.orderValue!=null?F.orderValue:""} onBlur={e=>setProjectField(cur,{orderValue:e.target.value})} style={inputStyle}/>
                   </div>
                   {F.hasSell&&<div style={{flex:"2 1 260px"}}>
                     <label style={labelStyle}>Cost vs sell</label>
@@ -7209,7 +7214,8 @@ Rules:
                       const amt=costAmount(made);
                       const po={id:"ord_"+Date.now(),jobRef:cur,trade:"Subcontract",supplier:costForm.label||"Subcontractor",status:"pending-send",createdAt:new Date().toISOString(),createdBy:myEmail,site:F&&F.site||"",items:[{description:(costForm.label||"Subcontractor")+" - works",qty:1,unitPrice:amt,lineTotal:amt}],fromCost:made.id};
                       setOrders(p=>[po,...p]);
-                      showToast("Cost added and a draft PO raised for the subcontractor.");
+                      setCosts(p=>p.map(c=>c.id===made.id?{...c,poRaised:true,poId:po.id}:c));
+                      showToast("Cost added and a draft PO raised - it's counted under materials via the PO (not twice).");
                     } else {
                       showToast("Cost added to "+cur+".");
                     }
@@ -7241,7 +7247,7 @@ Rules:
               <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",marginBottom:10}}>Cost entries</div>
               {costsForJob(costs,cur).map(c=>(
                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
-                  <div style={{flexShrink:0,fontSize:10.5,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",padding:"2px 8px",borderRadius:99,textTransform:"uppercase",letterSpacing:"0.03em"}}>{COST_TYPE_LABEL[c.type]||c.type}</div>
+                  <div style={{flexShrink:0,fontSize:10.5,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",padding:"2px 8px",borderRadius:99,textTransform:"uppercase",letterSpacing:"0.03em"}}>{COST_TYPE_LABEL[c.type]||c.type}</div>{c.poRaised&&<div title="This cost became a purchase order, so it's counted under Materials - not twice." style={{flexShrink:0,fontSize:10,fontWeight:700,color:"var(--text-muted)",border:"1px solid var(--border)",padding:"1px 7px",borderRadius:99}}>→ PO</div>}
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,color:"var(--text-primary)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label||COST_TYPE_LABEL[c.type]}</div>
                     <div style={{fontSize:11,color:"var(--text-muted)"}}>{c.date}{c.qty&&c.rate?` · ${c.qty}h × ${gbp(c.rate)}`:""}{c.createdBy?` · ${c.createdBy}`:""}</div>
