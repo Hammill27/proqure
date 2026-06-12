@@ -307,6 +307,17 @@
     th.hide,td.hide{display:none}
   }
   @media(max-width:520px){ .kpis{grid-template-columns:1fr 1fr} .strip{grid-template-columns:1fr 1fr} }
+  /* --- Lift layer: summaries for companies / users / signups / audit / health --- */
+  .uav{width:30px;height:30px;border-radius:9px;background:var(--tint);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0;font-family:var(--mono)}
+  .urow-id{display:flex;align-items:center;gap:11px}
+  .adot{width:8px;height:8px;border-radius:3px;display:inline-block;margin-right:8px;vertical-align:middle;flex-shrink:0}
+  .aibar{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+  .aibar .br{display:flex;align-items:center;gap:7px;justify-content:flex-end}
+  .strip.lift{margin-bottom:20px}
+  .stat .d{font-size:10.5px;color:var(--soft);margin-top:3px;font-family:var(--mono)}
+  .ablock{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 4px}
+  .achip{display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:99px;padding:5px 11px;font-size:12px;color:var(--sub)}
+  .achip b{font-family:var(--mono);font-weight:700;color:var(--text)}
 </style>
 </head>
 <body>
@@ -374,6 +385,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_V8TuiFK-dvUeVFATxQ6YmQ_9SiYCJc8";
 const API_BASE = "";
 const ADMIN_GATE_CODE = "PQAD-9X4K-7M2R-VB6E";   // change to your own code
 const USD_TO_GBP = 0.75;   // keep in sync with the app + /api/ai
+const TRIAL_DAYS = 14;   // free-trial length; used to estimate days-left when Stripe trialEndsAt is not supplied
 const STRIPE_DASH = "https://dashboard.stripe.com/test";   // drop "/test" at go-live   // OpenRouter bills in USD; AI spend is shown in £ at this rate. Update when it drifts.
 /* ========================================================================== */
 
@@ -418,8 +430,9 @@ function ic(name){ return '<span class="ic">'+(ICON[name]||"")+'</span>'; }
 
 let sb=null, session=null, DATA=null, currentTab="overview", search="", companyPlanFilter="";
 let sortKey="", sortDir=-1;
+let AUDIT=null, auditSearch="", auditFilter="", auditShown=80;
 function sortBy(k){ if(sortKey===k) sortDir=-sortDir; else { sortKey=k; sortDir=(k==="name"||k==="plan")?1:-1; } render(); }
-const SORT_GET={ name:c=>(c.name||"").toLowerCase(), plan:c=>c.plan||"", users:c=>c.userCount||0, suppliers:c=>c.counts.suppliers||0, orders:c=>c.counts.orders||0, quotes:c=>c.counts.quotes||0, costs:c=>c.counts.costs||0, reqs:c=>c.counts.requests||0, mrr:c=>c.mrr||0, aimo:c=>c.aiMonthGbp||0, aipct:c=>c.aiBudgetPct||0, spend:c=>c.aiSpend||0, storage:c=>c.storageBytes||0, emails:c=>(c.email&&c.email.sent)||0, replies:c=>(c.replies&&c.replies.suppliersReplied)||0, last:c=>Date.parse(c.lastActive||0)||0 };
+const SORT_GET={ name:c=>(c.name||"").toLowerCase(), plan:c=>c.plan||"", users:c=>c.userCount||0, suppliers:c=>c.counts.suppliers||0, orders:c=>c.counts.orders||0, invoices:c=>(c.counts&&c.counts.invoices)||0, quotes:c=>c.counts.quotes||0, costs:c=>c.counts.costs||0, reqs:c=>c.counts.requests||0, mrr:c=>c.mrr||0, aimo:c=>c.aiMonthGbp||0, aipct:c=>c.aiBudgetPct||0, spend:c=>c.aiSpend||0, storage:c=>c.storageBytes||0, emails:c=>(c.email&&c.email.sent)||0, replies:c=>(c.replies&&c.replies.suppliersReplied)||0, last:c=>Date.parse(c.lastActive||0)||0 };
 function applySort(list){ const get=SORT_GET[sortKey]; if(!get) return list; return [...list].sort((a,b)=>{ const x=get(a),y=get(b); return (x<y?-1:x>y?1:0)*sortDir; }); }
 function th(label,k,cls){ return '<th class="'+(cls||"")+(k?" sortable":"")+'"'+(k?' onclick="sortBy(\''+k+'\')"':"")+'>'+label+(sortKey===k?(sortDir>0?" \u25B4":" \u25BE"):"")+'</th>'; }
 window.sortBy=sortBy;
@@ -439,7 +452,7 @@ const TABS=[["overview","Overview","overview"],["companies","Companies","buildin
 $("nav").innerHTML = TABS.map(([id,label,icon])=>'<button class="navitem'+(id==="overview"?" on":"")+'" data-tab="'+id+'">'+ic(icon)+'<span class="lbl">'+label+'</span></button>').join("");
 document.querySelectorAll(".navitem").forEach(b=>b.addEventListener("click",()=>goTab(b.dataset.tab)));
 function goTab(id, plan){
-  currentTab=id; search=""; companyPlanFilter=plan||"";
+  currentTab=id; search=""; companyPlanFilter=plan||""; if(id==="audit") AUDIT=null;
   document.querySelectorAll(".navitem").forEach(x=>x.classList.toggle("on",x.dataset.tab===id));
   const t=TABS.find(t=>t[0]===id); if(t) $("pageTitle").textContent=t[1];
   render();
@@ -559,6 +572,7 @@ function PLAN_LABEL(p){ return PLAN_LABELS_ADM[p]||(p?(p.charAt(0).toUpperCase()
 
 function renderOverview(){
   const k=DATA.kpis;
+  const trialsSoon=(DATA.companies||[]).filter(c=>{const t=trialInfo(c);return t&&t.days!=null&&t.days<=7&&t.days>=0;}).length;
   const kpi=(icon,n,l,x,act)=>'<div class="kpi'+(act?' clickable':'')+'"'+(act?' onclick="'+act+'"':'')+'>'+ic(icon)+'<div class="n">'+n+'</div><div class="l">'+l+'</div>'+(x?'<div class="x">'+x+'</div>':'')+'</div>';
   const stat=(n,l,act)=>'<div class="stat'+(act?' clickable':'')+'"'+(act?' onclick="'+act+'"':'')+'><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';
   const maxN=Math.max(1,...DATA.signupHistogram.map(h=>h.n));
@@ -586,7 +600,7 @@ function renderOverview(){
     '</div>'+
     '<div class="strip">'+
       stat(k.signupsLast30d,"Signups (30d)","goTab('signups')")+stat(k.activeLast7d,"Active (7d)","goTab('companies')")+stat(k.totalSuppliers,"Suppliers","goTab('companies')")+
-      stat(k.totalRequests,"Requests")+stat(k.totalQuotes,"Quote analyses")+stat(k.totalOrders,"Orders")+
+      stat(k.totalRequests,"Requests")+stat(k.totalQuotes,"Quote analyses")+stat(k.totalOrders,"Orders")+stat(k.invoicesTotal||0,"Invoices","goTab('costs')")+
       stat(k.totalCostEntries||0,"Cost entries","goTab('costs')")+stat((k.companiesUsingCosts||0)+"/"+k.totalCompanies,"Using cost tracking","goTab('companies')")+
     '</div>'+
     '<div class="cols">'+
@@ -610,6 +624,8 @@ function renderOverview(){
         attn("ai-amber","zzz","Quiet companies","Onboarded, no activity in 30 days",k.staleCompanies,"goTab('companies')")+
         attn("ai-red","alert","Past due","Payment failed \u2014 Stripe is chasing",k.pastDue||0,"goTab('companies','past_due')")+
         attn("ai-amber","coin","Near AI cap","\u226580% of monthly AI budget",k.nearAiCap||0,"goTab('costs')")+
+        attn("ai-amber","trial","Trials ending soon","Free trial ends within 7 days",trialsSoon,"goTab('companies','trial')")+
+        attn("ai-amber","alert","Invoices to review","Flagged & awaiting a decision",k.invoicesFlaggedOpen||0,"goTab('companies')")+
       '</div></div>'+
     '</div>';
 }
@@ -626,19 +642,26 @@ function renderCompanies(){
   };
   let list=DATA.companies.filter(c=>matchFilter(c) && (!search||(c.name+" "+(c.fromEmail||"")+" "+(c.trade||"")+" "+(c.users||[]).map(u=>u.email).join(" ")).toLowerCase().includes(search.toLowerCase())));
   list=applySort(list);
-  const aiCell=(c)=>{ const p=c.aiBudgetPct||0; const col=p>=100?"var(--red)":p>=80?"var(--amber)":"var(--accent)"; return '<div class="mono" style="font-weight:700">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+'</div><div class="ct-sub" style="color:'+col+'">'+p+'% of \u00A3'+(c.aiBudgetGbp||0)+'</div>'; };
+  const cstat=(n,l,d)=>'<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div>'+(d?'<div class="d">'+d+'</div>':'')+'</div>';
+  const nowMs=Date.now(); const within7=(c)=>{ const t=Date.parse(c.lastActive||0); return t&&(nowMs-t)<7*864e5; };
+  const sTrials=list.filter(c=>c.plan==='trial').length, sPaid=list.filter(c=>paidSet.includes(c.plan)).length;
+  const sMrr=list.reduce((a,c)=>a+(c.mrr||0),0), sActive=list.filter(within7).length;
+  const sOrders=list.reduce((a,c)=>a+((c.counts&&c.counts.orders)||0),0), sNearCap=list.filter(c=>(c.aiBudgetPct||0)>=80).length;
+  const companyStrip='<div class="strip lift">'+cstat(list.length,"Companies",(companyPlanFilter?"in this view":"all tenants"))+cstat(sTrials,"On trial")+cstat(sPaid,"Paid")+cstat("\u00A3"+sMrr.toLocaleString("en-GB"),"MRR","\u00A3"+(sMrr*12).toLocaleString("en-GB")+" ARR")+cstat(sActive,"Active 7d")+cstat(sNearCap,"Near AI cap","\u226580% budget")+'</div>';
+  const aiCell=(c)=>{ const raw=c.aiBudgetPct||0; const p=Math.min(100,raw); const col=raw>=100?"var(--red)":raw>=80?"var(--amber)":"var(--accent)"; return '<div class="aibar"><span class="mono" style="font-weight:700">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+'</span><span class="br"><span class="bar" style="width:52px"><i style="width:'+p+'%;background:'+col+'"></i></span><span class="ct-sub" style="color:'+col+'">'+raw+'%</span></span></div>'; };
   const rows=list.map(c=>'<tr class="crow" data-i="'+DATA.companies.indexOf(c)+'">'+
     '<td><div class="ct-name">'+esc(c.name)+'</div><div class="ct-sub">'+esc(c.fromEmail||"")+'</div></td>'+
-    '<td>'+planBadge(c.plan)+(c.subscriptionStatus==="past_due"?' <span class="badge b-cancelled">past due</span>':'')+(c.onboarded?'':' <span class="badge b-pending">setup</span>')+'</td>'+
+    '<td>'+planBadge(c.plan)+(c.subscriptionStatus==="past_due"?' <span class="badge b-cancelled">past due</span>':'')+(c.onboarded?'':' <span class="badge b-pending">setup</span>')+(trialChip(c)?'<div style="margin-top:4px">'+trialChip(c)+'</div>':'')+'</td>'+
     '<td class="num">'+c.userCount+'</td>'+
     '<td class="num hide">'+c.counts.suppliers+'</td>'+
     '<td class="num">'+c.counts.orders+'</td>'+
     '<td class="num hide">'+(c.counts.costs||0)+'</td>'+
     '<td class="num hide">'+c.counts.quotes+'</td>'+
+    '<td class="num hide">'+((c.counts&&c.counts.invoices)||0)+'</td>'+
     '<td class="num">\u00A3'+(c.mrr||0)+'</td>'+
     '<td class="num">'+aiCell(c)+'</td>'+
     '<td class="hide muted">'+fmtAgo(c.lastActive)+'</td></tr>').join("")
-    || '<tr><td colspan="10" class="muted" style="padding:26px;text-align:center">No companies match.</td></tr>';
+    || '<tr><td colspan="11" class="muted" style="padding:26px;text-align:center">No companies match.</td></tr>';
   const FILTERS=[["","All plans"],["trial","Trial"],["paid","Paid (any tier)"],["sole","Sole"],["team","Team"],["business","Business"],["enterprise","Enterprise"],["past_due","Past due"],["cancelled","Cancelled"],["suspended","Suspended"]];
   $("view").innerHTML=
     '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' compan'+(list.length===1?"y":"ies")+' &middot; click a column to sort</div>'+
@@ -646,9 +669,9 @@ function renderCompanies(){
       '<select class="filter-sel" id="coFilter">'+FILTERS.map(([v,l])=>'<option value="'+v+'"'+(companyPlanFilter===v?" selected":"")+'>'+l+'</option>').join("")+'</select>'+
       '<input class="search" id="coSearch" placeholder="Search name, email, trade..." value="'+esc(search)+'">'+
       '<button class="btn btn-ghost btn-sm" id="csvBtn" title="Download the filtered list as CSV">Export CSV</button>'+
-    '</div></div>'+
+    '</div></div>'+companyStrip+
     '<div class="panel" style="padding:6px 10px"><table><thead><tr>'+
-      th("Company","name")+th("Plan","plan")+th("Users","users","num")+th("Suppliers","suppliers","num hide")+th("Orders","orders","num")+th("Costs","costs","num hide")+th("Quotes","quotes","num hide")+th("MRR","mrr","num")+th("AI (month)","aimo","num")+th("Last active","last","hide")+
+      th("Company","name")+th("Plan","plan")+th("Users","users","num")+th("Suppliers","suppliers","num hide")+th("Orders","orders","num")+th("Costs","costs","num hide")+th("Quotes","quotes","num hide")+th("Invoices","invoices","num hide")+th("MRR","mrr","num")+th("AI (month)","aimo","num")+th("Last active","last","hide")+
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
   $("coSearch").addEventListener("input",e=>{ search=e.target.value; const p=e.target.selectionStart; renderCompanies(); const x=$("coSearch"); x.focus(); x.setSelectionRange(p,p); });
   $("coFilter").addEventListener("change",e=>{ companyPlanFilter=e.target.value; renderCompanies(); });
@@ -656,8 +679,8 @@ function renderCompanies(){
   document.querySelectorAll("#view tr.crow").forEach(r=>r.addEventListener("click",()=>openCompany(DATA.companies[+r.dataset.i])));
 }
 function exportCompaniesCsv(list){
-  const cols=["name","plan","subscriptionStatus","mrr","userCount","orders","requests","quotes","costs","suppliers","hires","aiMonthGbp","aiBudgetGbp","aiBudgetPct","aiSpendTotalGbp","emailsSent","storageBytes","fromEmail","trade","createdAt","lastActive","companyId"];
-  const row=(c)=>[c.name,c.plan,c.subscriptionStatus,c.mrr||0,c.userCount,c.counts.orders,c.counts.requests,c.counts.quotes,c.counts.costs||0,c.counts.suppliers,c.counts.hires,(c.aiMonthGbp||0).toFixed(2),c.aiBudgetGbp||0,(c.aiBudgetPct||0)+"%",((c.aiSpend||0)*USD_TO_GBP).toFixed(2),(c.email&&c.email.sent)||0,c.storageBytes||0,c.fromEmail||"",c.trade||"",c.createdAt||"",c.lastActive||"",c.companyId];
+  const cols=["name","plan","subscriptionStatus","mrr","userCount","orders","requests","quotes","invoices","costs","suppliers","hires","aiMonthGbp","aiBudgetGbp","aiBudgetPct","aiSpendTotalGbp","emailsSent","storageBytes","fromEmail","trade","createdAt","lastActive","companyId"];
+  const row=(c)=>[c.name,c.plan,c.subscriptionStatus,c.mrr||0,c.userCount,c.counts.orders,c.counts.requests,c.counts.quotes,(c.counts.invoices||0),c.counts.costs||0,c.counts.suppliers,c.counts.hires,(c.aiMonthGbp||0).toFixed(2),c.aiBudgetGbp||0,(c.aiBudgetPct||0)+"%",((c.aiSpend||0)*USD_TO_GBP).toFixed(2),(c.email&&c.email.sent)||0,c.storageBytes||0,c.fromEmail||"",c.trade||"",c.createdAt||"",c.lastActive||"",c.companyId];
   const q=(v)=>{ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
   const csv=[cols.join(",")].concat(list.map(c=>row(c).map(q).join(","))).join("\n");
   const a=document.createElement("a");
@@ -671,8 +694,13 @@ window.exportCompaniesCsv=exportCompaniesCsv;
 function renderUsers(){
   const all=[]; DATA.companies.forEach(c=>c.users.forEach(u=>all.push({...u,company:c.name})));
   const list=all.filter(u=>!search||(u.email+" "+u.company+" "+u.role).toLowerCase().includes(search.toLowerCase()));
+  const ustat=(n,l)=>'<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';
+  const active=all.filter(u=>u.active).length, invited=all.filter(u=>!u.active).length, unconf=all.filter(u=>!u.confirmed).length;
+  const owners=all.filter(u=>u.isOwner).length, cos=new Set(all.map(u=>u.company)).size;
+  const strip='<div class="strip lift">'+ustat(all.length,"Users")+ustat(active,"Active")+ustat(invited,"Invited")+ustat(unconf,"Unconfirmed")+ustat(owners,"Owners")+ustat(cos,"Companies")+'</div>';
+  const avatar=(e)=>'<span class="uav">'+esc(String(e||"?").trim().charAt(0).toUpperCase()||"?")+'</span>';
   const rows=list.map(u=>'<tr class="crow" onclick="openUserByEmail(\''+esc(u.email)+'\')">'+
-    '<td><div style="font-weight:600;word-break:break-all">'+esc(u.email)+'</div></td>'+
+    '<td><div class="urow-id">'+avatar(u.email)+'<div><div style="font-weight:600;word-break:break-all">'+esc(u.email)+'</div><div class="ct-sub">'+esc(u.company)+'</div></div></div></td>'+
     '<td class="hide">'+esc(u.company)+'</td>'+
     '<td>'+(u.isOwner?'<span class="badge b-owner">owner</span>':'<span class="badge b-role">'+esc(u.role)+'</span>')+'</td>'+
     '<td>'+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+'</td>'+
@@ -680,15 +708,28 @@ function renderUsers(){
     '<td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Reset</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openUserByEmail(\''+esc(u.email)+'\')">Manage</button></div></td></tr>').join("")
     || '<tr><td colspan="6" class="muted" style="padding:26px;text-align:center">No users match.</td></tr>';
   $("view").innerHTML=
+    strip+
     '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' user'+(list.length===1?"":"s")+' &middot; click a row to manage the user</div><input class="search" id="uSearch" placeholder="Search users..." value="'+esc(search)+'"></div>'+
-    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Email</th><th class="hide">Company</th><th>Role</th><th>Status</th><th class="hide">Last sign-in</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>User</th><th class="hide">Company</th><th>Role</th><th>Status</th><th class="hide">Last sign-in</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   $("uSearch").addEventListener("input",e=>{ search=e.target.value; const p=e.target.selectionStart; renderUsers(); const s=$("uSearch"); s.focus(); s.setSelectionRange(p,p); });
 }
 
 function renderSignups(){
-  const rows=DATA.recentSignups.map(s=>'<tr class="crow" onclick="openCompanyByEmail(\''+esc(s.email)+'\')"><td><div class="ct-name">'+esc(s.company||"-")+'</div><div class="ct-sub">'+esc(s.name||"")+'</div></td><td style="word-break:break-all">'+esc(s.email)+'</td><td>'+(s.confirmed?'<span class="badge b-on">confirmed</span>':'<span class="badge b-pending">pending</span>')+'</td><td class="hide muted">'+fmtAgo(s.lastSignIn)+'</td><td>'+fmtDate(s.createdAt)+'</td></tr>').join("")
+  const k=DATA.kpis||{}; const sg=DATA.recentSignups||[];
+  const conf=sg.filter(s=>s.confirmed).length, pend=sg.length-conf;
+  const sstat=(n,l)=>'<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';
+  const hist=DATA.signupHistogram||[]; const maxN=Math.max(1,...hist.map(h=>h.n));
+  const bars=hist.map(h=>'<div class="b" style="height:'+Math.round(h.n/maxN*100)+'%"><span>'+h.n+'</span></div>').join("");
+  const xlab=hist.map((h,i)=>i%3===0?'<div>'+esc(String(h.d).slice(5))+'</div>':'<div></div>').join("");
+  const rows=sg.map(s=>'<tr class="crow" onclick="openCompanyByEmail(\''+esc(s.email)+'\')"><td><div class="ct-name">'+esc(s.company||"-")+'</div><div class="ct-sub">'+esc(s.name||"")+'</div></td><td style="word-break:break-all">'+esc(s.email)+'</td><td>'+(s.confirmed?'<span class="badge b-on">confirmed</span>':'<span class="badge b-pending">pending</span>')+'</td><td class="hide muted">'+fmtAgo(s.lastSignIn)+'</td><td>'+fmtDate(s.createdAt)+'</td></tr>').join("")
     || '<tr><td colspan="5" class="muted" style="padding:26px;text-align:center">No signups yet.</td></tr>';
-  $("view").innerHTML='<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Company</th><th>Email</th><th>Status</th><th class="hide">Last sign-in</th><th>Signed up</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  $("view").innerHTML=
+    '<div class="strip lift" style="grid-template-columns:repeat(5,1fr)">'+
+      sstat(k.signupsLast30d||0,"Signups (30d)")+sstat(sg.length,"Recent shown")+sstat(conf,"Confirmed")+sstat(pend,"Pending")+sstat(pct(conf,sg.length),"Confirm rate")+
+    '</div>'+
+    (hist.length?'<div class="cols" style="grid-template-columns:1fr;margin-bottom:18px"><div class="panel"><h2>Signups <span class="hint">last 14 days</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div></div>':'')+
+    '<div class="toolbar"><div class="muted" style="font-size:13px">'+sg.length+' recent signup'+(sg.length===1?"":"s")+' &middot; click a row to open the company</div></div>'+
+    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Company</th><th>Email</th><th>Status</th><th class="hide">Last sign-in</th><th>Signed up</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 function renderCosts(){
@@ -729,6 +770,7 @@ function renderCosts(){
       stat(k.totalReceivedUnmatched,"Unmatched")+
     '</div>'+
     '<div class="muted" style="font-size:11.5px;margin:-6px 0 16px">AI spend shown in \u00A3 (OpenRouter bills in USD) at $1 = \u00A3'+USD_TO_GBP+' &middot; total data stored '+fmtBytes(k.totalStorageBytes)+'</div>'+
+    '<div class="cols" style="grid-template-columns:1fr"><div class="panel"><h2>Invoice matching <span class=\"hint\">three-way match &middot; advisory, human-approved</span></h2><div class="strip" style="grid-template-columns:repeat(5,1fr);margin:0">'+stat(k.invoicesTotal||0,"Captured")+stat(k.invoicesClean||0,"Clean")+stat(k.invoicesFlagged||0,"Flagged")+stat(k.invoicesApproved||0,"Approved")+stat("\u00A3"+Number(k.invoiceValueMatchedGbp||0).toLocaleString("en-GB"),"Value matched")+'</div>'+(((k.invoicesTotal||0)===0)?'<div class="muted" style="font-size:11.5px;margin-top:13px">Invoice figures fill in once the admin metrics endpoint counts <span class="mono">piq_invoices</span> per company.</div>':'')+'</div></div>'+
     (empty
       ? '<div class="panel" style="margin-bottom:18px"><div class="muted" style="font-size:13px;line-height:1.65">No per-company cost or email data yet. AI spend appears once the app reports cost per company (a small hook shipping with the next app deploy); email + reply stats appear once the Resend webhooks are connected. Every company is listed below and the figures fill in automatically.</div></div>'
       : '<div class="cols" style="grid-template-columns:1fr"><div class="panel"><h2>AI cost this month by company <span class="hint">top 12 &middot; GBP &middot; server meter</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div></div>')+
@@ -740,22 +782,49 @@ function renderCosts(){
 }
 
 async function renderAudit(){
-  $("view").innerHTML='<div class="loading"><span class="spin"></span>Loading audit log...</div>';
-  let entries=[];
-  try{ const d=await api("audit"); entries=(d&&d.entries)||[]; }
-  catch(e){ $("view").innerHTML='<div class="panel"><h2>Audit log</h2><p class="muted" style="margin-top:8px">Could not load: '+esc(e.message)+'</p></div>'; return; }
   if(currentTab!=="audit") return;
-  const label={'resend-invite':'Resent invite','send-reset':'Sent password reset','set-plan':'Changed plan','verify-email':'Confirmed email','force-logout':'Forced logout','disable-account':'Disabled account','enable-account':'Re-enabled account'};
-  const rows=entries.map(e=>'<tr>'+
+  if(!AUDIT){
+    $("view").innerHTML='<div class="loading"><span class="spin"></span>Loading audit log...</div>';
+    try{ const d=await api("audit"); AUDIT=(d&&d.entries)||[]; }
+    catch(e){ $("view").innerHTML='<div class="panel"><h2>Audit log</h2><p class="muted" style="margin-top:8px">Could not load: '+esc(e.message)+'</p></div>'; return; }
+    if(currentTab!=="audit") return;
+  }
+  renderAuditView();
+}
+const AUDIT_LABEL={'resend-invite':'Resent invite','send-reset':'Sent password reset','set-plan':'Changed plan','verify-email':'Confirmed email','force-logout':'Forced logout','disable-account':'Disabled account','enable-account':'Re-enabled account','export-tenant':'Exported tenant data','delete-tenant':'Erased tenant'};
+const AUDIT_DOT={'disable-account':'var(--red)','delete-tenant':'var(--red)','force-logout':'var(--red)','enable-account':'var(--green-glow)','verify-email':'var(--green-glow)','resend-invite':'var(--blue)','send-reset':'var(--blue)','set-plan':'var(--amber)','export-tenant':'var(--amber)'};
+function auditFiltered(){ const q=auditSearch.toLowerCase(); return (AUDIT||[]).filter(e=> (!auditFilter||e.action===auditFilter) && (!q || ((AUDIT_LABEL[e.action]||e.action)+" "+(e.target||"")+" "+(e.detail||"")+" "+(e.actor||"")).toLowerCase().includes(q))); }
+function auditCsv(list){ const q=(v)=>{ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }; const csv=["ts,action,target,detail,actor"].concat(list.map(e=>[e.ts,AUDIT_LABEL[e.action]||e.action,e.target,e.detail,e.actor].map(q).join(","))).join("\n"); const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"})); a.download="proqure-audit-"+new Date().toISOString().slice(0,10)+".csv"; document.body.appendChild(a); a.click(); a.remove(); toast("Audit CSV downloaded ("+list.length+" rows)."); }
+window.auditCsv=()=>auditCsv(auditFiltered());
+function renderAuditView(){
+  if(currentTab!=="audit") return;
+  const all=AUDIT||[];
+  const astat=(n,l)=>'<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';
+  const types=[...new Set(all.map(e=>e.action))];
+  const targets=new Set(all.map(e=>e.target).filter(Boolean));
+  const last=all.length?fmtAgo(all[0].ts):"\u2014";
+  const byType={}; all.forEach(e=>{ byType[e.action]=(byType[e.action]||0)+1; });
+  const chips=Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([ac,n])=>'<span class="achip"><span class="adot" style="background:'+(AUDIT_DOT[ac]||'var(--soft)')+'"></span>'+esc(AUDIT_LABEL[ac]||ac)+' <b>'+n+'</b></span>').join("");
+  const list=auditFiltered(); const shown=list.slice(0,auditShown);
+  const rows=shown.map(e=>'<tr>'+
     '<td class="muted" style="white-space:nowrap"><div>'+fmtDate(e.ts)+'</div><div class="ct-sub">'+(e.ts&&!isNaN(new Date(e.ts))?new Date(e.ts).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"")+'</div></td>'+
-    '<td><span class="badge b-role">'+esc(label[e.action]||e.action)+'</span></td>'+
+    '<td style="white-space:nowrap"><span class="adot" style="background:'+(AUDIT_DOT[e.action]||'var(--soft)')+'"></span><span class="badge b-role">'+esc(AUDIT_LABEL[e.action]||e.action)+'</span></td>'+
     '<td style="word-break:break-all">'+esc(e.target||"-")+(e.detail?' <span class="muted">('+esc(e.detail)+')</span>':'')+'</td>'+
     '<td class="hide muted" style="word-break:break-all">'+esc(e.actor||"-")+'</td></tr>').join("")
-    || '<tr><td colspan="4" class="muted" style="padding:26px;text-align:center">No admin actions recorded yet.</td></tr>';
+    || '<tr><td colspan="4" class="muted" style="padding:26px;text-align:center">'+(all.length?'No actions match.':'No admin actions recorded yet.')+'</td></tr>';
+  const filterSel='<select class="filter-sel" id="auFilter"><option value="">All actions</option>'+types.map(t=>'<option value="'+esc(t)+'"'+(auditFilter===t?" selected":"")+'>'+esc(AUDIT_LABEL[t]||t)+'</option>').join("")+'</select>';
   $("view").innerHTML=
-    '<div class="toolbar"><div class="muted" style="font-size:13px">'+entries.length+' recent action'+(entries.length===1?"":"s")+' &middot; who did what, when</div></div>'+
-    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>When</th><th>Action</th><th>Target</th><th class="hide">By</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div class="strip lift" style="grid-template-columns:repeat(4,1fr)">'+astat(all.length,"Actions logged")+astat(types.length,"Action types")+astat(targets.size,"Targets")+astat(last,"Most recent")+'</div>'+
+    (chips?'<div class="panel" style="margin-bottom:18px"><h2>By action <span class="hint">recent window</span></h2><div class="ablock">'+chips+'</div></div>':'')+
+    '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' of '+all.length+' action'+(all.length===1?"":"s")+'</div><div style="display:flex;gap:9px;align-items:center">'+filterSel+'<input class="search" id="auSearch" placeholder="Search target, actor, detail..." value="'+esc(auditSearch)+'" style="max-width:230px"><button class="btn btn-ghost btn-sm" id="auCsv">Export CSV</button></div></div>'+
+    '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>When</th><th>Action</th><th>Target</th><th class="hide">By</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+    (list.length>auditShown?'<div style="text-align:center;padding:12px"><button class="btn btn-ghost btn-sm" id="auMore">Show more ('+(list.length-auditShown)+' more)</button></div>':'')+'</div>';
+  const si=$("auSearch"); if(si) si.addEventListener("input",e=>{ auditSearch=e.target.value; auditShown=80; const p=e.target.selectionStart; renderAuditView(); const x=$("auSearch"); if(x){ x.focus(); x.setSelectionRange(p,p); } });
+  const fi=$("auFilter"); if(fi) fi.addEventListener("change",e=>{ auditFilter=e.target.value; auditShown=80; renderAuditView(); });
+  const cb=$("auCsv"); if(cb) cb.addEventListener("click",()=>auditCsv(auditFiltered()));
+  const mb=$("auMore"); if(mb) mb.addEventListener("click",()=>{ auditShown+=80; renderAuditView(); });
 }
+window.renderAuditView=renderAuditView;
 
 // --- Infrastructure health board -------------------------------------------
 // Calls /api/admin-health, which checks each provider SERVER-SIDE with the secret
@@ -801,9 +870,17 @@ function renderHealth(){
       '<div class="hb-lat">'+(s.latencyMs!=null?("responded in "+s.latencyMs+"ms \u00b7 "):"")+agoText()+'</div>'+
     '</div>';
   }).join("");
+  const svc=HEALTH.services||[];
+  const hUp=svc.filter(s=>s.status==='up').length, hDeg=svc.filter(s=>s.status==='degraded').length, hDown=svc.filter(s=>s.status==='down').length;
+  const lat=svc.filter(s=>s.latencyMs!=null); const avgLat=lat.length?Math.round(lat.reduce((a,s)=>a+s.latencyMs,0)/lat.length):null;
+  const hstat=(n,l,col)=>'<div class="stat"><div class="n"'+(col?' style="color:'+col+'"':'')+'>'+n+'</div><div class="l">'+l+'</div></div>';
+  const healthStrip='<div class="strip lift" style="grid-template-columns:repeat(5,1fr)">'+
+    hstat(svc.length,"Services")+hstat(hUp,"Operational","var(--accent)")+hstat(hDeg,"Degraded",hDeg?"var(--amber)":null)+hstat(hDown,"Down",hDown?"var(--red)":null)+hstat(avgLat!=null?avgLat+"ms":"\u2014","Avg response")+
+  '</div>';
   v.innerHTML=
     '<div class="toolbar"><div class="muted" style="font-size:13px">Live infrastructure status &middot; checked '+(HEALTH.generatedAt?new Date(HEALTH.generatedAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"just now")+'</div>'+
     '<button class="btn btn-ghost btn-sm" onclick="refreshHealth()"'+(healthLoading?" disabled":"")+'>'+(healthLoading?"Checking...":"Re-check now")+'</button></div>'+
+    healthStrip+
     banner+
     '<div class="hb-grid">'+cards+'</div>'+
     '<div class="muted" style="font-size:11.5px;margin-top:16px;line-height:1.6">These checks run on our server using your provider keys \u2014 no key is ever exposed to this page. They show whether each service is reachable and healthy right now. For always-on alerting (a ping when something goes down while you\u2019re not looking), set up an uptime monitor once mailboxes are live.</div>';
@@ -852,19 +929,24 @@ function openCompany(c){
   const tabBar='<div class="dtabs">'+tabs.map((t,i)=>'<button class="dtab'+(i===0?' on':'')+'" data-pane="'+t[0]+'" onclick="switchDtab(\''+t[0]+'\')">'+t[1]+(t[2]!=null?'<span class="tc">'+t[2]+'</span>':'')+'</button>').join("")+'</div>';
 
   // --- PANE: Overview ---
+  const _ti=trialInfo(c); const trialStr=_ti?(_ti.days==null?"On trial":((_ti.days<0?("ended "+(-_ti.days)+"d ago"):(_ti.days+" days left"))+(_ti.est?" (est.)":""))):null;
   const paneOverview='<div class="dpane on" data-pane="overview">'+
     '<div class="sec-title">Set plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button>'+(c.stripeCustomerId?'<a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none;margin-left:auto">Stripe \u2197</a>':'')+'</div>'+
     ((c.aiBudgetPct||0)>=100?'<div class="acc" style="border-color:rgba(229,100,92,.4);margin-top:14px"><div style="padding:12px 15px;font-size:12px;color:var(--red);font-weight:600">AI is at the monthly cap \u2014 paused for this company until the 1st (or a plan change).</div></div>':'')+
     '<div class="sec-title">Company</div>'+
     '<div class="acc-body" style="padding:0">'+
-      mrow("Primary trade",c.trade)+mrow("Team size",c.teamSize)+mrow("Reply-to",c.fromEmail)+mrow("Address",c.address)+mrow("VAT no.",c.vat)+mrow("Company reg.",c.companyReg)+mrow("Created",fmtDate(c.createdAt))+mrow("Onboarded",c.onboarded?"Yes":"No")+mrow("Pending invites",c.pendingInvites)+
+      mrow("Primary trade",c.trade)+mrow("Team size",c.teamSize)+mrow("Reply-to",c.fromEmail)+mrow("Address",c.address)+mrow("VAT no.",c.vat)+mrow("Company reg.",c.companyReg)+mrow("Created",fmtDate(c.createdAt))+(trialStr?mrow("Trial",trialStr):"")+mrow("Onboarded",c.onboarded?"Yes":"No")+mrow("Pending invites",c.pendingInvites)+
     '</div>'+
+    '<div class="sec-title">Data &amp; lifecycle</div>'+
+    '<div class="u-actions-grid"><button class="btn btn-ghost btn-sm" onclick="exportTenant(\''+esc(c.companyId)+'\')">Export all data (JSON)</button><button class="btn btn-sm btn-danger" onclick="eraseTenant(\''+esc(c.companyId)+'\',\''+esc(String(c.name||'').replace(/'/g,''))+'\')">Erase tenant (GDPR)</button></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">Export returns every stored slice for this tenant as JSON. Erase is for account closure / right-to-erasure and cannot be undone.</div>'+
     '<div class="sec-title">Recent events</div><div class="feed" id="coEvFeed"><div class="muted" style="padding:8px 0">Loading...</div></div>'+
   '</div>';
 
   // --- PANE: Usage ---
   const paneUsage='<div class="dpane" data-pane="usage">'+
-    '<div class="sec-title">Procurement</div><div class="countpills">'+cp(c.counts.orders,"Orders")+cp(c.counts.requests,"Requests")+cp(c.counts.quotes,"Quotes")+cp(c.counts.costs||0,"Cost entries")+cp(c.counts.suppliers,"Suppliers")+cp(c.counts.hires,"Hires")+cp(c.counts.library,"Library")+cp(c.counts.activity,"Activity")+'</div>'+
+    '<div class="sec-title">Procurement</div><div class="countpills">'+cp(c.counts.orders,"Orders")+cp(c.counts.requests,"Requests")+cp(c.counts.quotes,"Quotes")+cp((c.counts&&c.counts.invoices)||0,"Invoices")+cp(c.counts.costs||0,"Cost entries")+cp(c.counts.suppliers,"Suppliers")+cp(c.counts.hires,"Hires")+cp(c.counts.library,"Library")+cp(c.counts.activity,"Activity")+'</div>'+
+    (c.invoiceStats?'<div class="sec-title">Invoice matching <span style="font-weight:500;text-transform:none;letter-spacing:0">(three-way)</span></div><div class="countpills">'+cp(c.invoiceStats.captured||0,"Captured")+cp(c.invoiceStats.clean||0,"Clean")+cp(c.invoiceStats.flagged||0,"Flagged")+cp(c.invoiceStats.approved||0,"Approved")+cp(c.invoiceStats.queried||0,"Queried")+cp(c.invoiceStats.rejected||0,"Rejected")+cp("\u00A3"+Number(c.invoiceStats.valueMatchedGbp||0).toLocaleString("en-GB"),"Value matched")+'</div>':'')+
     '<div class="sec-title">Supplier replies <span style="font-weight:500;text-transform:none;letter-spacing:0">(metadata only)</span></div><div class="countpills">'+cp(c.replies.rfqsSent||0,"RFQs sent")+cp(c.replies.suppliersEmailed||0,"Suppliers")+cp(c.replies.suppliersReplied||0,"Replied")+cp(pct(c.replies.suppliersReplied,c.replies.suppliersEmailed),"Reply rate")+cp(c.email.received||0,"Received")+cp(c.email.receivedAttachments||0,"Attachments")+cp(c.replies.repliesByAddress||0,"By address")+cp(fmtAgo(c.replies.lastReplyAt),"Last reply")+'</div>'+
   '</div>';
 
@@ -910,6 +992,11 @@ $("scrim").addEventListener("click",closeDrawer);
 async function setPlan(id){ try{ const d=await api("set-plan",{companyId:id,plan:$("planSel").value}); toast(d.message||"Plan updated."); await loadData(); closeDrawer(); }catch(e){ toast(e.message,true); } }
 async function doAction(a,p){ try{ const d=await api(a,p); toast(d.message||"Done."); }catch(e){ toast(e.message,true); } }
 async function doActionConfirm(a,p,msg){ if(!window.confirm(msg)) return; try{ const d=await api(a,p); toast(d.message||"Done."); }catch(e){ toast(e.message,true); } }
+function trialInfo(c){ if(!c) return null; const isTrial=c.plan==="trial"||c.subscriptionStatus==="trialing"||c.subscriptionStatus==="trial"; if(!isTrial) return null; let end=c.trialEndsAt?Date.parse(c.trialEndsAt):(c.createdAt?Date.parse(c.createdAt)+TRIAL_DAYS*86400000:NaN); if(isNaN(end)) return {days:null,est:!c.trialEndsAt}; return {days:Math.ceil((end-Date.now())/86400000),est:!c.trialEndsAt,end:end}; }
+function trialChip(c){ const t=trialInfo(c); if(!t||t.days==null) return ""; const overdue=t.days<0, soon=t.days<=7; const col=overdue?"var(--red)":soon?"var(--amber)":"var(--soft)"; const txt=overdue?("ended "+(-t.days)+"d ago"):(t.days+"d left"); return '<span class="ct-sub" style="color:'+col+'">'+(t.est?"~":"")+txt+'</span>'; }
+async function exportTenant(id){ try{ toast("Preparing export..."); const d=await api("export-tenant",{companyId:id}); const payload=(d&&d.data!==undefined)?d.data:d; const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="proqure-tenant-"+id+"-"+new Date().toISOString().slice(0,10)+".json"; document.body.appendChild(a); a.click(); a.remove(); toast("Tenant data exported."); }catch(e){ toast(e.message,true); } }
+async function eraseTenant(id,name){ if(!window.confirm("Erase ALL data for \u201c"+name+"\u201d?\n\nFor account closure / right-to-erasure. This removes the tenant\u2019s stored data and cannot be undone from here.")) return; if(!window.confirm("Final check \u2014 permanently erase \u201c"+name+"\u201d?")) return; try{ const d=await api("delete-tenant",{companyId:id}); toast(d.message||"Tenant erased."); closeDrawer(); await loadData(); }catch(e){ toast(e.message,true); } }
+window.exportTenant=exportTenant; window.eraseTenant=eraseTenant;
 window.doAction=doAction; window.doActionConfirm=doActionConfirm; window.setPlan=setPlan; window.closeDrawer=closeDrawer;
 
 init();
