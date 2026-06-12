@@ -2529,6 +2529,9 @@ const ICON_PATHS = {
   store: '<path d="M3 9l1.5-5h15L21 9M4 9v10a1 1 0 001 1h14a1 1 0 001-1V9M3 9h18"/>',
   question: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 0c0 1.7-2.5 2-2.5 4"/><line x1="12" y1="17" x2="12" y2="17.01"/>',
   file_check: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 13"/>',
+  receipt: '<path d="M6 2h9l3 3v15a1 1 0 01-1.5.87L14 19l-2.5 1.5L9 19l-2.5 1.5L4 19V3a1 1 0 011-1z"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+  coins: '<path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>',
+  catalogue: '<path d="M4 5a1 1 0 011-1h5v16H5a1 1 0 01-1-1z"/><path d="M14 4h5a1 1 0 011 1v13a1 1 0 01-1 1h-5z"/>',
 };
 const Icon = ({ name, size=16, color="currentColor", strokeWidth=2, style={} }) => {
   const path = ICON_PATHS[name];
@@ -6056,17 +6059,17 @@ Rules:
                       const chosenId=contactSel[s.id]||contacts[0]?.id;
                       return (
                       <div key={s.id} style={{background:sel?"var(--green-mint)":"var(--bg-card-solid)",border:`1px solid ${sel?"var(--green-dark)":"var(--border)"}`,borderRadius:"var(--radius-sm)",padding:"10px 14px",transition:"all 0.15s"}}>
-                        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
+                        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",flexWrap:"wrap"}}>
                           <input type="checkbox" checked={sel} onChange={e=>{ setSelSup(p=>e.target.checked?[...p,s.id]:p.filter(id=>id!==s.id)); if(e.target.checked&&!contactSel[s.id]&&contacts[0]) setContactSel(p=>({...p,[s.id]:contacts[0].id})); }} style={{accentColor:"var(--green-dark)"}}/>
                           <span style={{fontWeight:600,color:"var(--text-primary)"}}>{s.name}</span>
                           {contacts.length===0&&<span style={{fontSize:11,color:"var(--amber)"}}>no contact - add on Suppliers page</span>}
-                          {contacts.length>0&&!sel&&<span style={{fontSize:11,color:"var(--text-tertiary)"}}>{contacts.length===1?(contacts[0].email):`${contacts.length} contacts`}</span>}
+                          {contacts.length>0&&!sel&&<span style={{fontSize:11,color:"var(--text-tertiary)",overflowWrap:"anywhere",wordBreak:"break-word",minWidth:0}}>{contacts.length===1?(contacts[0].email):`${contacts.length} contacts`}</span>}
                         </label>
                         {sel&&contacts.length>0&&(
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,paddingLeft:26}}>
-                            <span style={{fontSize:11,color:"var(--text-secondary)"}}>Send to:</span>
+                          <div style={{display:"flex",alignItems:"flex-start",gap:8,marginTop:8,paddingLeft:26}}>
+                            <span style={{fontSize:11,color:"var(--text-secondary)",flexShrink:0,marginTop:1}}>Send to:</span>
                             {contacts.length===1?(
-                              <span style={{fontSize:12,color:"var(--text-primary)"}}>{contacts[0].name?`${contacts[0].name} · ${contacts[0].email}`:contacts[0].email}</span>
+                              <span style={{fontSize:12,color:"var(--text-primary)",minWidth:0,overflowWrap:"anywhere",wordBreak:"break-word"}}>{contacts[0].name?`${contacts[0].name} · ${contacts[0].email}`:contacts[0].email}</span>
                             ):(
                               <select value={chosenId} onChange={e=>setContactSel(p=>({...p,[s.id]:e.target.value}))} style={{flex:1,maxWidth:320,padding:"6px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",background:"var(--bg-card-solid)"}}>
                                 {contacts.map(c=><option key={c.id} value={c.id}>{c.name?`${c.name} - ${c.email}`:c.email}{c.branch?` (${c.branch})`:""}</option>)}
@@ -8693,10 +8696,13 @@ Rules:
                 <div style={{padding:"0 8px",maxHeight:"65vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
+                    {id:"invoices", label:"Invoices",       sub:"Match supplier invoices to POs",   icon:"receipt", min:2},
                     {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck"},
                     {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2},
                     {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2},
+                    {id:"costs",    label:"Project costs",   sub:"Cost tracking per project",        icon:"coins", min:2},
                     {id:"measure",  label:"Measure",         sub:"Work out quantities to order",      icon:"ruler"},
+                    {id:"catalogues",label:"Supplier catalogues",sub:"Search products & datasheets",     icon:"catalogue"},
                     {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building", min:2},
                     {id:"team",     label:"Team",            sub:"People and roles",                icon:"building", min:3},
                     {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
