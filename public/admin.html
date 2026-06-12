@@ -231,6 +231,28 @@
   .minirow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
   .minirow:first-child{border-top:none}
   .minirow .mk{color:var(--sub)} .minirow .mv{font-weight:600;font-family:var(--mono);font-size:12px;text-align:right;word-break:break-word}
+  /* --- Health board --- */
+  .hb-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .hb-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;box-shadow:var(--shadow)}
+  .hb-card.s-down{border-color:rgba(229,100,92,.45)}
+  .hb-card.s-degraded{border-color:rgba(224,162,59,.45)}
+  .hb-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .hb-name{font-size:14.5px;font-weight:800;letter-spacing:-.01em}
+  .hb-pill{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:4px 10px;border-radius:99px}
+  .hb-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .s-up .hb-dot{background:var(--green-glow);box-shadow:0 0 0 3px rgba(61,214,140,.18)} .s-up .hb-pill{background:var(--tint);color:var(--accent)}
+  .s-degraded .hb-dot{background:var(--amber);box-shadow:0 0 0 3px rgba(224,162,59,.18)} .s-degraded .hb-pill{background:rgba(224,162,59,.14);color:var(--amber)}
+  .s-down .hb-dot{background:var(--red);box-shadow:0 0 0 3px rgba(229,100,92,.18)} .s-down .hb-pill{background:rgba(229,100,92,.14);color:var(--red)}
+  .s-unconfigured .hb-dot{background:var(--soft)} .s-unconfigured .hb-pill{background:var(--chip);color:var(--soft)}
+  .hb-detail{font-size:12.5px;color:var(--sub);margin-top:10px;line-height:1.5}
+  .hb-metrics{display:flex;flex-wrap:wrap;gap:7px;margin-top:13px}
+  .hb-metric{background:var(--chip);border:1px solid var(--line);border-radius:9px;padding:7px 11px}
+  .hb-metric .ml{font-size:9.5px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em}
+  .hb-metric .mvv{font-family:var(--mono);font-size:13px;font-weight:700;margin-top:2px}
+  .hb-lat{font-family:var(--mono);font-size:10px;color:var(--soft);margin-top:11px}
+  .hb-banner{display:flex;align-items:center;gap:13px;padding:16px 20px;border-radius:var(--r);margin-bottom:18px;border:1px solid var(--line)}
+  .hb-banner .bd{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+  .hb-banner .bt{font-size:15px;font-weight:800} .hb-banner .bs{font-size:12.5px;color:var(--sub);margin-top:2px}
   .filter-sel{max-width:170px}
   .loading{display:flex;align-items:center;justify-content:center;padding:80px;color:var(--sub);font-size:14px}
   .spin{width:18px;height:18px;border:2px solid var(--line-2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;margin-right:11px}
@@ -350,6 +372,7 @@ async function loadEventsInto(elId, companyId, showCo, limit){
 }
 
 const ICON = {
+  health:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
   overview:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>',
   building:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 7h2M8 11h2M8 15h2M14 7h2M14 11h2M14 15h2"/></svg>',
   users:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
@@ -385,7 +408,7 @@ function applyTheme(t){ document.documentElement.setAttribute("data-theme",t); t
 (function(){ let t="dark"; try{ t=localStorage.getItem("pq_admin_theme")||"dark"; }catch(e){} applyTheme(t); })();
 $("themeBtn").addEventListener("click",()=>applyTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark"));
 
-const TABS=[["overview","Overview","overview"],["companies","Companies","building"],["costs","Cost & usage","coin"],["users","Users","users"],["signups","Signups","signup"],["audit","Audit log","shield"]];
+const TABS=[["overview","Overview","overview"],["companies","Companies","building"],["costs","Cost & usage","coin"],["health","Health","health"],["users","Users","users"],["signups","Signups","signup"],["audit","Audit log","shield"]];
 $("nav").innerHTML = TABS.map(([id,label,icon])=>'<button class="navitem'+(id==="overview"?" on":"")+'" data-tab="'+id+'">'+ic(icon)+'<span class="lbl">'+label+'</span></button>').join("");
 document.querySelectorAll(".navitem").forEach(b=>b.addEventListener("click",()=>goTab(b.dataset.tab)));
 function goTab(id, plan){
@@ -451,7 +474,7 @@ async function loadData(quiet){
   }
 }
 
-function render(){ if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
+function render(){ if(currentTab==="health"){ renderHealth(); return; } if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
 function planBadge(p){ p=esc(p||"trial"); return '<span class="badge b-'+p+'">'+p+'</span>'; }
 const PLAN_LABELS_ADM={trial:"Trial",sole:"Sole Trader",team:"Team",business:"Business",enterprise:"Enterprise",suspended:"Suspended",cancelled:"Cancelled"};
 function PLAN_LABEL(p){ return PLAN_LABELS_ADM[p]||(p?(p.charAt(0).toUpperCase()+p.slice(1)):"Trial"); }
@@ -654,6 +677,56 @@ async function renderAudit(){
   $("view").innerHTML=
     '<div class="toolbar"><div class="muted" style="font-size:13px">'+entries.length+' recent action'+(entries.length===1?"":"s")+' &middot; who did what, when</div></div>'+
     '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>When</th><th>Action</th><th>Target</th><th class="hide">By</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+// --- Infrastructure health board -------------------------------------------
+// Calls /api/admin-health, which checks each provider SERVER-SIDE with the secret
+// keys and returns only the results. No provider key ever reaches the browser.
+let HEALTH=null, healthLoading=false;
+async function fetchHealth(){
+  const r=await fetch(API_BASE+"/api/admin-health",{ headers:{ "Authorization":"Bearer "+session.access_token } });
+  let d={}; try{ d=await r.json(); }catch{}
+  if(!r.ok){ const e=new Error((d&&d.error)||("Request failed ("+r.status+")")); e.status=r.status; throw e; }
+  return d;
+}
+async function refreshHealth(){
+  healthLoading=true; renderHealth();
+  try{ HEALTH=await fetchHealth(); }
+  catch(e){ HEALTH={ error: e.message }; }
+  healthLoading=false; renderHealth();
+}
+window.refreshHealth=refreshHealth;
+function renderHealth(){
+  if(currentTab!=="health") return;
+  const v=$("view");
+  if(healthLoading && !HEALTH){ v.innerHTML='<div class="loading"><span class="spin"></span>Checking your infrastructure...</div>'; return; }
+  if(!HEALTH){ refreshHealth(); v.innerHTML='<div class="loading"><span class="spin"></span>Checking your infrastructure...</div>'; return; }
+  if(HEALTH.error){ v.innerHTML='<div class="panel"><div class="muted">Could not load health: '+esc(HEALTH.error)+'</div><div style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="refreshHealth()">Try again</button></div></div>'; return; }
+
+  const OVERALL={ up:["s-up","All systems operational","Everything ProQure depends on is up and healthy."],
+                  degraded:["s-degraded","Running, with warnings","ProQure is up, but one or more services need attention."],
+                  down:["s-down","Service issue","One or more critical services are down \u2014 ProQure may be affected."] };
+  const o=OVERALL[HEALTH.overall]||OVERALL.up;
+  const SLABEL={ up:"Operational", degraded:"Degraded", down:"Down", unconfigured:"Not set up" };
+  const banner='<div class="hb-banner '+o[0]+'"><span class="bd" style="background:'+
+    (HEALTH.overall==="down"?"var(--red)":HEALTH.overall==="degraded"?"var(--amber)":"var(--green-glow)")+'"></span>'+
+    '<div><div class="bt">'+o[1]+'</div><div class="bs">'+o[2]+'</div></div></div>';
+  const cards=(HEALTH.services||[]).map(s=>{
+    const cls="s-"+s.status;
+    const metrics=(s.metrics||[]).map(m=>'<div class="hb-metric"><div class="ml">'+esc(m.label)+'</div><div class="mvv">'+esc(m.value)+'</div></div>').join("");
+    return '<div class="hb-card '+cls+'">'+
+      '<div class="hb-top"><div class="hb-name">'+esc(s.name)+'</div><span class="hb-pill '+cls+'"><span class="hb-dot"></span>'+(SLABEL[s.status]||s.status)+'</span></div>'+
+      '<div class="hb-detail">'+esc(s.detail||"")+'</div>'+
+      (metrics?'<div class="hb-metrics">'+metrics+'</div>':"")+
+      (s.latencyMs!=null?'<div class="hb-lat">responded in '+s.latencyMs+'ms</div>':"")+
+    '</div>';
+  }).join("");
+  v.innerHTML=
+    '<div class="toolbar"><div class="muted" style="font-size:13px">Live infrastructure status &middot; checked '+(HEALTH.generatedAt?new Date(HEALTH.generatedAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"just now")+'</div>'+
+    '<button class="btn btn-ghost btn-sm" onclick="refreshHealth()"'+(healthLoading?" disabled":"")+'>'+(healthLoading?"Checking...":"Re-check now")+'</button></div>'+
+    banner+
+    '<div class="hb-grid">'+cards+'</div>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:16px;line-height:1.6">These checks run on our server using your provider keys \u2014 no key is ever exposed to this page. They show whether each service is reachable and healthy right now. For always-on alerting (a ping when something goes down while you\u2019re not looking), set up an uptime monitor once mailboxes are live.</div>';
 }
 
 function switchDtab(id){
