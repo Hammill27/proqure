@@ -263,6 +263,16 @@ async function checkAiModels() {
   }
 }
 
+// What each service is for, where to manage it, and an icon key for the console.
+const SERVICE_META = {
+  "Supabase":         { role: "Database, auth & file storage",          link: "https://supabase.com/dashboard",   icon: "db" },
+  "Vercel (hosting)": { role: "Hosting, serverless API & deployments",   link: "https://vercel.com/dashboard",     icon: "cloud" },
+  "OpenRouter (AI)":  { role: "AI gateway \u2014 every model call & spend", link: "https://openrouter.ai/activity",   icon: "ai" },
+  "AI models":        { role: "Live availability of the models we use",  link: "https://openrouter.ai/models",     icon: "chip" },
+  "Resend (email)":   { role: "Transactional & supplier email delivery", link: "https://resend.com/emails",        icon: "mail" },
+  "Stripe (billing)": { role: "Subscriptions, plans & metered add-ons",  link: "https://dashboard.stripe.com",     icon: "card" },
+};
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
@@ -306,6 +316,9 @@ export default async function handler(req, res) {
     settle(checkResend(), "Resend (email)"),
     settle(checkStripe(), "Stripe (billing)"),
   ]);
+
+  // Attach role / console link / icon so the dashboard can show what each service is.
+  for (const s of services) { const m = SERVICE_META[s.name]; if (m) { s.role = m.role; s.link = m.link; s.icon = m.icon; } }
 
   // Overall = worst of the configured services (unconfigured doesn't drag it down).
   const rank = { up: 0, degraded: 1, down: 2 };
