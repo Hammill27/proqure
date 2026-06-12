@@ -83,7 +83,7 @@ const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", busines
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices"];
 
 // Pull every key for this user from the cloud into localStorage (on login)
 async function cloudPull(userId) {
@@ -1592,6 +1592,20 @@ async function omLoadJsPDF() {
   return window.jspdf.jsPDF;
 }
 
+// Resolve a logo's natural dimensions so the cover can place it without distortion.
+// Returns null on any failure (cover then falls back to the company name as text).
+async function omLogoDims(logoBase64) {
+  if (!logoBase64) return null;
+  try {
+    const dims = await new Promise((res) => {
+      const im = new Image(); im.onload = () => res({ w: im.width, h: im.height }); im.onerror = () => res(null); im.src = logoBase64;
+    });
+    if (!dims || !dims.h) return null;
+    const fmt = /^data:image\/png/i.test(logoBase64) ? "PNG" : "JPEG";
+    return { ...dims, fmt };
+  } catch (e) { return null; }
+}
+
 function omFooter(doc, project, hasCover = true) {
   const W = 210, H = 297, M = 16;
   const n = doc.getNumberOfPages();
@@ -1625,7 +1639,7 @@ function omSectionTitle(ctx, num, title, sub) {
   ctx.y += 6;
   if (sub) {
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...OM_C.mute);
-    doc.text(sub, M, ctx.y); ctx.y += 5;
+    doc.text(doc.splitTextToSize(sub, W - 2 * M), M, ctx.y); ctx.y += 5;
   }
   ctx.y += 2;
 }
@@ -1637,6 +1651,15 @@ function omPill(ctx, text, fg, bg) {
   doc.setFillColor(...bg); doc.roundedRect(M, ctx.y - 4, w, 6, 3, 3, "F");
   doc.setTextColor(...fg); doc.text(text, M + 3.5, ctx.y);
   ctx.y += 7;
+}
+
+// A short paragraph of explanatory body text.
+function omPara(ctx, text, color) {
+  const { doc } = ctx; const M = 16;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.4); doc.setTextColor(...(color || OM_C.mute));
+  const lines = doc.splitTextToSize(text, 210 - 2 * M);
+  lines.forEach(ln => { omEnsure(ctx, 6); doc.text(ln, M, ctx.y); ctx.y += 4.6; });
+  ctx.y += 3;
 }
 
 // Draw a table. cols: [{header, width, mono?, align?}], rows: array of arrays.
@@ -1677,11 +1700,20 @@ function omTable(ctx, cols, rows, headColor) {
   ctx.y += 5;
 }
 
-// Render the cover onto the current (first) page.
-function omCover(doc, project, settings) {
+// Render the cover onto the current (first) page. logoDims (optional) from omLogoDims.
+function omCover(doc, project, settings, logoDims) {
   const W = 210, M = 16;
   doc.setFillColor(...OM_C.dark); doc.rect(0, 0, W, 118, "F");
   doc.setFillColor(...OM_C.green); doc.rect(0, 116, W, 2, "F");
+  // Company logo, top-right on the dark band, sized to a 16mm height cap; else company name as text.
+  let drewLogo = false;
+  if (settings.logoBase64 && logoDims && logoDims.h) {
+    try {
+      const h = 16, w = Math.min(64, logoDims.w * (h / logoDims.h));
+      doc.addImage(settings.logoBase64, logoDims.fmt || "PNG", W - M - w, 16, w, h);
+      drewLogo = true;
+    } catch (e) { drewLogo = false; }
+  }
   doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...OM_C.white);
   doc.text(settings.company || "ProQure", M, 26);
   doc.setFont("courier", "normal"); doc.setFontSize(8); doc.setTextColor(159, 183, 171);
@@ -1690,8 +1722,14 @@ function omCover(doc, project, settings) {
   doc.text(doc.splitTextToSize(project.name || project.jobRef, W - 2 * M), M, 68);
   doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(199, 199, 194);
   if (project.site) doc.text(doc.splitTextToSize(project.site, W - 2 * M), M, 80);
-  doc.setFontSize(10); doc.setTextColor(154, 154, 147);
+  // Issuing company block (name + address), lower-left of the dark band.
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...OM_C.white);
   doc.text(settings.company || "", M, 96);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(154, 154, 147);
+  let cy = 101;
+  (settings.siteAddress ? doc.splitTextToSize(settings.siteAddress, 120) : []).forEach(ln => { doc.text(ln, M, cy); cy += 4.2; });
+  const contactBits = [settings.contactName, settings.phone, settings.fromEmail].filter(Boolean);
+  if (contactBits.length) { doc.text(contactBits.join("  ·  "), M, Math.max(cy, 110)); }
   // meta cards
   const y = 132, cw = (W - 2 * M - 3 * 4) / 4;
   const cards = [["JOB REF", project.jobRef || "-"], ["REVISION", "v1.0"],
@@ -1711,17 +1749,19 @@ function omCover(doc, project, settings) {
   doc.text(`GENERATED ${(project.date || "").toUpperCase()}`, M, 277);
 }
 
-// Body sections, each draws into ctx starting at ctx.y.
-function omRenderEquipment(ctx, data) {
-  omSectionTitle(ctx, "01", "Equipment schedule", "Items procured for this project, grouped by system.");
+// Body sections, each draws into ctx starting at ctx.y. Section numbers are passed
+// in so the document can be assembled in different orders (full vs lite).
+function omRenderEquipment(ctx, data, num = "01") {
+  omSectionTitle(ctx, num, "Equipment schedule", "Plant & equipment procured for this project, grouped by system. Location and drawing references are left for site completion.");
   data.equipment.forEach(group => {
     omEnsure(ctx, 14);
     ctx.doc.setFont("helvetica", "bold"); ctx.doc.setFontSize(9.5); ctx.doc.setTextColor(...OM_C.greenD);
     ctx.doc.text(group.category || "Other", 16, ctx.y); ctx.y += 5.5;
-    const rows = (group.items || []).map(it => [it.item || "", it.manufacturer || "", it.model || "", it.rating || ""]);
+    const rows = (group.items || []).map(it => [it.item || "", it.manufacturer || "", it.model || "", it.rating || "", "", ""]);
     omTable(ctx, [
-      { header: "Item", width: 78 }, { header: "Manufacturer", width: 38 },
-      { header: "Model", width: 38, mono: true }, { header: "Rating / Qty", width: 24, color: OM_C.mute },
+      { header: "Item", width: 58 }, { header: "Manufacturer", width: 32 },
+      { header: "Model", width: 30, mono: true }, { header: "Rating / Qty", width: 22, color: OM_C.mute },
+      { header: "Location", width: 18, color: OM_C.faint }, { header: "Dwg ref", width: 18, color: OM_C.faint },
     ], rows);
   });
   // Spares & consumables: kept separate from the equipment register so the schedule
@@ -1737,8 +1777,8 @@ function omRenderEquipment(ctx, data) {
   }
 }
 
-function omRenderLiterature(ctx, data, web) {
-  omSectionTitle(ctx, "02", "Operating manuals & literature", "Manufacturer datasheets and product literature for each item.");
+function omRenderLiterature(ctx, data, web, num = "02") {
+  omSectionTitle(ctx, num, "Operating manuals & literature", "Manufacturer datasheets and product literature for each item.");
   omPill(ctx, web ? "AUTO-SOURCED FROM MANUFACTURER" : "MANUFACTURER & MODEL — LINKS ON REQUEST", OM_C.greenD, OM_C.greenW);
   ctx.doc.setFont("helvetica", "normal"); ctx.doc.setFontSize(8); ctx.doc.setTextColor(...OM_C.mute);
   const note = web
@@ -1778,8 +1818,8 @@ function omRenderLiterature(ctx, data, web) {
   ctx.y += 5;
 }
 
-function omRenderPPM(ctx, data) {
-  omSectionTitle(ctx, "03", "Maintenance schedules (PPM)", "Planned preventative maintenance for the installed equipment.");
+function omRenderPPM(ctx, data, num = "03") {
+  omSectionTitle(ctx, num, "Maintenance schedules (PPM)", "Planned preventative maintenance for the installed equipment.");
   omPill(ctx, "AI-DRAFTED \u2014 FOR YOUR SIGN-OFF", OM_C.amber, OM_C.amberW);
   ctx.y += 1;
   [["ELECTRICAL", data.ppm.electrical], ["MECHANICAL", data.ppm.mechanical]].forEach(([label, groups]) => {
@@ -1803,10 +1843,129 @@ function omRenderPPM(ctx, data) {
   });
 }
 
-function omContents(ctx, project, settings) {
+// Asset register — derived from the equipment schedule, assigning each item a unique
+// asset number with a system-based prefix (e.g. EL-001). For the client's CAFM/asset DB.
+function omAssetRegister(ctx, data, num) {
+  omSectionTitle(ctx, num, "Asset register", "Maintainable assets with a unique asset number, derived from the equipment schedule. Locations/barcodes to be completed on site.");
+  omPill(ctx, "ASSET NUMBERS AUTO-ASSIGNED \u2014 CONFIRM ON SITE", OM_C.greenD, OM_C.greenW);
+  const prefixOf = (cat) => {
+    const c = (cat || "").toUpperCase();
+    if (/ELEC|DISTRIB|POWER/.test(c)) return "EL";
+    if (/LIGHT/.test(c)) return "LT";
+    if (/FIRE|ALARM|SECURIT/.test(c)) return "FA";
+    if (/VENT|AC|HVAC|AIR|COOL/.test(c)) return "AC";
+    if (/WATER|PLUMB|DOMESTIC/.test(c)) return "WS";
+    if (/HEAT|BOILER|GAS/.test(c)) return "HT";
+    if (/DRAIN/.test(c)) return "DR";
+    return "PL";
+  };
+  const counters = {};
+  const rows = [];
+  (data.equipment || []).forEach(group => {
+    const p = prefixOf(group.category);
+    (group.items || []).forEach(it => {
+      counters[p] = (counters[p] || 0) + 1;
+      const tag = `${p}-${String(counters[p]).padStart(3, "0")}`;
+      rows.push([tag, it.item || "", group.category || "", it.manufacturer || "", it.model || "", ""]);
+    });
+  });
+  if (!rows.length) { omPara(ctx, "No maintainable plant was identified in the procurement record for this project."); return; }
+  omTable(ctx, [
+    { header: "Asset no.", width: 24, mono: true, color: OM_C.greenD },
+    { header: "Asset", width: 58 }, { header: "System", width: 34, color: OM_C.mute },
+    { header: "Manufacturer", width: 28 }, { header: "Model", width: 24, mono: true },
+    { header: "Location", width: 10, color: OM_C.faint },
+  ], rows);
+}
+
+// Warranty register — derived from the equipment list; warranty terms are left blank
+// for completion from the manufacturer's documentation (often conditional on maintenance).
+function omRenderWarranties(ctx, data, num) {
+  omSectionTitle(ctx, num, "Warranties", "Manufacturer warranties for the installed plant. Periods and certificates to be inserted; many are conditional on documented maintenance.");
+  omPill(ctx, "INSERT MANUFACTURER WARRANTY CERTIFICATES", OM_C.amber, OM_C.amberW);
+  const rows = [];
+  (data.equipment || []).forEach(group => (group.items || []).forEach(it => {
+    rows.push([it.item || "", it.manufacturer || "", it.model || "", "", "", "Subject to scheduled maintenance"]);
+  }));
+  if (!rows.length) { omPara(ctx, "No warrantied plant identified. Insert any applicable manufacturer warranties here."); return; }
+  omTable(ctx, [
+    { header: "Item", width: 46 }, { header: "Manufacturer", width: 30 },
+    { header: "Model", width: 26, mono: true }, { header: "Warranty period", width: 26, color: OM_C.faint },
+    { header: "Expiry", width: 20, color: OM_C.faint }, { header: "Conditions", width: 30, color: OM_C.mute },
+  ], rows);
+}
+
+// A divider / insert sheet for sections ProQure cannot populate from procurement data
+// (e.g. test certificates, as-fitted drawings). Tells the compiler what belongs here.
+function omInsertSheet(ctx, num, title, sub, bullets) {
+  omSectionTitle(ctx, num, title, sub);
+  omPill(ctx, "INSERT DOCUMENTS \u2014 NOT HELD IN PROQURE", OM_C.amber, OM_C.amberW);
+  omPara(ctx, "ProQure compiles this manual from the project's procurement record, so it does not hold the documents below. Insert them here before issuing the manual to the client:");
+  const { doc } = ctx; const M = 16;
+  (bullets || []).forEach(b => {
+    omEnsure(ctx, 7);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8.4); doc.setTextColor(...OM_C.green);
+    doc.text("\u2022", M, ctx.y);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(...OM_C.ink);
+    doc.text(doc.splitTextToSize(b, 210 - 2 * M - 6), M + 5, ctx.y);
+    ctx.y += Math.max(5, doc.splitTextToSize(b, 210 - 2 * M - 6).length * 4.4);
+  });
+  ctx.y += 2;
+  // A placeholder framed area so the section reads as a deliberate insert point.
+  omEnsure(ctx, 40);
+  doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.4); doc.setLineDashPattern([1.5, 1.5], 0);
+  doc.roundedRect(M, ctx.y, 210 - 2 * M, 34, 2, 2, "S");
+  doc.setLineDashPattern([], 0);
+  doc.setFont("courier", "normal"); doc.setFontSize(8); doc.setTextColor(...OM_C.faint);
+  doc.text("DOCUMENTS TO BE INSERTED HERE", 105, ctx.y + 18, { align: "center" });
+  ctx.y += 40;
+}
+
+// A blank handover training register for the client to complete during commissioning.
+function omTrainingRegister(ctx, num) {
+  omSectionTitle(ctx, num, "Training register", "Record of handover training given to the client's staff on the installed systems.");
+  omPill(ctx, "TO BE COMPLETED AT HANDOVER", OM_C.amber, OM_C.amberW);
+  const blank = Array.from({ length: 6 }, () => ["", "", "", "", ""]);
+  omTable(ctx, [
+    { header: "Date", width: 24 }, { header: "System / equipment", width: 50 },
+    { header: "Attendee(s)", width: 44 }, { header: "Trainer", width: 30 },
+    { header: "Signature", width: 30, color: OM_C.faint },
+  ], blank);
+}
+
+// Client acceptance & handover sign-off form template.
+function omAcceptanceForm(ctx, project, settings, num) {
+  omSectionTitle(ctx, num, "Client acceptance & handover", "Formal acceptance of this Operations & Maintenance manual by the client.");
+  const { doc } = ctx; const M = 16, W = 210;
+  omPara(ctx, "By signing below, the client acknowledges receipt of this Operations & Maintenance manual for the project named below, and confirms that handover training (where applicable) has been provided.");
+  const field = (label, value) => {
+    omEnsure(ctx, 12);
+    doc.setFont("courier", "normal"); doc.setFontSize(7); doc.setTextColor(...OM_C.faint);
+    doc.text(label.toUpperCase(), M, ctx.y);
+    ctx.y += 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(...OM_C.ink);
+    if (value) doc.text(value, M, ctx.y - 0.5);
+    doc.setDrawColor(...OM_C.line); doc.setLineWidth(0.3); doc.line(M, ctx.y + 1, W - M, ctx.y + 1);
+    ctx.y += 9;
+  };
+  field("Project", project.name || project.jobRef);
+  field("Site address", project.site || "");
+  field("Issued by", settings.company || "");
+  ctx.y += 4;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...OM_C.dark);
+  doc.text("Client acceptance", M, ctx.y); ctx.y += 6;
+  field("Name", "");
+  field("Position / company", "");
+  field("Signature", "");
+  field("Date", "");
+}
+
+function omContents(ctx, project, settings, sections) {
   omSectionTitle(ctx, "00", "Contents & document control");
   const { doc } = ctx; const M = 16;
-  const toc = [["1", "Equipment schedule"], ["2", "Operating manuals & literature"], ["3", "Maintenance schedules (PPM)"]];
+  const toc = (sections && sections.length)
+    ? sections.map((s, i) => [String(i + 1), s])
+    : [["1", "Equipment schedule"], ["2", "Operating manuals & literature"], ["3", "Maintenance schedules (PPM)"]];
   toc.forEach(([n, t]) => {
     doc.setFont("courier", "normal"); doc.setFontSize(8); doc.setTextColor(...OM_C.mute); doc.text(n, M, ctx.y);
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...OM_C.ink); doc.text(t, M + 12, ctx.y);
@@ -1818,19 +1977,50 @@ function omContents(ctx, project, settings) {
     [["1.0", project.date, (settings.company || "ProQure") + " (auto)", "First issue"]]);
 }
 
-// Build the full pack. opts:{split,web}. Downloads the PDF(s).
+// Build the full pack. opts:{split,web,full}. Downloads the PDF(s).
+// full=true assembles Andy's complete O&M structure (cover, equipment, literature,
+// test certs, as-fitted drawings, maintenance, training register, asset register,
+// warranties, client acceptance). full=false keeps the original lite pack.
 async function omGeneratePdf(data, project, settings, opts = {}) {
   const jsPDF = await omLoadJsPDF();
   const fname = (project.jobRef || "project").replace(/[^a-z0-9\-]+/gi, "-");
+  const logoDims = await omLogoDims(settings.logoBase64);
+
+  // Section titles for the full-structure contents page (in Andy's order).
+  const fullSections = [
+    "Equipment schedule", "Operating manuals & literature", "Testing & commissioning certificates",
+    "As-fitted drawings", "Maintenance schedules (PPM)", "Training register",
+    "Asset register", "Warranties", "Client acceptance & handover",
+  ];
 
   const buildCombined = () => {
     const doc = new jsPDF({ unit: "mm", format: "a4" });
-    omCover(doc, project, settings);
+    omCover(doc, project, settings, logoDims);
     doc.addPage(); const ctx = { doc, y: 22 };
-    omContents(ctx, project, settings);
-    doc.addPage(); ctx.y = 22; omRenderEquipment(ctx, data);
-    doc.addPage(); ctx.y = 22; omRenderLiterature(ctx, data, opts.web);
-    doc.addPage(); ctx.y = 22; omRenderPPM(ctx, data);
+    if (opts.full) {
+      omContents(ctx, project, settings, fullSections);
+      doc.addPage(); ctx.y = 22; omRenderEquipment(ctx, data, "01");
+      doc.addPage(); ctx.y = 22; omRenderLiterature(ctx, data, opts.web, "02");
+      doc.addPage(); ctx.y = 22; omInsertSheet(ctx, "03", "Testing & commissioning certificates",
+        "Certificates evidencing that the installed systems were tested and commissioned.",
+        ["Electrical installation certificate(s) / EIC, BS 7671", "Emergency lighting & fire alarm commissioning (BS 5266 / BS 5839)",
+         "Mechanical / ventilation commissioning records (e.g. air & water balancing)", "Gas safety / pressure test certificates where applicable",
+         "F-Gas / refrigerant handling records for AC plant"]);
+      doc.addPage(); ctx.y = 22; omInsertSheet(ctx, "04", "As-fitted drawings",
+        "The final 'as-installed' drawings reflecting what was actually fitted on site.",
+        ["As-fitted layout drawings for each system", "Schematic / single-line diagrams (electrical)",
+         "Ductwork & pipework as-fitted drawings", "Drawing register listing revisions and dates"]);
+      doc.addPage(); ctx.y = 22; omRenderPPM(ctx, data, "05");
+      doc.addPage(); ctx.y = 22; omTrainingRegister(ctx, "06");
+      doc.addPage(); ctx.y = 22; omAssetRegister(ctx, data, "07");
+      doc.addPage(); ctx.y = 22; omRenderWarranties(ctx, data, "08");
+      doc.addPage(); ctx.y = 22; omAcceptanceForm(ctx, project, settings, "09");
+    } else {
+      omContents(ctx, project, settings);
+      doc.addPage(); ctx.y = 22; omRenderEquipment(ctx, data, "01");
+      doc.addPage(); ctx.y = 22; omRenderLiterature(ctx, data, opts.web, "02");
+      doc.addPage(); ctx.y = 22; omRenderPPM(ctx, data, "03");
+    }
     omFooter(doc, project);
     return doc;
   };
@@ -1839,11 +2029,11 @@ async function omGeneratePdf(data, project, settings, opts = {}) {
   if (opts.split) {
     // Literature only
     const litDoc = new jsPDF({ unit: "mm", format: "a4" });
-    const lc = { doc: litDoc, y: 22 }; omRenderLiterature(lc, data, opts.web); omFooter(litDoc, project, false);
+    const lc = { doc: litDoc, y: 22 }; omRenderLiterature(lc, data, opts.web, "01"); omFooter(litDoc, project, false);
     litDoc.save(`OM-${fname}-Literature.pdf`);
     // Maintenance only
     const ppmDoc = new jsPDF({ unit: "mm", format: "a4" });
-    const pc = { doc: ppmDoc, y: 22 }; omRenderPPM(pc, data); omFooter(ppmDoc, project, false);
+    const pc = { doc: ppmDoc, y: 22 }; omRenderPPM(pc, data, "01"); omFooter(ppmDoc, project, false);
     ppmDoc.save(`OM-${fname}-Maintenance.pdf`);
   }
 }
@@ -2389,6 +2579,203 @@ const RichText = ({ text }) => {
   );
 };
 
+// ============================================================================
+// INVOICING — capture & three-way match (PO ↔ goods receipt ↔ invoice)
+// ----------------------------------------------------------------------------
+// A money-critical feature, so it is deliberately advisory: ProQure reads the
+// invoice, lines it up against the matching purchase order and the order's
+// goods-receipt status, and flags every discrepancy. A person always approves —
+// nothing here pays, posts, or pushes to an accounting system.
+// ============================================================================
+
+// Coerce a value that may be "£1,234.50", "1234.5", 1234.5 → Number|null.
+function invNum(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  const n = parsePrice(v);
+  return n == null ? null : n;
+}
+function invGBP(n, currency) {
+  if (n == null || isNaN(n)) return "—";
+  const sym = { GBP: "£", EUR: "\u20AC", USD: "$" }[(currency || "GBP").toUpperCase()] ?? ((currency || "") + " ");
+  return sym + Number(n).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Read a supplier invoice (or delivery note) — PDF/image via vision, CSV/text
+// directly — and return a normalised invoice object, or {error}.
+async function extractInvoice(input) {
+  if (!aiBudgetOk()) return { error: AI_BUDGET_MSG };
+  const sys = `You are reading a SUPPLIER INVOICE (or a delivery note) issued to a UK building/trades contractor. Extract the billing detail exactly as printed — never invent figures. Capture the supplier/merchant name, the invoice number, the invoice date, any purchase-order number quoted on it, any project/job reference quoted on it, and every line item with its description, quantity, unit price and line total. Also capture the net subtotal, the VAT amount and the gross total if shown. Money values must be plain numbers (no currency symbols, no thousands separators). If a value is not shown, use null. Return ONLY valid JSON, no markdown, in exactly this shape:
+{"supplier":"","invoiceNumber":"","invoiceDate":"","poNumber":"","jobRef":"","currency":"GBP","lines":[{"description":"","qty":number|null,"unitPrice":number|null,"lineTotal":number|null}],"subtotal":number|null,"vat":number|null,"total":number|null}
+Always return the JSON, even if some fields are blank.`;
+  let text = "";
+  try {
+    if (typeof input === "string") {
+      if (!input.trim()) return { error: "Paste the invoice text first." };
+      text = await callAI(sys, `Invoice text:\n${input.slice(0, 60000)}`);
+    } else {
+      const file = input;
+      const name = file.name || "invoice";
+      const isImage = (file.type || "").startsWith("image/");
+      const isPDF = (file.type || "") === "application/pdf";
+      const isCsv = /\.csv$/i.test(name) || (file.type || "").includes("csv") || (file.type || "").startsWith("text/");
+      if (isCsv) {
+        const csv = await file.text();
+        if (!csv.trim()) return { error: "That file looks empty." };
+        text = await callAI(sys, `Invoice data (CSV / text):\n${csv.slice(0, 60000)}`);
+      } else if (isImage || isPDF) {
+        let imageUrls = [];
+        if (isImage) {
+          const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(file); });
+          imageUrls = [dataUrl];
+        } else {
+          imageUrls = await pdfToImages(file, 4); // first pages keep cost/latency sensible
+        }
+        if (!imageUrls.length) return { error: "Couldn't read that file \u2014 try a clearer PDF or image." };
+        const userContent = [...imageUrls.map(url => ({ type: "image_url", image_url: { url } })), { type: "text", text: "Extract this invoice." }];
+        const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0, companyId: __companyId }) });
+        if (r.status === 402) return { error: AI_BUDGET_MSG };
+        if (!r.ok) return { error: "The AI couldn't read that invoice \u2014 try a clearer PDF or image." };
+        const j = await r.json(); reportAiUsage(j.cost, false); text = j.text || "";
+      } else {
+        return { error: "Please upload a PDF, image, or CSV invoice." };
+      }
+    }
+    const d = JSON.parse(omStripFences(text || ""));
+    const lines = (d.lines || []).slice(0, 200).map(l => ({
+      description: String(l.description || "").trim(),
+      qty: invNum(l.qty),
+      unitPrice: invNum(l.unitPrice),
+      lineTotal: invNum(l.lineTotal != null ? l.lineTotal : (invNum(l.qty) != null && invNum(l.unitPrice) != null ? invNum(l.qty) * invNum(l.unitPrice) : null)),
+    })).filter(l => l.description);
+    if (!lines.length && d.total == null) return { error: "No invoice lines or total could be read. Try a clearer copy, or paste the text." };
+    return {
+      supplier: String(d.supplier || "").trim(),
+      invoiceNumber: String(d.invoiceNumber || "").trim(),
+      invoiceDate: String(d.invoiceDate || "").trim(),
+      poNumber: String(d.poNumber || "").trim(),
+      jobRef: String(d.jobRef || "").trim(),
+      currency: String(d.currency || "GBP").trim() || "GBP",
+      lines,
+      subtotal: invNum(d.subtotal),
+      vat: invNum(d.vat),
+      total: invNum(d.total),
+    };
+  } catch (e) {
+    return { error: "Couldn't read that invoice \u2014 please try a clearer PDF, image, or pasted text." };
+  }
+}
+
+// Token-overlap similarity for matching invoice lines to PO lines (0..1).
+function invSim(a, b) {
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(w => w.length > 2);
+  const A = new Set(norm(a)), B = new Set(norm(b));
+  if (!A.size || !B.size) return 0;
+  let inter = 0; A.forEach(w => { if (B.has(w)) inter++; });
+  return inter / (A.size + B.size - inter);
+}
+
+// One PO line, normalised from an order item.
+function invOrderLines(order) {
+  return (order.items || []).map(it => {
+    const qty = invNum(it.qty ?? it.quantity ?? it.requestedQty);
+    const unit = invNum(it.unitPrice);
+    let line = invNum(it.lineTotal);
+    if (line == null && unit != null && qty) line = unit * qty;
+    return { description: it.product || it.description || it.rawText || "", qty, unitPrice: unit, lineTotal: line };
+  }).filter(l => l.description);
+}
+
+// Three-way match: invoice ↔ purchase order ↔ goods receipt (the PO's delivery
+// status). Returns {result, score, total, poTotal, variance, flags[], lineMatches[]}.
+// result: "clean" | "review" | "mismatch". Never decides — just evidences.
+function invMatchToOrder(inv, order) {
+  const flags = [];
+  const PRICE_TOL = 0.01;   // 1% unit-price tolerance
+  const TOTAL_TOL = 0.01;   // 1% total tolerance
+  if (!order) {
+    return { result: "review", score: 0, total: inv.total, poTotal: null, variance: null,
+      flags: [{ level: "amber", code: "no-po", msg: "No matching purchase order selected — pick the PO this invoice is for." }], lineMatches: [] };
+  }
+  const poLines = invOrderLines(order);
+  const cur = (inv.currency || "GBP").toUpperCase();
+  if (cur !== "GBP") flags.push({ level: "amber", code: "currency", msg: `Invoice is in ${cur} — PO figures are in GBP, so the comparisons below are not like-for-like. Check the conversion.` });
+  const used = new Array(poLines.length).fill(false);
+  const lineMatches = [];
+  let matchedValue = 0;
+  (inv.lines || []).forEach(il => {
+    let best = -1, bestScore = 0;
+    poLines.forEach((pl, i) => { if (used[i]) return; const s = invSim(il.description, pl.description); if (s > bestScore) { bestScore = s; best = i; } });
+    if (best >= 0 && bestScore >= 0.34) {
+      used[best] = true;
+      const pl = poLines[best];
+      const lf = [];
+      if (il.unitPrice != null && pl.unitPrice != null && pl.unitPrice > 0) {
+        const diff = (il.unitPrice - pl.unitPrice) / pl.unitPrice;
+        if (diff > PRICE_TOL) { lf.push({ level: "red", code: "price-up", msg: `Unit price ${invGBP(il.unitPrice, cur)} is above PO ${invGBP(pl.unitPrice)} (+${(diff * 100).toFixed(1)}%)` }); }
+        else if (diff < -PRICE_TOL) { lf.push({ level: "amber", code: "price-down", msg: `Unit price ${invGBP(il.unitPrice, cur)} below PO ${invGBP(pl.unitPrice)}` }); }
+      }
+      if (il.qty != null && pl.qty != null && il.qty !== pl.qty) {
+        lf.push({ level: il.qty > pl.qty ? "red" : "amber", code: "qty", msg: `Quantity ${il.qty} vs PO ${pl.qty}` });
+      }
+      if (il.lineTotal != null) matchedValue += il.lineTotal;
+      lineMatches.push({ invoice: il, po: pl, score: bestScore, flags: lf });
+      lf.forEach(f => flags.push(f));
+    } else {
+      lineMatches.push({ invoice: il, po: null, score: bestScore, flags: [{ level: "red", code: "extra-line", msg: "Line not found on the purchase order" }] });
+      flags.push({ level: "red", code: "extra-line", msg: `Invoiced item not on PO: ${(il.description || "").slice(0, 48)}` });
+    }
+  });
+  // PO lines never invoiced (possible under-delivery / partial invoice).
+  poLines.forEach((pl, i) => { if (!used[i]) { lineMatches.push({ invoice: null, po: pl, score: 0, flags: [{ level: "amber", code: "not-invoiced", msg: "On PO but not on this invoice" }] }); flags.push({ level: "amber", code: "not-invoiced", msg: `Not invoiced: ${(pl.description || "").slice(0, 48)}` }); } });
+
+  // Totals leg.
+  const poTotal = orderTotal(order);
+  const invTotal = inv.total != null ? inv.total : (inv.subtotal != null ? inv.subtotal : matchedValue);
+  let variance = null;
+  if (poTotal && invTotal != null) {
+    variance = (invTotal - poTotal) / poTotal;
+    if (variance > TOTAL_TOL) flags.push({ level: "red", code: "total-over", msg: `Invoice total ${invGBP(invTotal, cur)} exceeds PO ${invGBP(poTotal)} by ${(variance * 100).toFixed(1)}%` });
+    else if (variance < -TOTAL_TOL) flags.push({ level: "amber", code: "total-under", msg: `Invoice total ${invGBP(invTotal, cur)} is under PO ${invGBP(poTotal)} — likely a partial invoice` });
+  }
+
+  // Goods-receipt leg (the "third way"): has the PO been received on site?
+  const receipted = order.status === "delivered" || order.status === "confirmed";
+  if (!receipted) flags.push({ level: "amber", code: "not-receipted", msg: "PO is not yet marked delivered/confirmed — goods receipt not evidenced." });
+
+  const hasRed = flags.some(f => f.level === "red");
+  const hasAmber = flags.some(f => f.level === "amber");
+  const result = hasRed ? "mismatch" : (hasAmber ? "review" : "clean");
+  const score = invTotal ? Math.max(0, Math.min(1, matchedValue / invTotal)) : 0;
+  return { result, score, total: invTotal, poTotal, variance, flags, lineMatches };
+}
+
+// Pick the most likely PO for an invoice: a quoted PO number wins; else same
+// supplier with the closest total (and a job-reference nudge).
+function invBestOrder(inv, orders) {
+  const live = (orders || []).filter(o => o.status !== "cancelled");
+  if (!live.length) return null;
+  const poNum = (inv.poNumber || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (poNum.length >= 3) {
+    const byNum = live.find(o => String(o.poNumber || "").toLowerCase().replace(/[^a-z0-9]/g, "") === poNum);
+    if (byNum) return byNum;
+  }
+  const supplierKey = (inv.supplier || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const sameSupplier = supplierKey.length >= 3
+    ? live.filter(o => { const k = String(o.supplier || "").toLowerCase().replace(/[^a-z0-9]/g, ""); return k && (k.includes(supplierKey.slice(0, 6)) || supplierKey.includes(k.slice(0, 6))); })
+    : [];
+  const pool = sameSupplier.length ? sameSupplier : live;
+  const target = inv.total != null ? inv.total : (inv.subtotal != null ? inv.subtotal : null);
+  let best = pool[0], bestGap = Infinity;
+  pool.forEach(o => {
+    let gap = 0;
+    if (target != null) { const t = orderTotal(o); gap = Math.abs((t || 0) - target); }
+    if (inv.jobRef && String(o.jobRef || "").toLowerCase() === inv.jobRef.toLowerCase()) gap -= 1; // small nudge
+    if (gap < bestGap) { bestGap = gap; best = o; }
+  });
+  return best || null;
+}
+
 function ProQureApp({ session, companyId }) {
   // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
   // user id (sole trader / pre-migration fallback). Declared up here because effects
@@ -2438,12 +2825,20 @@ function ProQureApp({ session, companyId }) {
   const [catalogues, setCatalogues] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_catalogues")||"[]")}catch{return []} });
   const [orders,   setOrders]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_orders")||"[]")}catch{return []} });
   const [costs,    setCosts]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_costs")||"[]")}catch{return []} });
+  const [invoices, setInvoices] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_invoices")||"[]")}catch{return []} });
   const [projects, setProjects] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_projects")||"{}")}catch{return {}} });
   const [omJob, setOmJob] = useState(null);       // jobRef being generated
   const [omBusy, setOmBusy] = useState(false);
   const [omStage, setOmStage] = useState("");
   const [omWeb, setOmWeb] = useState(false);       // find datasheet links online (metered)
   const [omSplit, setOmSplit] = useState(false);   // also export sections separately
+  const [omFull, setOmFull] = useState(true);      // full O&M structure (Andy's headings) vs lite pack
+  // Invoicing UI state
+  const [invBusy, setInvBusy] = useState(false);
+  const [invStage, setInvStage] = useState("");
+  const [invText, setInvText] = useState("");
+  const [invMode, setInvMode] = useState("file"); // "file" | "text"
+  const [invOpenId, setInvOpenId] = useState(null);
   const [repMode, setRepMode] = useState("overview");
   const [repOpen, setRepOpen] = useState(null);    // expanded project in reports
   const [costJob, setCostJob] = useState(null);    // selected project in Project costs
@@ -2710,6 +3105,96 @@ function ProQureApp({ session, companyId }) {
     if (!can.deleteItems(myRole) && !can.viewCosts(myRole)) return;
     setCosts(p => p.filter(c => c.id !== id));
   };
+
+  // --- Invoicing: capture → auto-match → human decision -----------------------
+  const buildInvoiceRecord = (parsed) => {
+    const order = invBestOrder(parsed, visibleOrders);
+    const match = invMatchToOrder(parsed, order);
+    const dup = invoices.find(iv => iv.status !== "rejected"
+      && (iv.supplier || "").toLowerCase().trim() === (parsed.supplier || "").toLowerCase().trim()
+      && (iv.invoiceNumber || "").toLowerCase().trim() === (parsed.invoiceNumber || "").toLowerCase().trim()
+      && (parsed.invoiceNumber || "").trim());
+    if (dup) match.flags = [{ level: "red", code: "duplicate", msg: `Possible duplicate of an invoice already logged (${parsed.invoiceNumber}).` }, ...match.flags];
+    if (dup && match.result !== "mismatch") match.result = "mismatch";
+    return {
+      id: "INV-" + Date.now().toString(36).toUpperCase(),
+      createdAt: new Date().toISOString(),
+      createdBy: myEmail,
+      supplier: parsed.supplier, invoiceNumber: parsed.invoiceNumber, invoiceDate: parsed.invoiceDate,
+      poNumber: parsed.poNumber, jobRef: parsed.jobRef || (order ? order.jobRef : ""), currency: parsed.currency || "GBP",
+      lines: parsed.lines, subtotal: parsed.subtotal, vat: parsed.vat, total: parsed.total,
+      orderId: order ? order.id : null, orderPoNumber: order ? order.poNumber : "",
+      match,
+      status: order ? "matched" : "unmatched",
+      activity: [{ ts: new Date().toISOString(), action: "Invoice captured", user: myEmail }],
+    };
+  };
+
+  const runInvoiceFile = async (file) => {
+    if (invBusy || !file) return;
+    setInvBusy(true); setInvStage("Reading the invoice\u2026");
+    try {
+      const parsed = await extractInvoice(file);
+      if (parsed.error) { showToast(parsed.error, "warn"); return; }
+      setInvStage("Matching against your purchase orders\u2026");
+      const rec = buildInvoiceRecord(parsed);
+      setInvoices(p => [rec, ...p]); setInvOpenId(rec.id);
+      logActivity("Invoice captured", `${rec.supplier || "Supplier"} ${rec.invoiceNumber ? "#" + rec.invoiceNumber : ""} ${invGBP(rec.total, rec.currency)} \u2014 ${rec.match.result}`, { entity: "order", jobRef: rec.jobRef });
+      showToast(rec.match.result === "clean" ? "Invoice matched cleanly \u2014 review and approve." : "Invoice captured \u2014 discrepancies flagged for review.", rec.match.result === "mismatch" ? "warn" : "success");
+    } catch (e) {
+      showToast("Could not read that invoice: " + (e.message || "error"), "warn");
+    } finally { setInvBusy(false); setInvStage(""); }
+  };
+
+  const runInvoiceText = async () => {
+    if (invBusy) return;
+    if (!invText.trim()) { showToast("Paste the invoice text first.", "warn"); return; }
+    setInvBusy(true); setInvStage("Reading the invoice\u2026");
+    try {
+      const parsed = await extractInvoice(invText);
+      if (parsed.error) { showToast(parsed.error, "warn"); return; }
+      const rec = buildInvoiceRecord(parsed);
+      setInvoices(p => [rec, ...p]); setInvOpenId(rec.id); setInvText("");
+      logActivity("Invoice captured", `${rec.supplier || "Supplier"} ${rec.invoiceNumber ? "#" + rec.invoiceNumber : ""} ${invGBP(rec.total, rec.currency)} \u2014 ${rec.match.result}`, { entity: "order", jobRef: rec.jobRef });
+      showToast(rec.match.result === "clean" ? "Invoice matched cleanly \u2014 review and approve." : "Invoice captured \u2014 discrepancies flagged for review.", rec.match.result === "mismatch" ? "warn" : "success");
+    } catch (e) {
+      showToast("Could not read that invoice: " + (e.message || "error"), "warn");
+    } finally { setInvBusy(false); setInvStage(""); }
+  };
+
+  // Re-match an invoice against a manually chosen PO.
+  const rematchInvoice = (invId, orderId) => {
+    const order = visibleOrders.find(o => o.id === orderId) || null;
+    setInvoices(p => p.map(iv => {
+      if (iv.id !== invId) return iv;
+      const match = invMatchToOrder(iv, order);
+      const dup = (iv.match.flags || []).find(f => f.code === "duplicate");
+      if (dup) { match.flags = [dup, ...match.flags]; match.result = "mismatch"; }
+      return { ...iv, orderId: order ? order.id : null, orderPoNumber: order ? order.poNumber : "", match,
+        status: iv.status === "approved" ? "matched" : (order ? "matched" : "unmatched"),
+        activity: [{ ts: new Date().toISOString(), action: order ? `Re-matched to ${order.poNumber || "PO"}` : "PO unlinked", user: myEmail }, ...(iv.activity || [])] };
+    }));
+  };
+
+  // Approve / query / reject. Money-critical, so: a clean match can be approved by a
+  // Buyer; anything flagged (amber/red) requires a Manager and an explicit confirm.
+  const decideInvoice = (invId, status) => {
+    const iv = invoices.find(x => x.id === invId); if (!iv) return;
+    if (status === "approved") {
+      const clean = iv.match && iv.match.result === "clean";
+      if (!clean && roleRank(myRole) < 3) { showToast("This invoice has discrepancies \u2014 only a Manager can approve it.", "warn"); return; }
+      if (!clean) {
+        const reds = (iv.match.flags || []).filter(f => f.level === "red").length;
+        if (!window.confirm(`This invoice has ${reds ? reds + " blocking discrepanc" + (reds === 1 ? "y" : "ies") : "discrepancies"} flagged against the PO. Approve it for payment anyway?`)) return;
+      }
+    }
+    const labels = { approved: "Invoice approved", queried: "Invoice queried", rejected: "Invoice rejected" };
+    setInvoices(p => p.map(x => x.id === invId ? { ...x, status, decidedBy: myEmail, decidedAt: new Date().toISOString(),
+      activity: [{ ts: new Date().toISOString(), action: labels[status] || status, user: myEmail }, ...(x.activity || [])] } : x));
+    logActivity(labels[status] || "Invoice updated", `${iv.supplier || "Supplier"} ${iv.invoiceNumber ? "#" + iv.invoiceNumber : ""} ${invGBP(iv.total, iv.currency)}`, { entity: "order", jobRef: iv.jobRef });
+    showToast((labels[status] || "Updated") + ".", status === "rejected" ? "warn" : "success");
+  };
+
   // Set a project's sell price / margin-visibility (buyer+; manager-only toggle).
   const setProjectField = (jobRef, patch) => {
     const key = (jobRef || "").toString().trim();
@@ -3771,7 +4256,7 @@ OTHER: dark/light theme toggle; keyboard shortcuts (N new, Q quotes, O orders, D
 RFQ REVISIONS: a sent request can be revised and re-sent. On All Requests, tap 'Revise' on a sent request (Buyers/Managers) - it reopens in the wizard with everything pre-filled and the original suppliers/contacts selected. Edit anything, then re-send: it updates the SAME request (bumps the version, e.g. v2), re-sends to the chosen suppliers and resets their quote boxes for the new revision, rather than creating a duplicate.
 AUTOCOMPLETE: the Job reference and Site fields suggest values from your past requests as you type; the alternative-address field suggests past addresses; and the Collect-from field suggests your suppliers' branches plus places you've collected from before.
 
-O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule (with a separate spares & consumables list), manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules with their governing standards. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSUPPLIER CATALOGUES: On the 'Catalogues' tab (everyone) a user can upload a supplier's product catalogue (PDF, image or CSV) and ProQure reads it with AI into a private, searchable index of products - description, part/product number, manufacturer, pack and any printed datasheet link. Search by product, part number or supplier, then add items straight onto a new request, or open the datasheet link. Catalogues are private to the company (not shared with other companies). If a product isn't in the user's own catalogues, 'Find online' does a metered web search for the product and its official manufacturer datasheet (this uses the catalogue online-lookup allowance, like Measure/O&M web search). ProQure indexes products and keeps datasheet links rather than re-hosting supplier files.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.\n\nACCOUNTS, FREE TRIAL & GETTING SET UP: ProQure starts as a free trial - there is no card or payment needed to begin. A business gets started from the ProQure website by tapping 'Get your licence'. You then receive an email, click the link, set a password, then complete a short onboarding (company name, your contact details, main trade, team size, address, and the email address you want quotes and POs to be sent from). The first person to set a company up becomes its Manager, and each company's data is completely separate and private to that company. To bring colleagues in, a Manager opens the team settings and invites them by email as a Buyer or an Engineer; the invited person gets an email, clicks it, sets their own password, and joins the same shared workspace. If an invite email does not arrive, that person can use 'Forgot password' on the sign-in screen to set a password and still get in. There are never any API keys for anyone to enter - AI and email are managed centrally.
+O&M FILES (Operations & Maintenance manuals): On the 'O&M files' tab (Buyers/Managers) ProQure turns a project's procured materials into a presented O&M pack as a PDF - cover, contents, equipment schedule (with a separate spares & consumables list), manufacturer literature/datasheets, and planned preventative maintenance (PPM) schedules with their governing standards. Pick a project and tap Generate O&M. Two options: 'find datasheet links online' (searches each manufacturer for the exact datasheet; this uses metered web search, and is off by default) and 'also export sections separately' (download Literature and Maintenance as their own PDFs alongside the combined pack). The equipment grouping and PPM schedules are AI-drafted from the materials and clearly marked for sign-off - always review before issuing to a client.\n\nINVOICES (invoice matching): On the 'Invoices' tab (Buyers/Managers) a user uploads or pastes a supplier invoice and ProQure reads it with AI, then runs a three-way match - lining the invoice up against the purchase order it belongs to and that order's goods-receipt status (whether the PO has been marked delivered/confirmed). It auto-suggests the right PO (by any PO number quoted on the invoice, else the supplier and closest total) and you can change it from a dropdown. It flags discrepancies: unit prices above the PO, quantity differences, items on the invoice not on the PO, PO lines not invoiced, an invoice total over or under the PO, a PO not yet receipted, and possible duplicate invoices. Each invoice gets a status - To review, Approved, Queried or Rejected. A clean match can be approved by a Buyer; any invoice with discrepancies needs a Manager to approve, with an explicit confirmation. It is advisory only - ProQure never pays an invoice or posts it to an accounting system; a person always approves.\n\nREPORTS (spend reporting): On the 'Reports' tab (Buyers/Managers) ProQure shows where the money is going - total spend, order count, projects and suppliers - with breakdowns of spend by trade, by supplier and by month, plus an Export CSV button. The 'By project' tab is the manager/boss view: pick any project to see its overall cost broken down across every trade and supplier on it.\n\nMEASURE (materials estimator): On the 'Measure' tab (everyone) enter an area (or a length x height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and applying a wastage allowance, and showing the assumptions it made. You can also tick 'specific product' and have it look up the manufacturer's datasheet for the exact coverage rate (uses web search). And the 'From a drawing' mode lets you upload a scaled PDF/image drawing for a full materials take-off you can edit and turn into a request. Walking a room with the camera is coming with the native app.\n\nSUPPLIER CATALOGUES: On the 'Catalogues' tab (everyone) a user can upload a supplier's product catalogue (PDF, image or CSV) and ProQure reads it with AI into a private, searchable index of products - description, part/product number, manufacturer, pack and any printed datasheet link. Search by product, part number or supplier, then add items straight onto a new request, or open the datasheet link. Catalogues are private to the company (not shared with other companies). If a product isn't in the user's own catalogues, 'Find online' does a metered web search for the product and its official manufacturer datasheet (this uses the catalogue online-lookup allowance, like Measure/O&M web search). ProQure indexes products and keeps datasheet links rather than re-hosting supplier files.\n\nSETUP & ACCOUNTS: AI and email are fully managed for the user - there are NO API keys to enter anywhere. Never tell a user to get or paste an OpenRouter, Resend, or any other API key; that is handled centrally and the key fields no longer exist. Users sign in with email and password; their data is stored securely in the cloud against their login and syncs across all their devices. Everyone in a company shares one live view. The only one-off technical step is that the company domain needs DNS records added so ProQure can send email from the company address - this is done once by whoever manages the domain (IT/web person), not by everyday users.\n\nACCOUNTS, FREE TRIAL & GETTING SET UP: ProQure starts as a free trial - there is no card or payment needed to begin. A business gets started from the ProQure website by tapping 'Get your licence'. You then receive an email, click the link, set a password, then complete a short onboarding (company name, your contact details, main trade, team size, address, and the email address you want quotes and POs to be sent from). The first person to set a company up becomes its Manager, and each company's data is completely separate and private to that company. To bring colleagues in, a Manager opens the team settings and invites them by email as a Buyer or an Engineer; the invited person gets an email, clicks it, sets their own password, and joins the same shared workspace. If an invite email does not arrive, that person can use 'Forgot password' on the sign-in screen to set a password and still get in. There are never any API keys for anyone to enter - AI and email are managed centrally.
 
 TEAMS & ROLES (three roles, high to low: Manager, Buyer, Engineer): The workflow has a clear separation of duties. ENGINEERS raise the materials list (using the AI to parse it) and add notes for the buyer, then issue it - they do NOT see quote prices, costs, spend totals, or jobs that are not their own, and they cannot send RFQs or raise purchase orders. Engineers can later upload a photo of the delivery note and sign off delivery in the Orders tab. BUYERS get notified when an engineer issues a list; they send the RFQ to suppliers, handle the returned quotes, and raise the purchase order (a manager can require manager approval for POs - this is set during setup and can be changed in Settings). Buyers can also raise the materials list themselves if needed. MANAGERS have full access to everything, manage the team (invite by email, assign roles, up to their own level) and edit settings. The first Manager is the top account holder and cannot be removed if they are the last one. There is a first-run guided tour and a Send feedback button in the menu.
 
@@ -3995,6 +4480,8 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_orders", orders); }, [orders, queueCloudPush]);
   useEffect(()=>{ try{localStorage.setItem("piq_costs",JSON.stringify(costs))}catch{} },[costs]);
   useEffect(()=>{ queueCloudPush("piq_costs", costs); }, [costs, queueCloudPush]);
+  useEffect(()=>{ try{localStorage.setItem("piq_invoices",JSON.stringify(invoices))}catch{} },[invoices]);
+  useEffect(()=>{ queueCloudPush("piq_invoices", invoices); }, [invoices, queueCloudPush]);
   useEffect(()=>{ try{localStorage.setItem("piq_projects",JSON.stringify(projects))}catch{} },[projects]);
   useEffect(()=>{ queueCloudPush("piq_projects", projects); }, [projects, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
@@ -4178,7 +4665,7 @@ ${settings.company||""}`;
       setOmStage("Building the document\u2026");
       const project = { jobRef: proj.jobRef, name: proj.jobRef, site: proj.site,
         items: mats.length, date: new Date().toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}) };
-      await omGeneratePdf(data, project, settings, { split: omSplit, web: omOnline });
+      await omGeneratePdf(data, project, settings, { split: omSplit, web: omOnline, full: omFull });
       logActivity("O&M file generated", `O&M pack for ${proj.jobRef} (${mats.length} items)`, { entity:"order", jobRef: proj.jobRef });
       showToast("O&M file generated and downloaded.");
     } catch (e) {
@@ -4333,6 +4820,7 @@ ${settings.company||""}`;
           {id:"requests", label:"All requests",   d:"M4 6h16M4 12h10M4 18h6"},
           {id:"quotes",   label:"Quotes",         min:2, d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
+          {id:"invoices", label:"Invoices",       min:2, d:"M6 2h9l3 3v15a1 1 0 01-1.5.87L14 19l-2.5 1.5L9 19l-2.5 1.5L4 19V3a1 1 0 011-1zM9 8h6M9 12h6M9 16h3"},
           {id:"om",       label:"O&M files",      min:2, d:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M8 13h8M8 17h5"},
           {id:"reports",  label:"Reports",        min:2, d:"M3 3v18h18M7 16V9M12 16V5M17 16v-7"},
           {id:"costs",    label:"Project costs",  min:2, d:"M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"},
@@ -4346,7 +4834,7 @@ ${settings.company||""}`;
           {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
           {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
   ];
-  const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, om:2, reports:2, costs:2, team:3, settings:3 };
+  const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, om:2, reports:2, costs:2, invoices:2, team:3, settings:3 };
   const handleNav = (id) => {
     const need = VIEW_MIN_ROLE[id];
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
@@ -4462,6 +4950,7 @@ ${settings.company||""}`;
       {q:"Can I split the O&M into separate files?", a:"Yes. Tick 'also export sections separately' and ProQure downloads the Literature and Maintenance sections as their own PDFs in addition to the single combined pack."},
       {q:"What's in the Reports tab?", a:"Reports (Buyers and Managers) shows total spend, order count, projects and suppliers, with spend broken down by trade, by supplier and by month, and a CSV export. The 'By project' tab is the manager view: pick a project to see its total cost split across every trade and supplier on it."},
       {q:"How is spend worked out?", a:"From your orders. ProQure adds up the line totals on each PO (falling back to the PO's estimated total), and ignores cancelled orders. Trade comes from the request the order was raised from."},
+      {q:"How does invoice matching work?", a:"On the Invoices tab (Buyers and Managers), upload or paste a supplier invoice and ProQure reads it and matches it against the purchase order it belongs to and that order's goods-receipt status - a three-way match. It auto-picks the likely PO and you can change it from the dropdown. It flags anything that doesn't reconcile: prices above the PO, quantity differences, items not on the PO, lines not invoiced, a total over or under the PO, a PO not yet marked delivered, and likely duplicates. A clean match can be approved by a Buyer; anything flagged needs a Manager to approve. It's advisory - always sense-check the figures, and note ProQure never pays or posts the invoice anywhere; a person always approves."},
       {q:"What does the Measure tab do?", a:"Enter an area (or a length and height) and pick a material, and ProQure works out how much to order and how many packs, using standard UK coverage rates and a wastage allowance, and shows the assumptions it used. It's an estimate - always sense-check before ordering. It can also look up a specific product's datasheet for the exact coverage rate, and the 'From a drawing' mode does a full materials take-off from an uploaded PDF/image drawing that you can edit and turn into a request. Camera room-scanning is coming with the native app."},
       {q:"Can ProQure read a drawing and list the materials?", a:"Yes - that's the 'From a drawing' mode on the Measure tab. Upload a scaled PDF or image of the drawing and ProQure does a materials take-off of the items shown, then gives you an editable list you can adjust and turn straight into a request. It reads PDFs and images, not raw DWG/CAD files, so export a DWG to PDF first. The list is an AI draft - always check it against the drawing before ordering."},
       {q:"Can Measure use a specific product's real coverage rate?", a:"Yes. In 'By dimensions', type the product or brand and tick 'look up the manufacturer's datasheet', and ProQure web-searches that product's datasheet for its published coverage rate and bases the quantity on it, with a source link. That option uses web search (a small per-use cost) so it's off by default; left off, it uses standard UK coverage rates."},
@@ -6932,6 +7421,176 @@ Rules:
           </div>
         )}
 
+        {view==="invoices"&&(()=>{
+          const RES = {
+            clean:    { label:"Clean match", color:"#15824F", bg:"#EAF3EE" },
+            review:   { label:"Needs review", color:"#9A5B16", bg:"#FBF3E8" },
+            mismatch: { label:"Discrepancy", color:"#B23B3B", bg:"#FBECEC" },
+          };
+          const ST = {
+            unmatched:{ label:"No PO", color:"#6B6A62", bg:"#EEF1F4" },
+            matched:  { label:"To review", color:"#4A4AB8", bg:"#EEEEFB" },
+            approved: { label:"Approved", color:"#15824F", bg:"#EAF3EE" },
+            queried:  { label:"Queried", color:"#9A5B16", bg:"#FBF3E8" },
+            rejected: { label:"Rejected", color:"#B23B3B", bg:"#FBECEC" },
+          };
+          const toReview = invoices.filter(i=>i.status==="matched"||i.status==="unmatched").length;
+          const flagDot = (lvl)=> lvl==="red"?"#B23B3B":(lvl==="amber"?"#C77D2E":"#15824F");
+          return (
+          <div style={{maxWidth:920,margin:"0 auto",padding:isMobile?"4px 0 40px":"8px 0 60px"}}>
+            <div style={{marginBottom:6}}>
+              <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em",margin:0}}>Invoices</h1>
+              <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 0",maxWidth:660,lineHeight:1.5}}>
+                Capture a supplier invoice and ProQure lines it up against the purchase order and its goods-receipt status, flagging any price, quantity or total it can&rsquo;t reconcile. Every invoice is approved by a person &mdash; nothing here pays or posts anywhere.
+              </p>
+            </div>
+
+            {/* Capture */}
+            <div style={{margin:"18px 0 22px",padding:isMobile?"14px":"18px 20px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)"}}>
+              <div style={{display:"flex",gap:8,marginBottom:14}}>
+                {[["file","Upload"],["text","Paste text"]].map(([m,l])=>(
+                  <button key={m} onClick={()=>setInvMode(m)} disabled={invBusy} style={{padding:"7px 14px",borderRadius:"var(--radius-sm)",border:"1px solid "+(invMode===m?"var(--green)":"var(--border)"),background:invMode===m?"var(--green)":"transparent",color:invMode===m?"white":"var(--text-muted)",fontSize:13,fontWeight:600,cursor:invBusy?"default":"pointer"}}>{l}</button>
+                ))}
+              </div>
+              {invMode==="file" ? (
+                <label style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:"26px 16px",border:"1.5px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:invBusy?"default":"pointer",background:"var(--bg-subtle)"}}>
+                  <Icon name="paperclip" size={20} color="var(--text-muted)"/>
+                  <span style={{fontSize:13.5,fontWeight:600,color:"var(--text-primary)"}}>Drop or choose an invoice</span>
+                  <span style={{fontSize:12,color:"var(--text-muted)"}}>PDF, photo or CSV &mdash; the AI reads it</span>
+                  <input type="file" accept=".pdf,image/*,.csv,.txt" disabled={invBusy} onChange={e=>{const f=e.target.files&&e.target.files[0]; e.target.value=""; if(f) runInvoiceFile(f);}} style={{display:"none"}}/>
+                </label>
+              ) : (
+                <div>
+                  <textarea value={invText} disabled={invBusy} onChange={e=>setInvText(e.target.value)} placeholder="Paste the invoice text here — supplier, invoice number, lines, totals…" rows={6} style={{width:"100%",boxSizing:"border-box",padding:"12px 14px",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",fontSize:13.5,fontFamily:"inherit",resize:"vertical",background:"var(--bg-subtle)",color:"var(--text-primary)"}}/>
+                  <div style={{marginTop:10}}>
+                    <button onClick={runInvoiceText} disabled={invBusy||!invText.trim()} style={{padding:"9px 18px",background:"var(--green)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:13.5,fontWeight:600,cursor:(invBusy||!invText.trim())?"default":"pointer",opacity:(invBusy||!invText.trim())?0.5:1}}>Read invoice</button>
+                  </div>
+                </div>
+              )}
+              {invBusy && <div style={{display:"flex",alignItems:"center",gap:8,marginTop:12,fontSize:12.5,color:"var(--green)",fontWeight:600}}><Spinner/>{invStage||"Working\u2026"}</div>}
+            </div>
+
+            {invoices.length===0 ? (
+              <div style={{textAlign:"center",padding:"60px 20px",background:"var(--bg-card)",border:"1px dashed var(--border)",borderRadius:"var(--radius-lg)"}}>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)"}}>No invoices captured yet</div>
+                <div style={{fontSize:13,color:"var(--text-muted)",marginTop:6,maxWidth:440,marginLeft:"auto",marginRight:"auto",lineHeight:1.5}}>Upload or paste a supplier invoice above. ProQure will match it to the purchase order it belongs to and flag anything that doesn&rsquo;t add up.</div>
+              </div>
+            ) : (<>
+              {toReview>0 && <div style={{fontSize:12.5,color:"var(--text-muted)",margin:"0 0 12px",fontWeight:600}}>{toReview} invoice{toReview===1?"":"s"} awaiting review</div>}
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {invoices.map(iv=>{
+                  const res = RES[iv.match?.result] || RES.review;
+                  const st = ST[iv.status] || ST.matched;
+                  const open = invOpenId===iv.id;
+                  const order = visibleOrders.find(o=>o.id===iv.orderId)||null;
+                  const reds = (iv.match?.flags||[]).filter(f=>f.level==="red").length;
+                  const ambers = (iv.match?.flags||[]).filter(f=>f.level==="amber").length;
+                  return (
+                  <div key={iv.id} style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)",overflow:"hidden"}}>
+                    <div onClick={()=>setInvOpenId(open?null:iv.id)} style={{display:"flex",flexDirection:isMobile?"column":"row",alignItems:isMobile?"stretch":"center",gap:12,padding:"14px 16px",cursor:"pointer"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",letterSpacing:"-0.01em"}}>{iv.supplier||"Unknown supplier"}</span>
+                          {iv.invoiceNumber && <span style={{fontSize:12,color:"var(--text-muted)",fontFamily:"monospace"}}>#{iv.invoiceNumber}</span>}
+                        </div>
+                        <div style={{fontSize:12.5,color:"var(--text-muted)",marginTop:3}}>
+                          {iv.invoiceDate?`${iv.invoiceDate} · `:""}{iv.orderPoNumber?`PO ${iv.orderPoNumber}`:"no PO matched"}{iv.jobRef?` · ${iv.jobRef}`:""}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{invGBP(iv.total, iv.currency)}</span>
+                        <span style={{fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:20,color:res.color,background:res.bg}}>{res.label}{reds?` · ${reds}`:""}</span>
+                        <span style={{fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:20,color:st.color,background:st.bg}}>{st.label}</span>
+                      </div>
+                    </div>
+
+                    {open && (
+                    <div style={{borderTop:"1px solid var(--border)",padding:"14px 16px",background:"var(--bg-subtle)"}}>
+                      {/* PO selector + goods receipt */}
+                      <div style={{display:"flex",flexDirection:isMobile?"column":"row",gap:10,alignItems:isMobile?"stretch":"center",marginBottom:14}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:11,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:4}}>Matched purchase order</div>
+                          <select value={iv.orderId||""} onChange={e=>rematchInvoice(iv.id, e.target.value)} style={{width:"100%",padding:"8px 10px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,background:"var(--bg-card)",color:"var(--text-primary)"}}>
+                            <option value="">— no PO (manual) —</option>
+                            {visibleOrders.filter(o=>o.status!=="cancelled").map(o=>(
+                              <option key={o.id} value={o.id}>{(o.poNumber||"PO")+" · "+(o.supplier||"")+(o.jobRef?" · "+o.jobRef:"")+" · "+invGBP(orderTotal(o))}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div style={{minWidth:isMobile?"auto":180}}>
+                          <div style={{fontSize:11,fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:4}}>Goods receipt</div>
+                          <div style={{fontSize:13,fontWeight:600,color:(order&&(order.status==="delivered"||order.status==="confirmed"))?"#15824F":"#C77D2E"}}>
+                            {order?((order.status==="delivered"||order.status==="confirmed")?"Confirmed on site":"Awaiting receipt"):"No PO linked"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Flags */}
+                      {(iv.match?.flags||[]).length>0 && (
+                        <div style={{marginBottom:14,display:"flex",flexDirection:"column",gap:6}}>
+                          {iv.match.flags.map((f,i)=>(
+                            <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,fontSize:12.5,color:"var(--text-primary)",lineHeight:1.45}}>
+                              <span style={{flexShrink:0,width:8,height:8,borderRadius:8,marginTop:4,background:flagDot(f.level)}}/>
+                              <span>{f.msg}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Line-by-line */}
+                      <div style={{overflowX:"auto",marginBottom:12}}>
+                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5,minWidth:isMobile?460:"auto"}}>
+                          <thead><tr style={{textAlign:"left",color:"var(--text-muted)"}}>
+                            <th style={{padding:"6px 8px",fontWeight:700}}>Item</th>
+                            <th style={{padding:"6px 8px",fontWeight:700,textAlign:"right"}}>Invoice</th>
+                            <th style={{padding:"6px 8px",fontWeight:700,textAlign:"right"}}>PO</th>
+                            <th style={{padding:"6px 8px",fontWeight:700}}>Note</th>
+                          </tr></thead>
+                          <tbody>
+                            {(iv.match?.lineMatches||[]).map((lm,i)=>{
+                              const lvl = (lm.flags||[]).some(f=>f.level==="red")?"red":((lm.flags||[]).some(f=>f.level==="amber")?"amber":"green");
+                              const il=lm.invoice, pl=lm.po;
+                              const cell=(l,c)=> l ? `${l.qty!=null?l.qty+"×":""}${l.unitPrice!=null?invGBP(l.unitPrice,c):(l.lineTotal!=null?invGBP(l.lineTotal,c):"—")}` : "—";
+                              return (
+                              <tr key={i} style={{borderTop:"1px solid var(--border)"}}>
+                                <td style={{padding:"7px 8px",color:"var(--text-primary)"}}>{(il&&il.description)||(pl&&pl.description)||"—"}</td>
+                                <td style={{padding:"7px 8px",textAlign:"right",color:"var(--text-primary)",fontFamily:"monospace"}}>{cell(il, iv.currency)}</td>
+                                <td style={{padding:"7px 8px",textAlign:"right",color:"var(--text-muted)",fontFamily:"monospace"}}>{cell(pl)}</td>
+                                <td style={{padding:"7px 8px"}}><span style={{display:"inline-flex",alignItems:"center",gap:5,color:lvl==="red"?"#B23B3B":(lvl==="amber"?"#9A5B16":"#15824F"),fontWeight:600}}><span style={{width:7,height:7,borderRadius:7,background:flagDot(lvl)}}/>{(lm.flags&&lm.flags[0]&&lm.flags[0].msg)||"OK"}</span></td>
+                              </tr>);
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Totals */}
+                      <div style={{display:"flex",justifyContent:"flex-end",gap:18,fontSize:13,padding:"8px 8px 14px",borderTop:"1px solid var(--border)"}}>
+                        <span style={{color:"var(--text-muted)"}}>PO total <b style={{color:"var(--text-primary)"}}>{invGBP(iv.match?.poTotal)}</b></span>
+                        <span style={{color:"var(--text-muted)"}}>Invoice total <b style={{color:"var(--text-primary)"}}>{invGBP(iv.match?.total, iv.currency)}</b></span>
+                        {iv.match?.variance!=null && <span style={{color:iv.match.variance>0.01?"#B23B3B":(iv.match.variance<-0.01?"#9A5B16":"#15824F"),fontWeight:700}}>{(iv.match.variance>=0?"+":"")+(iv.match.variance*100).toFixed(1)}%</span>}
+                      </div>
+
+                      {/* Decision */}
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+                        {iv.status!=="approved" && (iv.match?.result==="clean" || roleRank(myRole)>=3) && <button onClick={()=>decideInvoice(iv.id,"approved")} style={{padding:"9px 18px",background:"var(--green)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Approve</button>}
+                        {iv.status!=="queried" && <button onClick={()=>decideInvoice(iv.id,"queried")} style={{padding:"9px 16px",background:"transparent",color:"#9A5B16",border:"1px solid #E4C896",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Query supplier</button>}
+                        {iv.status!=="rejected" && <button onClick={()=>decideInvoice(iv.id,"rejected")} style={{padding:"9px 16px",background:"transparent",color:"#B23B3B",border:"1px solid #E6B9B9",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Reject</button>}
+                        {iv.decidedBy && <span style={{fontSize:12,color:"var(--text-muted)",marginLeft:"auto"}}>{(ST[iv.status]||{}).label} by {iv.decidedBy}</span>}
+                      </div>
+                      {iv.match?.result!=="clean" && roleRank(myRole)<3 && iv.status!=="approved" && (
+                        <div style={{fontSize:11.5,color:"var(--text-muted)",marginTop:8}}>This invoice has discrepancies &mdash; a Manager is required to approve it.</div>
+                      )}
+                    </div>)}
+                  </div>);
+                })}
+              </div>
+            </>)}
+
+            <p style={{fontSize:11.5,color:"var(--text-muted)",marginTop:18,lineHeight:1.5}}>
+              Matching is advisory and read from the document by AI &mdash; always sense-check flagged figures against the invoice itself before approving. ProQure does not pay invoices or post them to an accounting system.
+            </p>
+          </div>);
+        })()}
         {view==="om"&&(()=>{
           const projects = Object.values((orders||[]).filter(o=>o.status!=="cancelled").reduce((acc,o)=>{
             const k=(o.jobRef||"").trim()||"(no job reference)";
@@ -6945,12 +7604,19 @@ Rules:
             <div style={{marginBottom:6}}>
               <h1 style={{fontSize:isMobile?22:26,fontWeight:800,color:"var(--text-primary)",letterSpacing:"-0.02em",margin:0}}>O&amp;M files</h1>
               <p style={{fontSize:14,color:"var(--text-muted)",margin:"6px 0 0",maxWidth:620,lineHeight:1.5}}>
-                Turn a project&rsquo;s procured materials into a presented Operations &amp; Maintenance pack &mdash; equipment schedule, manufacturer literature, and planned maintenance schedules &mdash; in one PDF.
+                Turn a project&rsquo;s procured materials into a presented Operations &amp; Maintenance pack &mdash; cover, equipment schedule, literature, maintenance schedules, asset register, warranties, plus insert sheets for test certificates, as-fitted drawings, training and client acceptance &mdash; in one PDF.
               </p>
             </div>
 
             {/* Options */}
             <div style={{display:"flex",flexDirection:isMobile?"column":"row",gap:10,margin:"18px 0 22px"}}>
+              <label style={{flex:1,display:"flex",gap:10,alignItems:"flex-start",padding:"13px 15px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
+                <input type="checkbox" checked={omFull} disabled={omBusy} onChange={e=>setOmFull(e.target.checked)} style={{marginTop:2,accentColor:"var(--green)",width:16,height:16}}/>
+                <span>
+                  <span style={{display:"block",fontSize:13.5,fontWeight:600,color:"var(--text-primary)"}}>Full O&amp;M structure</span>
+                  <span style={{display:"block",fontSize:12,color:"var(--text-muted)",marginTop:2,lineHeight:1.45}}>Adds asset register, warranties, training register, client acceptance form, and insert sheets for test certs &amp; as-fitted drawings. Off = the slim equipment / literature / maintenance pack only.</span>
+                </span>
+              </label>
               <label style={{flex:1,display:"flex",gap:10,alignItems:"flex-start",padding:"13px 15px",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
                 <input type="checkbox" checked={omWeb} disabled={omBusy} onChange={e=>setOmWeb(e.target.checked)} style={{marginTop:2,accentColor:"var(--green)",width:16,height:16}}/>
                 <span>
