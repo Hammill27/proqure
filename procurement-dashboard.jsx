@@ -320,13 +320,18 @@ async function authHeaders() {
   } catch (e) { return {}; }
 }
 
+// Vision-capable models (OpenRouter slugs), newest-first. Gemini 1.5 / 2.0 Flash
+// were retired by mid-2026, so image reads use 2.5 / 3.5 Flash with a cross-provider
+// safety net. /api/ai also forces a vision model for any image request as a backstop.
+const VISION_MODELS = ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "openai/gpt-4o-mini"];
+
 async function callAI(system, user, history=[], temperature=0.1) {
   if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
   const models = [
     "deepseek/deepseek-chat",
     "meta-llama/llama-3.1-8b-instruct",
     "mistralai/mistral-7b-instruct",
-    "google/gemini-flash-1.5",
+    "google/gemini-2.5-flash-lite",
   ];
   const messages = [
     {role:"system",content:system},
@@ -439,7 +444,7 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
   ];
   try {
     if (!aiBudgetOk()) return null;
-    const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json", ...(await authHeaders())}, body: JSON.stringify({ messages, models:["google/gemini-flash-1.5"], temperature:0.1, companyId: __companyId }) });
+    const res = await fetch("/api/ai", { method:"POST", headers:{"Content-Type":"application/json", ...(await authHeaders())}, body: JSON.stringify({ messages, models:VISION_MODELS, temperature:0.1, companyId: __companyId }) });
     if (!res.ok) return null;
     const d = await res.json();
     reportAiUsage(d.cost, false);
@@ -2344,7 +2349,7 @@ Always return the JSON, even if the list is short.`;
       method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({
         messages: [{ role: "system", content: sys }, { role: "user", content: userContent }],
-        models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"],
+        models: VISION_MODELS,
         temperature: 0,
         companyId: __companyId,
       }),
@@ -2397,7 +2402,7 @@ Always return the JSON, even if the list is short.`;
       }
       if (!imageUrls.length) return { error: "Couldn't read that file \u2014 try a clearer PDF or image." };
       const userContent = [...imageUrls.map(url => ({ type: "image_url", image_url: { url } })), { type: "text", text: "Extract the products from this catalogue." }];
-      const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0, companyId: __companyId }) });
+      const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: VISION_MODELS, temperature: 0, companyId: __companyId }) });
       if (r.status === 402) return { error: AI_BUDGET_MSG };
       if (!r.ok) return { error: "The AI couldn't read that catalogue \u2014 try a clearer PDF or image." };
       const j = await r.json(); reportAiUsage(j.cost, false); text = j.text || "";
@@ -2633,7 +2638,7 @@ Always return the JSON, even if some fields are blank.`;
         }
         if (!imageUrls.length) return { error: "Couldn't read that file \u2014 try a clearer PDF or image." };
         const userContent = [...imageUrls.map(url => ({ type: "image_url", image_url: { url } })), { type: "text", text: "Extract this invoice." }];
-        const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: ["google/gemini-2.5-flash", "google/gemini-flash-1.5"], temperature: 0, companyId: __companyId }) });
+        const r = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ messages: [{ role: "system", content: sys }, { role: "user", content: userContent }], models: VISION_MODELS, temperature: 0, companyId: __companyId }) });
         if (r.status === 402) return { error: AI_BUDGET_MSG };
         if (!r.ok) return { error: "The AI couldn't read that invoice \u2014 try a clearer PDF or image." };
         const j = await r.json(); reportAiUsage(j.cost, false); text = j.text || "";
@@ -3578,7 +3583,7 @@ function ProQureApp({ session, companyId }) {
       if (!imageUrls.length) { showToast("Couldn't read that document - try a clearer photo","warn"); return null; }
       const sys = `You read UK construction/trades order documents (supplier quotes, delivery notes, handwritten lists). Extract the order as plain text: one line per item as "[quantity] [unit] [description]". If a supplier name or an agreed total price is visible, add lines "SUPPLIER: <name>" and "TOTAL: <amount>". No preamble, just the lines.`;
       const userMsg = { role:"user", content:[ ...imageUrls.map(url=>({type:"image_url",image_url:{url}})), {type:"text",text:"Extract this order."} ] };
-      const models = [ "google/gemini-2.5-flash", "google/gemini-flash-1.5" ];
+      const models = VISION_MODELS;
       let extracted="";
       try {
         if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
@@ -5132,19 +5137,19 @@ Rules:
 - Do NOT include labour, costs, prices, or non-material items
 - Do NOT add any explanation or preamble — just the list`;
 
-      let content;
+      let imageUrls = [];
       if (isImage) {
-        content = [
-          { type: "image_url", image_url: { url: `data:${file.type};base64,${base64}` } },
-          { type: "text", text: "Extract all material items from this document as a plain list." }
-        ];
+        imageUrls = [`data:${file.type};base64,${base64}`];
       } else {
-        // PDF — send as text extraction prompt
-        content = `I have a PDF document. Here is the base64 content. Please extract all material items: ${base64.slice(0, 8000)}`;
+        // PDF: rasterise the first pages to images so the vision model can read them.
+        imageUrls = await pdfToImages(file, 4);
       }
-
-      const userMsg = { role: "user", content: isImage ? content : (typeof content === "string" ? content : JSON.stringify(content)) };
-      const scanModels = [ isImage ? "google/gemini-flash-1.5" : "deepseek/deepseek-chat" ];
+      if (!imageUrls.length) throw new Error("No items found in document");
+      const userMsg = { role: "user", content: [
+        ...imageUrls.map(url => ({ type: "image_url", image_url: { url } })),
+        { type: "text", text: "Extract all material items from this document as a plain list." }
+      ] };
+      const scanModels = VISION_MODELS;
       let extracted = "";
       // Preferred path: central server key via /api/ai (no user key needed).
       try {
