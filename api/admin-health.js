@@ -215,7 +215,7 @@ async function checkAiModels() {
   if (!OPENROUTER_KEY) return mk("AI models", "unconfigured", "OPENROUTER_API_KEY not set.");
   const VISION = ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "openai/gpt-4o-mini"];
   const WEB    = ["google/gemini-2.5-flash", "google/gemini-3.1-flash-lite"];
-  const TEXT   = ["deepseek/deepseek-chat", "meta-llama/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct", "google/gemini-2.5-flash-lite"];
+  const TEXT   = ["deepseek/deepseek-chat", "meta-llama/llama-3.1-8b-instruct", "google/gemini-2.5-flash-lite"];
   try {
     const { res, ms } = await timedFetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: "Bearer " + OPENROUTER_KEY } }, 6000);
     if (!res.ok) return mk("AI models", "degraded", "Couldn't fetch OpenRouter's model list (" + res.status + ") - can't confirm slugs right now.", [], ms);
