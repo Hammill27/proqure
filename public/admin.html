@@ -307,7 +307,7 @@ const fmtDate = (iso)=>{ if(!iso)return "-"; const d=new Date(iso); return isNaN
 const fmtAgo = (iso)=>{ if(!iso)return "never"; const ms=Date.now()-new Date(iso).getTime(); if(isNaN(ms))return "-"; const d=Math.floor(ms/86400000); if(d<=0)return "today"; if(d===1)return "yesterday"; if(d<30)return d+"d ago"; return Math.floor(d/30)+"mo ago"; };
 const fmtMoney = (usd)=>{ const n=Number(usd||0)*USD_TO_GBP; if(!n) return "\u00A30.00"; return n<1 ? "\u00A3"+n.toFixed(4) : "\u00A3"+n.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2}); };
 const fmtBytes = (b)=>{ b=Number(b||0); if(!b) return "0 KB"; if(b<1024) return b+" B"; if(b<1048576) return (b/1024).toFixed(b<10240?1:0)+" KB"; if(b<1073741824) return (b/1048576).toFixed(b<10485760?2:1)+" MB"; return (b/1073741824).toFixed(2)+" GB"; };
-const STORE_LABEL={piq_requests:"Requests",piq_orders:"Orders",piq_suppliers:"Suppliers",piq_hires:"Hires",piq_quote_sets:"Quote sets",piq_quote_library:"Library",piq_templates:"Templates",piq_activity:"Activity",piq_settings:"Settings",piq_usage:"Usage",piq_team:"Team",piq_email_events:"Events",piq_email_stats:"Email stats",piq_admin_audit:"Audit"};
+const STORE_LABEL={piq_requests:"Requests",piq_orders:"Orders",piq_suppliers:"Suppliers",piq_hires:"Hires",piq_quote_sets:"Quote sets",piq_quote_library:"Library",piq_templates:"Templates",piq_activity:"Activity",piq_settings:"Settings",piq_usage:"Usage",piq_team:"Team",piq_email_events:"Events",piq_email_stats:"Email stats",piq_admin_audit:"Audit",piq_costs:"Project costs",piq_projects:"Project setup"};
 const pct = (a,b)=> b>0 ? Math.round(a/b*100)+"%" : "\u2014";
 const EVT_LABEL={ 'received':'Reply received','received-unmatched':'Unmatched reply','sent':'Sent','delivered':'Delivered','bounced':'Bounced','complained':'Spam complaint' };
 function coName(id){ const c=DATA&&DATA.companies&&DATA.companies.find(x=>x.companyId===id); return c?c.name:(id==='platform-email'?'(unmatched)':id); }
@@ -342,7 +342,7 @@ function ic(name){ return '<span class="ic">'+(ICON[name]||"")+'</span>'; }
 let sb=null, session=null, DATA=null, currentTab="overview", search="", companyPlanFilter="";
 let sortKey="", sortDir=-1;
 function sortBy(k){ if(sortKey===k) sortDir=-sortDir; else { sortKey=k; sortDir=(k==="name"||k==="plan")?1:-1; } render(); }
-const SORT_GET={ name:c=>(c.name||"").toLowerCase(), plan:c=>c.plan||"", users:c=>c.userCount||0, suppliers:c=>c.counts.suppliers||0, orders:c=>c.counts.orders||0, quotes:c=>c.counts.quotes||0, reqs:c=>c.counts.requests||0, mrr:c=>c.mrr||0, aimo:c=>c.aiMonthGbp||0, aipct:c=>c.aiBudgetPct||0, spend:c=>c.aiSpend||0, storage:c=>c.storageBytes||0, emails:c=>(c.email&&c.email.sent)||0, replies:c=>(c.replies&&c.replies.suppliersReplied)||0, last:c=>Date.parse(c.lastActive||0)||0 };
+const SORT_GET={ name:c=>(c.name||"").toLowerCase(), plan:c=>c.plan||"", users:c=>c.userCount||0, suppliers:c=>c.counts.suppliers||0, orders:c=>c.counts.orders||0, quotes:c=>c.counts.quotes||0, costs:c=>c.counts.costs||0, reqs:c=>c.counts.requests||0, mrr:c=>c.mrr||0, aimo:c=>c.aiMonthGbp||0, aipct:c=>c.aiBudgetPct||0, spend:c=>c.aiSpend||0, storage:c=>c.storageBytes||0, emails:c=>(c.email&&c.email.sent)||0, replies:c=>(c.replies&&c.replies.suppliersReplied)||0, last:c=>Date.parse(c.lastActive||0)||0 };
 function applySort(list){ const get=SORT_GET[sortKey]; if(!get) return list; return [...list].sort((a,b)=>{ const x=get(a),y=get(b); return (x<y?-1:x>y?1:0)*sortDir; }); }
 function th(label,k,cls){ return '<th class="'+(cls||"")+(k?" sortable":"")+'"'+(k?' onclick="sortBy(\''+k+'\')"':"")+'>'+label+(sortKey===k?(sortDir>0?" \u25B4":" \u25BE"):"")+'</th>'; }
 window.sortBy=sortBy;
@@ -457,6 +457,7 @@ function renderOverview(){
     '<div class="strip">'+
       stat(k.signupsLast30d,"Signups (30d)","goTab('signups')")+stat(k.activeLast7d,"Active (7d)","goTab('companies')")+stat(k.totalSuppliers,"Suppliers","goTab('companies')")+
       stat(k.totalRequests,"Requests")+stat(k.totalQuotes,"Quote analyses")+stat(k.totalOrders,"Orders")+
+      stat(k.totalCostEntries||0,"Cost entries","goTab('costs')")+stat((k.companiesUsingCosts||0)+"/"+k.totalCompanies,"Using cost tracking","goTab('companies')")+
     '</div>'+
     '<div class="cols">'+
       '<div class="panel"><h2>Signups <span class="hint">last 14 days</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div>'+
@@ -502,11 +503,12 @@ function renderCompanies(){
     '<td class="num">'+c.userCount+'</td>'+
     '<td class="num hide">'+c.counts.suppliers+'</td>'+
     '<td class="num">'+c.counts.orders+'</td>'+
+    '<td class="num hide">'+(c.counts.costs||0)+'</td>'+
     '<td class="num hide">'+c.counts.quotes+'</td>'+
     '<td class="num">\u00A3'+(c.mrr||0)+'</td>'+
     '<td class="num">'+aiCell(c)+'</td>'+
     '<td class="hide muted">'+fmtAgo(c.lastActive)+'</td></tr>').join("")
-    || '<tr><td colspan="9" class="muted" style="padding:26px;text-align:center">No companies match.</td></tr>';
+    || '<tr><td colspan="10" class="muted" style="padding:26px;text-align:center">No companies match.</td></tr>';
   const FILTERS=[["","All plans"],["trial","Trial"],["paid","Paid (any tier)"],["sole","Sole"],["team","Team"],["business","Business"],["enterprise","Enterprise"],["past_due","Past due"],["cancelled","Cancelled"],["suspended","Suspended"]];
   $("view").innerHTML=
     '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' compan'+(list.length===1?"y":"ies")+' &middot; click a column to sort</div>'+
@@ -516,7 +518,7 @@ function renderCompanies(){
       '<button class="btn btn-ghost btn-sm" id="csvBtn" title="Download the filtered list as CSV">Export CSV</button>'+
     '</div></div>'+
     '<div class="panel" style="padding:6px 10px"><table><thead><tr>'+
-      th("Company","name")+th("Plan","plan")+th("Users","users","num")+th("Suppliers","suppliers","num hide")+th("Orders","orders","num")+th("Quotes","quotes","num hide")+th("MRR","mrr","num")+th("AI (month)","aimo","num")+th("Last active","last","hide")+
+      th("Company","name")+th("Plan","plan")+th("Users","users","num")+th("Suppliers","suppliers","num hide")+th("Orders","orders","num")+th("Costs","costs","num hide")+th("Quotes","quotes","num hide")+th("MRR","mrr","num")+th("AI (month)","aimo","num")+th("Last active","last","hide")+
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
   $("coSearch").addEventListener("input",e=>{ search=e.target.value; const p=e.target.selectionStart; renderCompanies(); const x=$("coSearch"); x.focus(); x.setSelectionRange(p,p); });
   $("coFilter").addEventListener("change",e=>{ companyPlanFilter=e.target.value; renderCompanies(); });
@@ -524,8 +526,8 @@ function renderCompanies(){
   document.querySelectorAll("#view tr.crow").forEach(r=>r.addEventListener("click",()=>openCompany(DATA.companies[+r.dataset.i])));
 }
 function exportCompaniesCsv(list){
-  const cols=["name","plan","subscriptionStatus","mrr","userCount","orders","requests","quotes","suppliers","hires","aiMonthGbp","aiBudgetGbp","aiBudgetPct","aiSpendTotalGbp","emailsSent","storageBytes","fromEmail","trade","createdAt","lastActive","companyId"];
-  const row=(c)=>[c.name,c.plan,c.subscriptionStatus,c.mrr||0,c.userCount,c.counts.orders,c.counts.requests,c.counts.quotes,c.counts.suppliers,c.counts.hires,(c.aiMonthGbp||0).toFixed(2),c.aiBudgetGbp||0,(c.aiBudgetPct||0)+"%",((c.aiSpend||0)*USD_TO_GBP).toFixed(2),(c.email&&c.email.sent)||0,c.storageBytes||0,c.fromEmail||"",c.trade||"",c.createdAt||"",c.lastActive||"",c.companyId];
+  const cols=["name","plan","subscriptionStatus","mrr","userCount","orders","requests","quotes","costs","suppliers","hires","aiMonthGbp","aiBudgetGbp","aiBudgetPct","aiSpendTotalGbp","emailsSent","storageBytes","fromEmail","trade","createdAt","lastActive","companyId"];
+  const row=(c)=>[c.name,c.plan,c.subscriptionStatus,c.mrr||0,c.userCount,c.counts.orders,c.counts.requests,c.counts.quotes,c.counts.costs||0,c.counts.suppliers,c.counts.hires,(c.aiMonthGbp||0).toFixed(2),c.aiBudgetGbp||0,(c.aiBudgetPct||0)+"%",((c.aiSpend||0)*USD_TO_GBP).toFixed(2),(c.email&&c.email.sent)||0,c.storageBytes||0,c.fromEmail||"",c.trade||"",c.createdAt||"",c.lastActive||"",c.companyId];
   const q=(v)=>{ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
   const csv=[cols.join(",")].concat(list.map(c=>row(c).map(q).join(","))).join("\n");
   const a=document.createElement("a");
@@ -654,7 +656,7 @@ function openCompany(c){
       '<div class="sec-title">Details</div><div class="meta">'+
         meta("Onboarded",c.onboarded?"Yes":"No")+meta("Primary trade",c.trade)+meta("Team size",c.teamSize)+meta("Reply-to",c.fromEmail)+meta("Address",c.address)+meta("VAT no.",c.vat)+meta("Company reg.",c.companyReg)+meta("Created",fmtDate(c.createdAt))+meta("Last active",fmtAgo(c.lastActive))+meta("Pending invites",c.pendingInvites)+
       '</div>'+
-      '<div class="sec-title">Usage</div><div class="countpills">'+cp(c.counts.orders,"Orders")+cp(c.counts.requests,"Requests")+cp(c.counts.quotes,"Quotes")+cp(c.counts.suppliers,"Suppliers")+cp(c.counts.hires,"Hires")+cp(c.counts.library,"Library")+cp(c.counts.templates,"Templates")+cp(c.counts.activity,"Activity")+'</div>'+
+      '<div class="sec-title">Usage</div><div class="countpills">'+cp(c.counts.orders,"Orders")+cp(c.counts.requests,"Requests")+cp(c.counts.quotes,"Quotes")+cp(c.counts.costs||0,"Cost entries")+cp(c.counts.suppliers,"Suppliers")+cp(c.counts.hires,"Hires")+cp(c.counts.library,"Library")+cp(c.counts.activity,"Activity")+'</div>'+
       '<div class="sec-title">Cost &amp; email</div><div class="countpills">'+cp(fmtMoney(c.aiSpend),"AI spend")+cp(c.aiCalls||0,"AI calls")+cp(c.webCalls||0,"Web search")+cp(c.email.sent||0,"Emails")+cp(c.email.delivered||0,"Delivered")+cp(c.email.bounced||0,"Bounced")+cp(c.email.complained||0,"Spam")+cp(fmtAgo(c.email.lastEventAt),"Last email")+'</div>'+
       '<div class="sec-title">Supplier replies <span style="font-weight:500;text-transform:none;letter-spacing:0">(metadata only)</span></div><div class="countpills">'+cp(c.replies.rfqsSent||0,"RFQs sent")+cp(c.replies.suppliersEmailed||0,"Suppliers")+cp(c.replies.suppliersReplied||0,"Replied")+cp(pct(c.replies.suppliersReplied,c.replies.suppliersEmailed),"Reply rate")+cp(c.email.received||0,"Received")+cp(c.email.receivedAttachments||0,"Attachments")+cp(c.replies.repliesByAddress||0,"By address")+cp(fmtAgo(c.replies.lastReplyAt),"Last reply")+'</div>'+
       '<div class="sec-title">Recent events</div><div class="feed" id="coEvFeed"><div class="muted" style="padding:8px 0">Loading...</div></div>'+
