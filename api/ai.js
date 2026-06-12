@@ -158,7 +158,6 @@ export default async function handler(req, res) {
     const standardModels = [
       "deepseek/deepseek-chat",
       "meta-llama/llama-3.1-8b-instruct",
-      "mistralai/mistral-7b-instruct",
       "google/gemini-2.5-flash-lite",
     ];
     // Does this request carry any images? (vision content blocks)
