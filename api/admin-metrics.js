@@ -24,7 +24,7 @@ const ANON_KEY      = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE
 const ADMIN_EMAILS  = (process.env.ADMIN_CONSOLE_EMAILS || "")
   .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
-const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", "piq_activity", "piq_quote_sets", "piq_quote_library", "piq_templates", "piq_costs"];
+const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", "piq_activity", "piq_quote_sets", "piq_quote_library", "piq_templates", "piq_costs", "piq_invoices"];
 
 // Owner-tooling stores (proqure_data store_keys).
 // - Audit log: append-only, written under the ACTING ADMIN's own user_id so it
@@ -127,6 +127,31 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
     });
   }
 
+  // Invoice three-way-match metadata, derived from piq_invoices. As with replies,
+  // the records are read ONLY to tally status/result/value; no invoice content is
+  // ever copied into the output. status: matched|unmatched (awaiting a decision)
+  // then approved|queried|rejected; match.result: clean|review|mismatch.
+  const invByCo = new Map();
+  for (const r of countRows) {
+    if (r.store_key !== "piq_invoices") continue;
+    const invs = Array.isArray(r.value) ? r.value : [];
+    let captured = invs.length, clean = 0, flagged = 0, approved = 0, queried = 0, rejected = 0, toReview = 0, flaggedOpen = 0, valueMatchedGbp = 0;
+    for (const iv of invs) {
+      const isClean = !!(iv && iv.match && iv.match.result === "clean");
+      if (isClean) clean++; else flagged++;
+      const st = iv && iv.status;
+      if (st === "approved") {
+        approved++;
+        if (String((iv && iv.currency) || "GBP").toUpperCase() === "GBP") {
+          valueMatchedGbp += Number((iv && iv.total) || (iv && iv.match && iv.match.total) || 0) || 0;
+        }
+      } else if (st === "queried") { queried++; }
+      else if (st === "rejected") { rejected++; }
+      else { toReview++; if (!isClean) flaggedOpen++; }
+    }
+    invByCo.set(r.user_id, { captured, clean, flagged, approved, queried, rejected, toReview, flaggedOpen, valueMatchedGbp: Number(valueMatchedGbp.toFixed(2)) });
+  }
+
   // group members into companies
   const companies = new Map(); // company_id -> company object
   for (const m of members) {
@@ -227,7 +252,10 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
         library: counts.piq_quote_library || 0,
         templates: counts.piq_templates || 0,
         costs: counts.piq_costs || 0,
+        invoices: counts.piq_invoices || 0,
       },
+      invoiceStats: invByCo.get(c.companyId) || null,
+      trialEndsAt: sv.trialEndsAt || sv.trialEnd || null,
       aiUsage: usageByCo.get(c.companyId) || null,
       // This-month AI cost from the SERVER-authoritative meter (piq_ai_meter, USD),
       // converted to GBP, against the plan's circuit-breaker budget.
@@ -296,6 +324,14 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const totalReceivedAttachments = list.reduce((n, c) => n + (c.email.receivedAttachments || 0), 0);
   const totalReceivedUnmatched = platformEmail.receivedUnmatched || 0;
   const totalStorageBytes = list.reduce((n, c) => n + (c.storageBytes || 0), 0);
+  // invoice three-way-match rollups
+  const invoicesTotal       = list.reduce((n, c) => n + ((c.invoiceStats && c.invoiceStats.captured) || 0), 0);
+  const invoicesClean       = list.reduce((n, c) => n + ((c.invoiceStats && c.invoiceStats.clean) || 0), 0);
+  const invoicesFlagged     = list.reduce((n, c) => n + ((c.invoiceStats && c.invoiceStats.flagged) || 0), 0);
+  const invoicesApproved    = list.reduce((n, c) => n + ((c.invoiceStats && c.invoiceStats.approved) || 0), 0);
+  const invoicesToReview    = list.reduce((n, c) => n + ((c.invoiceStats && c.invoiceStats.toReview) || 0), 0);
+  const invoicesFlaggedOpen = list.reduce((n, c) => n + ((c.invoiceStats && c.invoiceStats.flaggedOpen) || 0), 0);
+  const invoiceValueMatchedGbp = Number(list.reduce((n, c) => n + ((c.invoiceStats && c.invoiceStats.valueMatchedGbp) || 0), 0).toFixed(2));
   // companies ranked by spend (then email volume) — the "who costs us most" view
   const costRanking = [...list]
     .filter(c => (c.aiSpend || 0) > 0 || (c.email.sent || 0) > 0)
@@ -344,6 +380,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       totalSuppliersEmailed, totalSupplierReplies,
       totalReceivedMatched, totalReceivedUnmatched, totalReceivedAttachments,
       totalStorageBytes,
+      invoicesTotal, invoicesClean, invoicesFlagged, invoicesApproved, invoicesToReview, invoicesFlaggedOpen, invoiceValueMatchedGbp,
     },
     costRanking,
     signupHistogram: hist,
@@ -612,6 +649,38 @@ export default async function handler(req, res) {
       res.status(200).json({ ok: true, message: disable
         ? `${email} disabled — they can no longer sign in. Reversible.`
         : `${email} re-enabled.` });
+      return;
+    }
+
+    if (action === "export-tenant") {
+      const companyId = (body.companyId || "").trim();
+      if (!companyId) { res.status(400).json({ error: "companyId required." }); return; }
+      const { data: rows, error } = await admin
+        .from("proqure_data").select("store_key,value,updated_at").eq("user_id", companyId);
+      if (error) { res.status(400).json({ error: error.message }); return; }
+      const { data: mem } = await admin
+        .from("members").select("email,role,user_id,joined_at,employment").eq("company_id", companyId);
+      const stores = {};
+      for (const r of (rows || [])) stores[r.store_key] = { value: r.value, updated_at: r.updated_at };
+      await writeAudit(admin, caller, { action: "export-tenant", target: companyId, detail: `${(rows || []).length} stores` });
+      res.status(200).json({ ok: true, data: { companyId, exportedAt: new Date().toISOString(), exportedBy: callerEmail, members: mem || [], stores } });
+      return;
+    }
+
+    if (action === "delete-tenant") {
+      const companyId = (body.companyId || "").trim();
+      if (!companyId) { res.status(400).json({ error: "companyId required." }); return; }
+      // GDPR erasure: remove the tenant's stored data and memberships. Auth user
+      // ACCOUNTS ARE LEFT INTACT on purpose - a person may belong to other
+      // companies, and removing the membership already severs access to this one.
+      const { error: dErr, count: dCount } = await admin
+        .from("proqure_data").delete({ count: "exact" }).eq("user_id", companyId);
+      if (dErr) { res.status(400).json({ error: dErr.message }); return; }
+      const { error: mErr, count: mCount } = await admin
+        .from("members").delete({ count: "exact" }).eq("company_id", companyId);
+      if (mErr) { res.status(400).json({ error: mErr.message }); return; }
+      await writeAudit(admin, caller, { action: "delete-tenant", target: companyId, detail: `${dCount || 0} stores, ${mCount || 0} memberships` });
+      res.status(200).json({ ok: true, message: `Tenant erased \u2014 ${dCount || 0} data stores and ${mCount || 0} memberships removed. Login accounts left intact.` });
       return;
     }
 
