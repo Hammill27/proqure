@@ -330,7 +330,6 @@ async function callAI(system, user, history=[], temperature=0.1) {
   const models = [
     "deepseek/deepseek-chat",
     "meta-llama/llama-3.1-8b-instruct",
-    "mistralai/mistral-7b-instruct",
     "google/gemini-2.5-flash-lite",
   ];
   const messages = [
