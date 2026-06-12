@@ -205,6 +205,32 @@
   .barrow{display:flex;align-items:center;gap:10px;margin:7px 0}
   .barrow .bl{font-size:12px;color:var(--sub);width:92px;flex-shrink:0}
   .barrow .bv{font-family:var(--mono);font-size:11.5px;font-weight:700;width:88px;text-align:right;flex-shrink:0}
+  /* --- Redesigned company drawer --- */
+  .dh-badges{display:flex;gap:6px;align-items:center;margin-top:9px;flex-wrap:wrap}
+  .hero{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:0 24px 18px}
+  .hero .hcell{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 14px}
+  .hero .hcell .hl{font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .hero .hcell .hv{font-family:var(--mono);font-size:19px;font-weight:700;margin-top:5px;letter-spacing:-.02em;line-height:1.05}
+  .hero .hcell .hs{font-size:10.5px;color:var(--sub);margin-top:3px}
+  .hero .hcell.alert{border-color:rgba(229,100,92,.4)} .hero .hcell.alert .hv{color:var(--red)}
+  .hero .hcell.good .hv{color:var(--accent)}
+  .dtabs{display:flex;gap:3px;padding:0 24px;border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:73px;background:var(--bg);z-index:1}
+  .dtab{flex-shrink:0;padding:11px 13px;font-size:12.5px;font-weight:600;color:var(--soft);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s}
+  .dtab:hover{color:var(--sub)}
+  .dtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .dtab .tc{font-family:var(--mono);font-size:10px;opacity:.7;margin-left:3px}
+  .dpane{display:none;animation:fadeIn .2s ease}
+  .dpane.on{display:block}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .acc{border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden;background:var(--card)}
+  .acc>summary{padding:13px 15px;font-size:12.5px;font-weight:700;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;color:var(--text)}
+  .acc>summary::-webkit-details-marker{display:none}
+  .acc>summary .chev{transition:transform .2s;color:var(--soft)}
+  .acc[open]>summary .chev{transform:rotate(90deg)}
+  .acc .acc-body{padding:4px 15px 15px}
+  .minirow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+  .minirow:first-child{border-top:none}
+  .minirow .mk{color:var(--sub)} .minirow .mv{font-weight:600;font-family:var(--mono);font-size:12px;text-align:right;word-break:break-word}
   .filter-sel{max-width:170px}
   .loading{display:flex;align-items:center;justify-content:center;padding:80px;color:var(--sub);font-size:14px}
   .spin{width:18px;height:18px;border:2px solid var(--line-2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;margin-right:11px}
@@ -228,6 +254,7 @@
     .strip{grid-template-columns:repeat(3,1fr)}
     .cols{grid-template-columns:1fr}
     .meta,.countpills{grid-template-columns:1fr 1fr}
+    .hero{grid-template-columns:1fr 1fr}
     th.hide,td.hide{display:none}
   }
   @media(max-width:520px){ .kpis{grid-template-columns:1fr 1fr} .strip{grid-template-columns:1fr 1fr} }
@@ -426,6 +453,8 @@ async function loadData(quiet){
 
 function render(){ if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
 function planBadge(p){ p=esc(p||"trial"); return '<span class="badge b-'+p+'">'+p+'</span>'; }
+const PLAN_LABELS_ADM={trial:"Trial",sole:"Sole Trader",team:"Team",business:"Business",enterprise:"Enterprise",suspended:"Suspended",cancelled:"Cancelled"};
+function PLAN_LABEL(p){ return PLAN_LABELS_ADM[p]||(p?(p.charAt(0).toUpperCase()+p.slice(1)):"Trial"); }
 
 function renderOverview(){
   const k=DATA.kpis;
@@ -627,9 +656,17 @@ async function renderAudit(){
     '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>When</th><th>Action</th><th>Target</th><th class="hide">By</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
+function switchDtab(id){
+  document.querySelectorAll('#drawer .dtab').forEach(t=>t.classList.toggle('on',t.dataset.pane===id));
+  document.querySelectorAll('#drawer .dpane').forEach(p=>p.classList.toggle('on',p.dataset.pane===id));
+  if(id==='overview'){ const c=window.__drawerCo; if(c) loadEventsInto("coEvFeed", c.companyId, false, 20); }
+}
+window.switchDtab=switchDtab;
 function openCompany(c){
+  window.__drawerCo=c;
   const meta=(k,v)=>'<div><div class="k">'+k+'</div><div class="v">'+esc(v==null||v===""?"-":v)+'</div></div>';
   const cp=(n,l)=>'<div class="cpill"><div class="pn">'+n+'</div><div class="pl">'+l+'</div></div>';
+  const mrow=(k,v)=>'<div class="minirow"><span class="mk">'+k+'</span><span class="mv">'+esc(v==null||v===""?"-":v)+'</span></div>';
   const uact=(u)=>'<div class="ua">'+
     '<button class="btn btn-ghost btn-sm" onclick="doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend invite</button>'+
     '<button class="btn btn-ghost btn-sm" onclick="doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Send reset</button>'+
@@ -639,30 +676,79 @@ function openCompany(c){
     '<button class="btn btn-ghost btn-sm" onclick="doActionConfirm(\'enable-account\',{email:\''+esc(u.email)+'\'},\'Re-enable this account?\')">Re-enable</button>'+
   '</div>';
   const users=c.users.map(u=>'<div class="uitem"><div class="ue">'+esc(u.email)+'</div><div class="um">'+(u.isOwner?'<span class="badge b-owner">owner</span> ':'<span class="badge b-role">'+esc(u.role)+'</span> ')+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+' &middot; joined '+fmtDate(u.joinedAt)+' &middot; last in '+fmtAgo(u.lastSignIn)+'</div>'+uact(u)+'</div>').join("");
+
+  // --- header badges (plan + live status) ---
+  const statusBadge = c.subscriptionStatus==="past_due" ? '<span class="badge b-cancelled">past due</span>'
+    : (c.plan==="cancelled"||c.subscriptionStatus==="cancelled") ? '<span class="badge b-off">cancelled</span>'
+    : c.plan==="suspended" ? '<span class="badge b-off">suspended</span>'
+    : '<span class="badge b-on">active</span>';
+  const setupBadge = c.onboarded?'':' <span class="badge b-pending">setup incomplete</span>';
+
+  // --- hero (Level-1 metrics) ---
+  const aiCol=(c.aiBudgetPct||0)>=100?"alert":(c.aiBudgetPct||0)>=80?"":"";
+  const totalActivity=(c.counts.orders||0)+(c.counts.requests||0)+(c.counts.quotes||0)+(c.counts.hires||0);
+  const hero='<div class="hero">'+
+    '<div class="hcell"><div class="hl">MRR</div><div class="hv">\u00A3'+(c.mrr||0)+'</div><div class="hs">'+esc(PLAN_LABEL(c.plan))+'</div></div>'+
+    '<div class="hcell '+(aiCol||((c.aiBudgetPct||0)<80?"good":""))+'"><div class="hl">AI this month</div><div class="hv">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+'</div><div class="hs">'+(c.aiBudgetPct||0)+'% of \u00A3'+(c.aiBudgetGbp||0)+'</div></div>'+
+    '<div class="hcell"><div class="hl">Activity</div><div class="hv">'+totalActivity+'</div><div class="hs">orders, RFQs, quotes, hires</div></div>'+
+    '<div class="hcell"><div class="hl">Users</div><div class="hv">'+(c.userCount||0)+'</div><div class="hs">last active '+fmtAgo(c.lastActive)+'</div></div>'+
+  '</div>';
+
+  // --- tab bar ---
+  const tabs=[["overview","Overview"],["usage","Usage"],["billing","Billing & AI"],["email","Email"],["storage","Storage"],["users","Users",c.userCount]];
+  const tabBar='<div class="dtabs">'+tabs.map((t,i)=>'<button class="dtab'+(i===0?' on':'')+'" data-pane="'+t[0]+'" onclick="switchDtab(\''+t[0]+'\')">'+t[1]+(t[2]!=null?'<span class="tc">'+t[2]+'</span>':'')+'</button>').join("")+'</div>';
+
+  // --- PANE: Overview ---
+  const paneOverview='<div class="dpane on" data-pane="overview">'+
+    '<div class="sec-title">Set plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button>'+(c.stripeCustomerId?'<a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none;margin-left:auto">Stripe \u2197</a>':'')+'</div>'+
+    ((c.aiBudgetPct||0)>=100?'<div class="acc" style="border-color:rgba(229,100,92,.4);margin-top:14px"><div style="padding:12px 15px;font-size:12px;color:var(--red);font-weight:600">AI is at the monthly cap \u2014 paused for this company until the 1st (or a plan change).</div></div>':'')+
+    '<div class="sec-title">Company</div>'+
+    '<div class="acc-body" style="padding:0">'+
+      mrow("Primary trade",c.trade)+mrow("Team size",c.teamSize)+mrow("Reply-to",c.fromEmail)+mrow("Address",c.address)+mrow("VAT no.",c.vat)+mrow("Company reg.",c.companyReg)+mrow("Created",fmtDate(c.createdAt))+mrow("Onboarded",c.onboarded?"Yes":"No")+mrow("Pending invites",c.pendingInvites)+
+    '</div>'+
+    '<div class="sec-title">Recent events</div><div class="feed" id="coEvFeed"><div class="muted" style="padding:8px 0">Loading...</div></div>'+
+  '</div>';
+
+  // --- PANE: Usage ---
+  const paneUsage='<div class="dpane" data-pane="usage">'+
+    '<div class="sec-title">Procurement</div><div class="countpills">'+cp(c.counts.orders,"Orders")+cp(c.counts.requests,"Requests")+cp(c.counts.quotes,"Quotes")+cp(c.counts.costs||0,"Cost entries")+cp(c.counts.suppliers,"Suppliers")+cp(c.counts.hires,"Hires")+cp(c.counts.library,"Library")+cp(c.counts.activity,"Activity")+'</div>'+
+    '<div class="sec-title">Supplier replies <span style="font-weight:500;text-transform:none;letter-spacing:0">(metadata only)</span></div><div class="countpills">'+cp(c.replies.rfqsSent||0,"RFQs sent")+cp(c.replies.suppliersEmailed||0,"Suppliers")+cp(c.replies.suppliersReplied||0,"Replied")+cp(pct(c.replies.suppliersReplied,c.replies.suppliersEmailed),"Reply rate")+cp(c.email.received||0,"Received")+cp(c.email.receivedAttachments||0,"Attachments")+cp(c.replies.repliesByAddress||0,"By address")+cp(fmtAgo(c.replies.lastReplyAt),"Last reply")+'</div>'+
+  '</div>';
+
+  // --- PANE: Billing & AI ---
+  const aiCol2=(c.aiBudgetPct||0)>=100?"var(--red)":(c.aiBudgetPct||0)>=80?"var(--amber)":"var(--accent)";
+  const webRows=(()=>{ const u=c.webAllowanceUsed||{}; const L=c.allowanceLimits||{};
+    const row=(label,used,lim)=>{ const p=lim>0?Math.min(100,Math.round(used/lim*100)):0; const col=p>=100?"var(--red)":p>=80?"var(--amber)":"var(--accent)"; return '<div class="barrow"><span class="bl">'+label+'</span><span class="bar"><i style="width:'+p+'%;background:'+col+'"></i></span><span class="bv">'+(used||0)+' / '+(lim||0)+'</span></div>'; };
+    return row("Measure",u.measureWeb||0,L.measureWeb||0)+row("O&amp;M packs",u.omWeb||0,L.omWeb||0)+row("Catalogue",u.catalogueWeb||0,L.catalogueWeb||0); })();
+  const paneBilling='<div class="dpane" data-pane="billing">'+
+    '<div class="sec-title">Billing</div><div class="meta">'+meta("Status",c.subscriptionStatus||"trial")+meta("Plan",PLAN_LABEL(c.plan))+meta("MRR","\u00A3"+(c.mrr||0))+meta("Stripe customer",c.stripeCustomerId||"-")+'</div>'+
+    (c.stripeCustomerId?'<div style="margin-top:11px"><a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none">Open in Stripe \u2197</a></div>':'')+
+    '<div class="sec-title">AI budget this month <span style="font-weight:500;text-transform:none;letter-spacing:0">(server meter)</span></div>'+
+    '<div class="barrow"><span class="bl">AI cost</span><span class="bar"><i style="width:'+Math.min(100,c.aiBudgetPct||0)+'%;background:'+aiCol2+'"></i></span><span class="bv" style="color:'+aiCol2+'">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+' / \u00A3'+(c.aiBudgetGbp||0)+'</span></div>'+
+    '<div class="sec-title">Web lookups this month <span style="font-weight:500;text-transform:none;letter-spacing:0">('+esc((c.webAllowanceUsed&&c.webAllowanceUsed.period)||"-")+')</span></div>'+webRows+
+    '<div class="sec-title">AI totals</div><div class="countpills">'+cp(fmtMoney(c.aiSpend),"AI spend")+cp(c.aiCalls||0,"AI calls")+cp(c.webCalls||0,"Web search")+'</div>'+
+  '</div>';
+
+  // --- PANE: Email ---
+  const paneEmail='<div class="dpane" data-pane="email">'+
+    '<div class="sec-title">Deliverability</div><div class="countpills">'+cp(c.email.sent||0,"Sent")+cp(c.email.delivered||0,"Delivered")+cp(c.email.bounced||0,"Bounced")+cp(c.email.complained||0,"Spam")+cp(fmtAgo(c.email.lastEventAt),"Last email")+'</div>'+
+    '<div class="sec-title">Inbound</div><div class="countpills">'+cp(c.email.received||0,"Received")+cp(c.email.receivedAttachments||0,"Attachments")+cp(c.replies.repliesByAddress||0,"By address")+cp(fmtAgo(c.replies.lastReplyAt),"Last reply")+'</div>'+
+  '</div>';
+
+  // --- PANE: Storage ---
+  const paneStorage='<div class="dpane" data-pane="storage">'+
+    '<div class="sec-title">Supabase data size</div><div class="countpills">'+cp(fmtBytes(c.storageBytes||0),"Total")+Object.entries(c.storageByKey||{}).sort((a,b)=>b[1]-a[1]).slice(0,7).map(([key,val])=>cp(fmtBytes(val),STORE_LABEL[key]||key)).join("")+'</div>'+
+  '</div>';
+
+  // --- PANE: Users ---
+  const paneUsers='<div class="dpane" data-pane="users">'+
+    '<div class="sec-title">Users ('+c.userCount+')</div>'+(users||'<div class="muted" style="padding:8px 0">No users.</div>')+
+  '</div>';
+
   $("drawer").innerHTML=
-    '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10.5px;margin-left:6px" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(c.companyId)+'\').then(()=>toast(\'Company ID copied.\'))">Copy ID</button></div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
-    '<div class="dbody">'+
-      '<div class="sec-title">Plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button></div>'+
-      '<div class="sec-title">Billing</div><div class="meta">'+meta("Status",c.subscriptionStatus||"trial")+meta("Plan",c.plan||"trial")+meta("MRR","\u00A3"+(c.mrr||0))+'</div>'+
-      (c.stripeCustomerId?'<div style="margin-top:9px"><a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none">Open in Stripe \u2197</a></div>':'')+
-      '<div class="sec-title">AI budget this month <span style="font-weight:500;text-transform:none;letter-spacing:0">(server meter \u00B7 circuit-breaker)</span></div>'+
-      (()=>{ const pcap=Math.min(100,c.aiBudgetPct||0); const col=(c.aiBudgetPct||0)>=100?"var(--red)":(c.aiBudgetPct||0)>=80?"var(--amber)":"var(--accent)";
-        return '<div class="barrow"><span class="bl">AI cost</span><span class="bar"><i style="width:'+pcap+'%;background:'+col+'"></i></span><span class="bv" style="color:'+col+'">\u00A3'+Number(c.aiMonthGbp||0).toFixed(2)+' / \u00A3'+(c.aiBudgetGbp||0)+'</span></div>'+
-        ((c.aiBudgetPct||0)>=100?'<div class="muted" style="font-size:11.5px;margin-top:4px;color:var(--red)">At the cap \u2014 AI is paused for this company until the 1st (or a plan change).</div>':''); })()+
-      '<div class="sec-title">Web lookups this month <span style="font-weight:500;text-transform:none;letter-spacing:0">('+esc((c.webAllowanceUsed&&c.webAllowanceUsed.period)||"-")+' \u00B7 used / allowance)</span></div>'+
-      (()=>{ const u=c.webAllowanceUsed||{}; const L=c.allowanceLimits||{};
-        const row=(label,used,lim)=>{ const p=lim>0?Math.min(100,Math.round(used/lim*100)):0; const col=p>=100?"var(--red)":p>=80?"var(--amber)":"var(--accent)"; return '<div class="barrow"><span class="bl">'+label+'</span><span class="bar"><i style="width:'+p+'%;background:'+col+'"></i></span><span class="bv">'+(used||0)+' / '+(lim||0)+'</span></div>'; };
-        return row("Measure",u.measureWeb||0,L.measureWeb||0)+row("O&amp;M packs",u.omWeb||0,L.omWeb||0)+row("Catalogue",u.catalogueWeb||0,L.catalogueWeb||0); })()+
-      '<div class="sec-title">Details</div><div class="meta">'+
-        meta("Onboarded",c.onboarded?"Yes":"No")+meta("Primary trade",c.trade)+meta("Team size",c.teamSize)+meta("Reply-to",c.fromEmail)+meta("Address",c.address)+meta("VAT no.",c.vat)+meta("Company reg.",c.companyReg)+meta("Created",fmtDate(c.createdAt))+meta("Last active",fmtAgo(c.lastActive))+meta("Pending invites",c.pendingInvites)+
-      '</div>'+
-      '<div class="sec-title">Usage</div><div class="countpills">'+cp(c.counts.orders,"Orders")+cp(c.counts.requests,"Requests")+cp(c.counts.quotes,"Quotes")+cp(c.counts.costs||0,"Cost entries")+cp(c.counts.suppliers,"Suppliers")+cp(c.counts.hires,"Hires")+cp(c.counts.library,"Library")+cp(c.counts.activity,"Activity")+'</div>'+
-      '<div class="sec-title">Cost &amp; email</div><div class="countpills">'+cp(fmtMoney(c.aiSpend),"AI spend")+cp(c.aiCalls||0,"AI calls")+cp(c.webCalls||0,"Web search")+cp(c.email.sent||0,"Emails")+cp(c.email.delivered||0,"Delivered")+cp(c.email.bounced||0,"Bounced")+cp(c.email.complained||0,"Spam")+cp(fmtAgo(c.email.lastEventAt),"Last email")+'</div>'+
-      '<div class="sec-title">Supplier replies <span style="font-weight:500;text-transform:none;letter-spacing:0">(metadata only)</span></div><div class="countpills">'+cp(c.replies.rfqsSent||0,"RFQs sent")+cp(c.replies.suppliersEmailed||0,"Suppliers")+cp(c.replies.suppliersReplied||0,"Replied")+cp(pct(c.replies.suppliersReplied,c.replies.suppliersEmailed),"Reply rate")+cp(c.email.received||0,"Received")+cp(c.email.receivedAttachments||0,"Attachments")+cp(c.replies.repliesByAddress||0,"By address")+cp(fmtAgo(c.replies.lastReplyAt),"Last reply")+'</div>'+
-      '<div class="sec-title">Recent events</div><div class="feed" id="coEvFeed"><div class="muted" style="padding:8px 0">Loading...</div></div>'+
-      '<div class="sec-title">Storage <span style="font-weight:500;text-transform:none;letter-spacing:0">(Supabase data size)</span></div><div class="countpills">'+cp(fmtBytes(c.storageBytes||0),"Total")+Object.entries(c.storageByKey||{}).sort((a,b)=>b[1]-a[1]).slice(0,7).map(([key,val])=>cp(fmtBytes(val),STORE_LABEL[key]||key)).join("")+'</div>'+
-      '<div class="sec-title">Users ('+c.userCount+')</div>'+users+
-    '</div>';
+    '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10.5px;margin-left:6px" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(c.companyId)+'\').then(()=>toast(\'Company ID copied.\'))">Copy ID</button></div><div class="dh-badges">'+planBadge(c.plan)+statusBadge+setupBadge+'</div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
+    hero+tabBar+
+    '<div class="dbody">'+paneOverview+paneUsage+paneBilling+paneEmail+paneStorage+paneUsers+'</div>';
   $("scrim").classList.add("open"); $("drawer").classList.add("open");
   loadEventsInto("coEvFeed", c.companyId, false, 20);
 }
