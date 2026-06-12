@@ -274,6 +274,60 @@
   .hb-banner{display:flex;align-items:center;gap:13px;padding:16px 20px;border-radius:var(--r);margin-bottom:18px;border:1px solid var(--line)}
   .hb-banner .bd{width:11px;height:11px;border-radius:50%;flex-shrink:0}
   .hb-banner .bt{font-size:15px;font-weight:800} .hb-banner .bs{font-size:12.5px;color:var(--sub);margin-top:2px}
+  /* --- Health board v2 --- */
+  .hbx-hero{display:grid;grid-template-columns:auto 1fr;gap:28px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:24px 28px;margin-bottom:18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .hbx-hero::after{content:"";position:absolute;inset:0;background:radial-gradient(130% 120% at 0% 0%, rgba(61,214,140,.07), transparent 55%);pointer-events:none}
+  .hbx-ring{position:relative;width:132px;height:132px;flex-shrink:0}
+  .hbx-ring svg{width:132px;height:132px}
+  .hbx-ring .c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .hbx-ring .c .big{font-size:34px;font-weight:800;letter-spacing:-.03em;line-height:1}
+  .hbx-ring .c .sub{font-size:9.5px;color:var(--soft);font-family:var(--mono);text-transform:uppercase;letter-spacing:.07em;margin-top:5px}
+  .hbx-hero-r{min-width:0;position:relative}
+  .hbx-hero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+  .hbx-hero-title{font-size:19px;font-weight:800;letter-spacing:-.02em}
+  .hbx-hero-sub{font-size:12.5px;color:var(--sub);margin-top:3px}
+  .hbx-hero-stats{display:flex;gap:10px;margin-top:17px;flex-wrap:wrap}
+  .hbx-hs{flex:1;min-width:72px;background:var(--chip);border:1px solid var(--line);border-radius:11px;padding:9px 13px}
+  .hbx-hs .n{font-size:19px;font-weight:800;font-family:var(--mono);line-height:1}
+  .hbx-hs .l{font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.05em;margin-top:5px}
+  .hbx-hero-lat{display:flex;align-items:center;gap:11px;margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--soft)}
+  .hbx-track{flex:1;height:6px;border-radius:99px;background:var(--line-2);overflow:hidden;max-width:300px}
+  .hbx-track i{display:block;height:100%;border-radius:99px;transition:width .5s}
+  .hbx-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .hbx-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:17px 19px 15px 23px;box-shadow:var(--shadow);overflow:hidden;transition:border-color .2s}
+  .hbx-card .hbx-accent{position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--soft)}
+  .hbx-card.s-up .hbx-accent{background:var(--green-glow)}
+  .hbx-card.s-degraded .hbx-accent{background:var(--amber)}
+  .hbx-card.s-down .hbx-accent{background:var(--red)}
+  .hbx-card.s-unconfigured .hbx-accent{background:var(--line-2)}
+  .hbx-card.s-down{border-color:rgba(229,100,92,.4)} .hbx-card.s-degraded{border-color:rgba(224,162,59,.38)}
+  .hbx-ch{display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
+  .hbx-ic{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--chip);color:var(--soft)}
+  .hbx-card.s-up .hbx-ic{background:var(--tint);color:var(--accent)}
+  .hbx-card.s-degraded .hbx-ic{color:var(--amber);background:rgba(224,162,59,.12)}
+  .hbx-card.s-down .hbx-ic{color:var(--red);background:rgba(229,100,92,.12)}
+  .hbx-ic svg{width:19px;height:19px}
+  .hbx-id{flex:1;min-width:0}
+  .hbx-nm{font-size:14.5px;font-weight:800;letter-spacing:-.01em}
+  .hbx-role{font-size:11px;color:var(--soft);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hbx-chev{color:var(--soft);transition:transform .25s;flex-shrink:0;display:flex}
+  .hbx-card.open .hbx-chev{transform:rotate(180deg)}
+  .hbx-dtl{font-size:12.5px;color:var(--sub);margin-top:12px;line-height:1.5}
+  .hbx-latrow{display:flex;align-items:center;gap:10px;margin-top:13px}
+  .hbx-latrow .lab{font-size:9.5px;color:var(--soft);font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em;width:60px;flex-shrink:0}
+  .hbx-latrow .ms{font-family:var(--mono);font-size:11.5px;font-weight:700;flex-shrink:0;min-width:50px;text-align:right}
+  .hbx-metrics{display:flex;flex-wrap:wrap;gap:7px;margin-top:13px}
+  .hbx-m{background:var(--chip);border:1px solid var(--line);border-radius:9px;padding:7px 11px}
+  .hbx-m .ml{font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em}
+  .hbx-m .mv{font-family:var(--mono);font-size:12.5px;font-weight:700;margin-top:2px}
+  .hbx-m.wide{flex-basis:100%}
+  .hbx-more{max-height:0;overflow:hidden;transition:max-height .3s ease;border-top:0 solid var(--line)}
+  .hbx-card.open .hbx-more{max-height:340px;border-top-width:1px;margin-top:14px;padding-top:14px}
+  .hbx-spark{display:flex;align-items:flex-end;gap:3px;height:46px;margin-bottom:9px}
+  .hbx-spark .sb{flex:1;border-radius:2px 2px 0 0;min-height:3px}
+  .hbx-sub2{font-size:10.5px;color:var(--soft);font-family:var(--mono)}
+  .hbx-link{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--accent);text-decoration:none;margin-top:11px;font-weight:600}
+  @media(max-width:760px){ .hbx-hero{grid-template-columns:1fr;justify-items:center;text-align:center} .hbx-grid{grid-template-columns:1fr} }
   /* --- User drawer --- */
   .uhead{display:flex;align-items:center;gap:15px}
   .uavatar{width:52px;height:52px;border-radius:14px;background:var(--tint);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:21px;flex-shrink:0;font-family:var(--mono)}
@@ -442,6 +496,7 @@ document.addEventListener("keydown",(e)=>{
 });
 // Quiet background refresh: keeps numbers current without blanking the screen.
 setInterval(()=>{ if(document.visibilityState==="visible" && session && DATA && $("app").style.display==="block" && !$("drawer").classList.contains("open")) loadData(true); }, 90000);
+setInterval(()=>{ if(document.visibilityState==="visible" && session && currentTab==="health" && $("app").style.display==="block" && !$("drawer").classList.contains("open")) refreshHealth(); }, 60000);
 function toast(msg,bad){ const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":""); setTimeout(()=>t.className="toast",2600); }
 
 function applyTheme(t){ document.documentElement.setAttribute("data-theme",t); try{localStorage.setItem("pq_admin_theme",t);}catch(e){} const b=$("themeBtn"); if(b) b.innerHTML = t==="dark"?ICON.sun:ICON.moon; }
@@ -830,60 +885,109 @@ window.renderAuditView=renderAuditView;
 // Calls /api/admin-health, which checks each provider SERVER-SIDE with the secret
 // keys and returns only the results. No provider key ever reaches the browser.
 let HEALTH=null, healthLoading=false;
+let healthHist=[];                 // session response-time history (powers the sparklines)
+const healthExpanded=new Set();    // names of expanded cards, preserved across re-renders
 async function fetchHealth(){
   const r=await fetch(API_BASE+"/api/admin-health",{ headers:{ "Authorization":"Bearer "+session.access_token } });
   let d={}; try{ d=await r.json(); }catch{}
   if(!r.ok){ const e=new Error((d&&d.error)||("Request failed ("+r.status+")")); e.status=r.status; throw e; }
   return d;
 }
+function healthCapture(){
+  if(!HEALTH || HEALTH.error || !Array.isArray(HEALTH.services)) return;
+  const snap={ t:Date.now(), lat:{}, st:{} };
+  HEALTH.services.forEach(s=>{ snap.lat[s.name]=(s.latencyMs!=null?s.latencyMs:null); snap.st[s.name]=s.status; });
+  healthHist.push(snap); if(healthHist.length>40) healthHist.shift();
+}
 async function refreshHealth(){
   healthLoading=true; renderHealth();
-  try{ HEALTH=await fetchHealth(); }
-  catch(e){ HEALTH={ error: e.message }; }
+  try{ HEALTH=await fetchHealth(); healthCapture(); }
+  catch(e){ HEALTH={ error:e.message }; }
   healthLoading=false; renderHealth();
 }
 window.refreshHealth=refreshHealth;
+function healthToggle(name){ if(healthExpanded.has(name)) healthExpanded.delete(name); else healthExpanded.add(name); renderHealth(); }
+window.healthToggle=healthToggle;
+
+const HICON={
+  db:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>',
+  cloud:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.4 21.6 20H2.4z"/></svg>',
+  ai:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3.1"/><path d="M12 2.6v3.3M12 18.1v3.3M2.6 12h3.3M18.1 12h3.3M5.2 5.2l2.3 2.3M16.5 16.5l2.3 2.3M18.8 5.2l-2.3 2.3M7.5 16.5l-2.3 2.3"/></svg>',
+  chip:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 1.9v3.1M15 1.9v3.1M9 19v3.1M15 19v3.1M1.9 9h3.1M1.9 15h3.1M19 9h3.1M19 15h3.1"/></svg>',
+  mail:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="m3.6 7 8.4 6 8.4-6"/></svg>',
+  card:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2.5" y="5" width="19" height="14" rx="2.4"/><path d="M2.5 9.6h19"/></svg>',
+  dot:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/></svg>'
+};
+function healthRing(up,deg,down,unconf){
+  const total=(up+deg+down+unconf)||1, r=58, C=2*Math.PI*r, cx=66, cy=66;
+  const segs=[[up,'var(--green-glow)'],[deg,'var(--amber)'],[down,'var(--red)'],[unconf,'var(--line-2)']].filter(x=>x[0]>0);
+  let off=0, ring='';
+  segs.forEach(seg=>{ const len=C*(seg[0]/total); ring+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+seg[1]+'" stroke-width="11" stroke-dasharray="'+len.toFixed(2)+' '+(C-len).toFixed(2)+'" stroke-dashoffset="'+(-off).toFixed(2)+'"/>'; off+=len; });
+  return '<svg viewBox="0 0 132 132" style="transform:rotate(-90deg)"><circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="11"/>'+ring+'</svg>';
+}
+function healthSpark(name){
+  const pts=healthHist.map(h=>({v:h.lat[name],st:h.st[name]})).filter(p=>p.v!=null);
+  if(pts.length<2) return '<div class="hbx-sub2">Response-time history builds as checks run \u2014 automatically each minute, or tap Re-check.</div>';
+  const win=pts.slice(-24), max=Math.max.apply(null,win.map(p=>p.v).concat(1));
+  const col={up:'var(--green-glow)',degraded:'var(--amber)',down:'var(--red)',unconfigured:'var(--soft)'};
+  const bars=win.map(p=>'<div class="sb" style="height:'+Math.max(3,Math.round(p.v/max*100))+'%;background:'+(col[p.st]||'var(--accent)')+'"></div>').join('');
+  return '<div class="hbx-spark">'+bars+'</div><div class="hbx-sub2">Last '+win.length+' checks \u00b7 response time (peak '+max+'ms)</div>';
+}
 function renderHealth(){
   if(currentTab!=="health") return;
   const v=$("view");
-  if(healthLoading && !HEALTH){ v.innerHTML='<div class="loading"><span class="spin"></span>Checking your infrastructure...</div>'; return; }
-  if(!HEALTH){ refreshHealth(); v.innerHTML='<div class="loading"><span class="spin"></span>Checking your infrastructure...</div>'; return; }
+  if(healthLoading && !HEALTH){ v.innerHTML='<div class="loading"><span class="spin"></span>Checking your infrastructure\u2026</div>'; return; }
+  if(!HEALTH){ refreshHealth(); v.innerHTML='<div class="loading"><span class="spin"></span>Checking your infrastructure\u2026</div>'; return; }
   if(HEALTH.error){ v.innerHTML='<div class="panel"><div class="muted">Could not load health: '+esc(HEALTH.error)+'</div><div style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="refreshHealth()">Try again</button></div></div>'; return; }
 
-  const OVERALL={ up:["s-up","All systems operational","Everything ProQure depends on is up and healthy."],
-                  degraded:["s-degraded","Running, with warnings","ProQure is up, but one or more services need attention."],
-                  down:["s-down","Service issue","One or more critical services are down \u2014 ProQure may be affected."] };
-  const o=OVERALL[HEALTH.overall]||OVERALL.up;
   const SLABEL={ up:"Operational", degraded:"Degraded", down:"Down", unconfigured:"Not set up" };
-  const checkedMs = HEALTH.generatedAt ? Date.parse(HEALTH.generatedAt) : Date.now();
-  const agoText=()=>{ const secs=Math.max(0,Math.round((Date.now()-checkedMs)/1000)); return secs<60?("checked "+secs+"s ago"):("checked "+Math.round(secs/60)+"m ago"); };
-  const banner='<div class="hb-banner '+o[0]+'"><span class="bd" style="background:'+
-    (HEALTH.overall==="down"?"var(--red)":HEALTH.overall==="degraded"?"var(--amber)":"var(--green-glow)")+'"></span>'+
-    '<div><div class="bt">'+o[1]+'</div><div class="bs">'+o[2]+'</div></div></div>';
-  const cards=(HEALTH.services||[]).map(s=>{
-    const cls="s-"+s.status;
-    const metrics=(s.metrics||[]).map(m=>'<div class="hb-metric"><div class="ml">'+esc(m.label)+'</div><div class="mvv">'+esc(m.value)+'</div></div>').join("");
-    return '<div class="hb-card '+cls+'">'+
-      '<div class="hb-top"><div class="hb-name">'+esc(s.name)+'</div><span class="hb-pill '+cls+'"><span class="hb-dot"></span>'+(SLABEL[s.status]||s.status)+'</span></div>'+
-      '<div class="hb-detail">'+esc(s.detail||"")+'</div>'+
-      (metrics?'<div class="hb-metrics">'+metrics+'</div>':"")+
-      '<div class="hb-lat">'+(s.latencyMs!=null?("responded in "+s.latencyMs+"ms \u00b7 "):"")+agoText()+'</div>'+
+  const OVERALL={ up:["All systems operational","Everything ProQure depends on is up and responding."],
+                  degraded:["Running, with warnings","ProQure is up, but one or more services want a look."],
+                  down:["Service issue","A critical service is down \u2014 ProQure may be affected."] };
+  const o=OVERALL[HEALTH.overall]||OVERALL.up;
+  const svc=HEALTH.services||[];
+  const hUp=svc.filter(s=>s.status==='up').length, hDeg=svc.filter(s=>s.status==='degraded').length, hDown=svc.filter(s=>s.status==='down').length, hUnconf=svc.filter(s=>s.status==='unconfigured').length;
+  const lat=svc.filter(s=>s.latencyMs!=null); const avgLat=lat.length?Math.round(lat.reduce((a,s)=>a+s.latencyMs,0)/lat.length):null;
+  const checkedMs=HEALTH.generatedAt?Date.parse(HEALTH.generatedAt):Date.now();
+  const checkedT=HEALTH.generatedAt?new Date(checkedMs).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"just now";
+  const avgPct=avgLat!=null?Math.min(100,Math.round(avgLat/1000*100)):0;
+  const avgCol=avgLat==null?'var(--soft)':avgLat<300?'var(--green-glow)':avgLat<800?'var(--amber)':'var(--red)';
+  const hs=(n,l,col)=>'<div class="hbx-hs"><div class="n"'+(col?' style="color:'+col+'"':'')+'>'+n+'</div><div class="l">'+l+'</div></div>';
+  const hero='<div class="hbx-hero">'+
+    '<div class="hbx-ring">'+healthRing(hUp,hDeg,hDown,hUnconf)+'<div class="c"><div class="big">'+hUp+'</div><div class="sub">of '+svc.length+' up</div></div></div>'+
+    '<div class="hbx-hero-r">'+
+      '<div class="hbx-hero-top"><div><div class="hbx-hero-title">'+o[0]+'</div><div class="hbx-hero-sub">'+o[1]+'</div></div>'+
+      '<button class="btn btn-ghost btn-sm" onclick="refreshHealth()"'+(healthLoading?" disabled":"")+'>'+(healthLoading?"Checking\u2026":"Re-check now")+'</button></div>'+
+      '<div class="hbx-hero-stats">'+hs(svc.length,"Services")+hs(hUp,"Operational",hUp?'var(--accent)':null)+hs(hDeg,"Degraded",hDeg?'var(--amber)':null)+hs(hDown,"Down",hDown?'var(--red)':null)+(hUnconf?hs(hUnconf,"Not set up"):'')+'</div>'+
+      '<div class="hbx-hero-lat">Avg response <span class="hbx-track"><i style="width:'+Math.max(4,avgPct)+'%;background:'+avgCol+'"></i></span> '+(avgLat!=null?avgLat+'ms':'\u2014')+' \u00b7 checked '+checkedT+' \u00b7 auto every 60s</div>'+
+    '</div></div>';
+
+  const cards=svc.map(s=>{
+    const cls="s-"+s.status, open=healthExpanded.has(s.name);
+    const metrics=(s.metrics||[]).map(m=>{ const wide=((m.value||'').length>22)||/replace/i.test(m.label||''); return '<div class="hbx-m'+(wide?' wide':'')+'"><div class="ml">'+esc(m.label)+'</div><div class="mv">'+esc(m.value)+'</div></div>'; }).join("");
+    let latRow='';
+    if(s.latencyMs!=null){ const ms=s.latencyMs, pct=Math.min(100,Math.round(ms/1000*100)), lcol=ms<300?'var(--green-glow)':ms<800?'var(--amber)':'var(--red)';
+      latRow='<div class="hbx-latrow"><span class="lab">Response</span><span class="hbx-track"><i style="width:'+Math.max(4,pct)+'%;background:'+lcol+'"></i></span><span class="ms">'+ms+'ms</span></div>'; }
+    const short=(s.name||'').split(' (')[0];
+    const link=s.link?'<a class="hbx-link" href="'+esc(s.link)+'" target="_blank" rel="noopener">Open '+esc(short)+' console \u2197</a>':'';
+    const ago=(()=>{ const secs=Math.max(0,Math.round((Date.now()-checkedMs)/1000)); return secs<60?('checked '+secs+'s ago'):('checked '+Math.round(secs/60)+'m ago'); })();
+    return '<div class="hbx-card '+cls+(open?' open':'')+'">'+
+      '<div class="hbx-accent"></div>'+
+      '<div class="hbx-ch" onclick="healthToggle(\''+short+'\')">'+
+        '<div class="hbx-ic">'+(HICON[s.icon]||HICON.dot)+'</div>'+
+        '<div class="hbx-id"><div class="hbx-nm">'+esc(s.name)+'</div>'+(s.role?'<div class="hbx-role">'+esc(s.role)+'</div>':'')+'</div>'+
+        '<span class="hb-pill '+cls+'"><span class="hb-dot"></span>'+(SLABEL[s.status]||s.status)+'</span>'+
+        '<span class="hbx-chev"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span>'+
+      '</div>'+
+      (s.detail?'<div class="hbx-dtl">'+esc(s.detail)+'</div>':'')+
+      latRow+
+      (metrics?'<div class="hbx-metrics">'+metrics+'</div>':'')+
+      '<div class="hbx-more">'+healthSpark(s.name)+link+'<div class="hbx-sub2" style="margin-top:9px">'+ago+(s.latencyMs!=null?(' \u00b7 responded in '+s.latencyMs+'ms'):'')+'</div></div>'+
     '</div>';
   }).join("");
-  const svc=HEALTH.services||[];
-  const hUp=svc.filter(s=>s.status==='up').length, hDeg=svc.filter(s=>s.status==='degraded').length, hDown=svc.filter(s=>s.status==='down').length;
-  const lat=svc.filter(s=>s.latencyMs!=null); const avgLat=lat.length?Math.round(lat.reduce((a,s)=>a+s.latencyMs,0)/lat.length):null;
-  const hstat=(n,l,col)=>'<div class="stat"><div class="n"'+(col?' style="color:'+col+'"':'')+'>'+n+'</div><div class="l">'+l+'</div></div>';
-  const healthStrip='<div class="strip lift" style="grid-template-columns:repeat(5,1fr)">'+
-    hstat(svc.length,"Services")+hstat(hUp,"Operational","var(--accent)")+hstat(hDeg,"Degraded",hDeg?"var(--amber)":null)+hstat(hDown,"Down",hDown?"var(--red)":null)+hstat(avgLat!=null?avgLat+"ms":"\u2014","Avg response")+
-  '</div>';
-  v.innerHTML=
-    '<div class="toolbar"><div class="muted" style="font-size:13px">Live infrastructure status &middot; checked '+(HEALTH.generatedAt?new Date(HEALTH.generatedAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"just now")+'</div>'+
-    '<button class="btn btn-ghost btn-sm" onclick="refreshHealth()"'+(healthLoading?" disabled":"")+'>'+(healthLoading?"Checking...":"Re-check now")+'</button></div>'+
-    healthStrip+
-    banner+
-    '<div class="hb-grid">'+cards+'</div>'+
-    '<div class="muted" style="font-size:11.5px;margin-top:16px;line-height:1.6">These checks run on our server using your provider keys \u2014 no key is ever exposed to this page. They show whether each service is reachable and healthy right now. For always-on alerting (a ping when something goes down while you\u2019re not looking), set up an uptime monitor once mailboxes are live.</div>';
+
+  v.innerHTML=hero+'<div class="hbx-grid">'+cards+'</div>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:16px;line-height:1.6">Checks run on the server with your provider keys \u2014 no key ever reaches this page. Tap any card for response-time history and a console link. Auto-refreshes each minute while this tab is open; to be alerted when you\u2019re not looking, wire these signals to email once a mailbox is live.</div>';
 }
 
 function switchDtab(id){
