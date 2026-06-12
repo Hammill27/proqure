@@ -231,6 +231,27 @@
   .minirow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
   .minirow:first-child{border-top:none}
   .minirow .mk{color:var(--sub)} .minirow .mv{font-weight:600;font-family:var(--mono);font-size:12px;text-align:right;word-break:break-word}
+  /* --- Visual polish layer (dashboard + cost pages) --- */
+  .kpi{position:relative;overflow:hidden}
+  .kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--green-glow),transparent 70%);opacity:.55}
+  .kpi::after{content:"";position:absolute;inset:0;background:radial-gradient(420px 150px at 100% 0,var(--tint),transparent 70%);opacity:.5;pointer-events:none}
+  .kpi>*{position:relative;z-index:1}
+  .kpi:hover{box-shadow:0 1px 2px rgba(0,0,0,.3),0 18px 44px rgba(0,0,0,.30),0 0 0 1px var(--tint-line)}
+  .kpi .n{background:linear-gradient(180deg,var(--text),color-mix(in srgb,var(--text) 72%,var(--accent)));-webkit-background-clip:text;background-clip:text}
+  /* stagger the entrance so the row cascades in */
+  .kpis .kpi:nth-child(1){animation-delay:.02s} .kpis .kpi:nth-child(2){animation-delay:.06s}
+  .kpis .kpi:nth-child(3){animation-delay:.10s} .kpis .kpi:nth-child(4){animation-delay:.14s}
+  .kpis .kpi:nth-child(5){animation-delay:.18s} .kpis .kpi:nth-child(6){animation-delay:.22s}
+  .kpis .kpi:nth-child(7){animation-delay:.26s} .kpis .kpi:nth-child(8){animation-delay:.30s}
+  .stat{position:relative;overflow:hidden;transition:border-color .2s,transform .2s,box-shadow .2s}
+  .stat:hover{box-shadow:0 8px 20px rgba(0,0,0,.18)}
+  .stat .n{background:linear-gradient(180deg,var(--text),color-mix(in srgb,var(--text) 80%,var(--accent)));-webkit-background-clip:text;background-clip:text}
+  .panel{transition:border-color .2s,box-shadow .25s} .panel:hover{box-shadow:0 1px 2px rgba(0,0,0,.28),0 16px 40px rgba(0,0,0,.22)}
+  .chart .b{box-shadow:0 0 18px -2px color-mix(in srgb,var(--green-glow) 55%,transparent)}
+  .chart .b::after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,.22),transparent 45%)}
+  .planbar i{transition:width .6s cubic-bezier(.16,1,.3,1)}
+  /* subtle section label above grouped stats */
+  .sec-label{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin:2px 0 10px}
   /* --- Health board --- */
   .hb-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
   .hb-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;box-shadow:var(--shadow)}
@@ -253,6 +274,12 @@
   .hb-banner{display:flex;align-items:center;gap:13px;padding:16px 20px;border-radius:var(--r);margin-bottom:18px;border:1px solid var(--line)}
   .hb-banner .bd{width:11px;height:11px;border-radius:50%;flex-shrink:0}
   .hb-banner .bt{font-size:15px;font-weight:800} .hb-banner .bs{font-size:12.5px;color:var(--sub);margin-top:2px}
+  /* --- User drawer --- */
+  .uhead{display:flex;align-items:center;gap:15px}
+  .uavatar{width:52px;height:52px;border-radius:14px;background:var(--tint);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:21px;flex-shrink:0;font-family:var(--mono)}
+  .u-actions-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:4px}
+  .u-actions-grid .btn{width:100%;justify-content:center}
+  .u-act-danger{grid-column:1 / -1;border-top:1px solid var(--line);margin-top:6px;padding-top:13px;display:grid;grid-template-columns:1fr 1fr;gap:9px}
   .filter-sel{max-width:170px}
   .loading{display:flex;align-items:center;justify-content:center;padding:80px;color:var(--sub);font-size:14px}
   .spin{width:18px;height:18px;border:2px solid var(--line-2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;margin-right:11px}
@@ -420,6 +447,57 @@ function goTab(id, plan){
 function openCompanyById(id){ const c=DATA&&DATA.companies.find(x=>x.companyId===id); if(c) openCompany(c); }
 function openCompanyByEmail(email){ email=(email||"").toLowerCase(); const c=DATA&&DATA.companies.find(x=>(x.users||[]).some(u=>(u.email||"").toLowerCase()===email)); if(c) openCompany(c); else toast("No company found for "+email,true); }
 window.goTab=goTab; window.openCompanyById=openCompanyById; window.openCompanyByEmail=openCompanyByEmail;
+
+// Open a single USER in the drawer - everything about this person, plus actions.
+// (Distinct from openCompany: clicking a user should be about the user, not bounce
+// straight into their company.)
+function openUserByEmail(email){
+  email=(email||"").toLowerCase();
+  let found=null, company=null;
+  (DATA&&DATA.companies||[]).forEach(c=>c.users.forEach(u=>{ if((u.email||"").toLowerCase()===email){ found=u; company=c; } }));
+  if(!found){ toast("No user found for "+email,true); return; }
+  openUser(found, company);
+}
+window.openUserByEmail=openUserByEmail;
+function openUser(u, c){
+  const email=u.email||"";
+  const initials=(email[0]||"?").toUpperCase();
+  const roleBadge=u.isOwner?'<span class="badge b-owner">owner</span>':'<span class="badge b-role">'+esc(u.role||"engineer")+'</span>';
+  const statusBadge=u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>';
+  const confBadge=u.confirmed?'':' <span class="badge b-off">unconfirmed</span>';
+  const meta=(k,v)=>'<div><div class="k">'+k+'</div><div class="v">'+esc(v==null||v===""?"-":v)+'</div></div>';
+  const mrow=(k,v)=>'<div class="minirow"><span class="mk">'+k+'</span><span class="mv">'+esc(v==null||v===""?"-":v)+'</span></div>';
+  const E=email.replace(/'/g,"\\'");
+  const cid=c?String(c.companyId):"";
+  $("drawer").innerHTML=
+    '<div class="dh"><div class="uhead"><div class="uavatar">'+esc(initials)+'</div><div><h3 style="word-break:break-all">'+esc(email)+'</h3><div class="dh-badges">'+roleBadge+statusBadge+confBadge+'</div></div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
+    '<div class="dbody">'+
+      '<div class="sec-title">This user</div><div class="acc-body" style="padding:0">'+
+        mrow("Email",email)+
+        mrow("Role",u.isOwner?"Owner":(u.role||"engineer"))+
+        mrow("Company",c?c.name:"-")+
+        mrow("Employment",u.employment)+
+        mrow("Status",u.active?"Active":"Invited (not yet joined)")+
+        mrow("Email confirmed",u.confirmed?"Yes":"No")+
+        mrow("Joined",fmtDate(u.joinedAt))+
+        mrow("Last sign-in",fmtAgo(u.lastSignIn))+
+      '</div>'+
+      '<div class="sec-title">Actions</div>'+
+      '<div class="u-actions-grid">'+
+        '<button class="btn btn-ghost btn-sm" onclick="doAction(\'resend-invite\',{email:\''+E+'\'})">Resend invite</button>'+
+        '<button class="btn btn-ghost btn-sm" onclick="doAction(\'send-reset\',{email:\''+E+'\'})">Send password reset</button>'+
+        '<button class="btn btn-ghost btn-sm" onclick="doAction(\'verify-email\',{email:\''+E+'\'})">Verify email</button>'+
+        '<button class="btn btn-ghost btn-sm" onclick="doActionConfirm(\'force-logout\',{email:\''+E+'\'},\'Sign this user out of all sessions?\')">Force logout</button>'+
+        '<div class="u-act-danger">'+
+          '<button class="btn btn-sm btn-danger" onclick="doActionConfirm(\'disable-account\',{email:\''+E+'\'},\'Disable this account? They will not be able to sign in until re-enabled.\')">Disable account</button>'+
+          '<button class="btn btn-ghost btn-sm" onclick="doActionConfirm(\'enable-account\',{email:\''+E+'\'},\'Re-enable this account?\')">Re-enable account</button>'+
+        '</div>'+
+      '</div>'+
+      (c?'<div class="sec-title">Their company</div><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center" onclick="openCompanyById(\''+esc(cid)+'\')">Open '+esc(c.name)+' &rarr;</button>':'')+
+    '</div>';
+  $("scrim").classList.add("open"); $("drawer").classList.add("open");
+}
+window.openUser=openUser;
 
 function configOk(){ return SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length>20; }
 async function init(){
@@ -593,16 +671,16 @@ window.exportCompaniesCsv=exportCompaniesCsv;
 function renderUsers(){
   const all=[]; DATA.companies.forEach(c=>c.users.forEach(u=>all.push({...u,company:c.name})));
   const list=all.filter(u=>!search||(u.email+" "+u.company+" "+u.role).toLowerCase().includes(search.toLowerCase()));
-  const rows=list.map(u=>'<tr class="crow" onclick="openCompanyByEmail(\''+esc(u.email)+'\')">'+
+  const rows=list.map(u=>'<tr class="crow" onclick="openUserByEmail(\''+esc(u.email)+'\')">'+
     '<td><div style="font-weight:600;word-break:break-all">'+esc(u.email)+'</div></td>'+
     '<td class="hide">'+esc(u.company)+'</td>'+
     '<td>'+(u.isOwner?'<span class="badge b-owner">owner</span>':'<span class="badge b-role">'+esc(u.role)+'</span>')+'</td>'+
     '<td>'+(u.active?'<span class="badge b-on">active</span>':'<span class="badge b-pending">invited</span>')+(u.confirmed?'':' <span class="badge b-off">unconfirmed</span>')+'</td>'+
     '<td class="hide muted">'+fmtAgo(u.lastSignIn)+'</td>'+
-    '<td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Reset</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openCompanyByEmail(\''+esc(u.email)+'\')">Manage</button></div></td></tr>').join("")
+    '<td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'resend-invite\',{email:\''+esc(u.email)+'\'})">Resend</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();doAction(\'send-reset\',{email:\''+esc(u.email)+'\'})">Reset</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openUserByEmail(\''+esc(u.email)+'\')">Manage</button></div></td></tr>').join("")
     || '<tr><td colspan="6" class="muted" style="padding:26px;text-align:center">No users match.</td></tr>';
   $("view").innerHTML=
-    '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' user'+(list.length===1?"":"s")+' &middot; click a row to manage</div><input class="search" id="uSearch" placeholder="Search users..." value="'+esc(search)+'"></div>'+
+    '<div class="toolbar"><div class="muted" style="font-size:13px">'+list.length+' user'+(list.length===1?"":"s")+' &middot; click a row to manage the user</div><input class="search" id="uSearch" placeholder="Search users..." value="'+esc(search)+'"></div>'+
     '<div class="panel" style="padding:6px 10px"><table><thead><tr><th>Email</th><th class="hide">Company</th><th>Role</th><th>Status</th><th class="hide">Last sign-in</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   $("uSearch").addEventListener("input",e=>{ search=e.target.value; const p=e.target.selectionStart; renderUsers(); const s=$("uSearch"); s.focus(); s.setSelectionRange(p,p); });
 }
