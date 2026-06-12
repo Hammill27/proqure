@@ -208,6 +208,61 @@ async function checkVercel() {
   }
 }
 
+// Confirms every model ProQure depends on is still served by OpenRouter, and -
+// crucially - when one has been retired, names the current replacement to install.
+// Keep these lists in sync with api/ai.js and the app's VISION_MODELS.
+async function checkAiModels() {
+  if (!OPENROUTER_KEY) return mk("AI models", "unconfigured", "OPENROUTER_API_KEY not set.");
+  const VISION = ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "openai/gpt-4o-mini"];
+  const WEB    = ["google/gemini-2.5-flash", "google/gemini-3.1-flash-lite"];
+  const TEXT   = ["deepseek/deepseek-chat", "meta-llama/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct", "google/gemini-2.5-flash-lite"];
+  try {
+    const { res, ms } = await timedFetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: "Bearer " + OPENROUTER_KEY } }, 6000);
+    if (!res.ok) return mk("AI models", "degraded", "Couldn't fetch OpenRouter's model list (" + res.status + ") - can't confirm slugs right now.", [], ms);
+    const body = await res.json();
+    const live = new Set((body.data || []).map(m => m.id).filter(Boolean));
+    const liveIds = [...live];
+
+    // Suggest the current replacement for a retired slug: the newest LIVE model in
+    // the same family/series (so the advice tracks whatever OpenRouter offers today).
+    const verNum = (id) => { const m = (id.split("/")[1] || "").match(/(\d+(?:\.\d+)?)/); return m ? parseFloat(m[1]) : 0; };
+    const suggest = (slug) => {
+      const fam = slug.split("/")[0];
+      const base = (slug.split("/")[1] || "").toLowerCase();
+      const kw = /flash/.test(base) ? "flash" : /gpt-4o/.test(base) ? "gpt-4o" : ((base.match(/^[a-z]+/) || [base])[0]);
+      const cands = liveIds.filter(id => id.startsWith(fam + "/") && id.toLowerCase().includes(kw) && id !== slug);
+      if (!cands.length) return null;
+      cands.sort((a, b) => verNum(b) - verNum(a));
+      return cands[0];
+    };
+
+    const groups = [["Vision", VISION], ["Web", WEB], ["Text", TEXT]].map(([label, list]) => {
+      const missing = list.filter(x => !live.has(x));
+      return { label, list, missing, present: list.length - missing.length, total: list.length };
+    });
+    const allMissing = [...new Set(groups.flatMap(g => g.missing))];
+    const pathDown = groups.some(g => g.present === 0);          // a whole capability has no working model
+    const status = pathDown ? "down" : (allMissing.length ? "degraded" : "up");
+
+    const metrics = groups.map(g => ({ label: g.label, value: g.present + "/" + g.total + (g.present === 0 ? "  \u2717" : "") }));
+    let detail;
+    if (status === "up") {
+      detail = "Every model ProQure uses is still listed on OpenRouter.";
+    } else {
+      // Name the replacement slug(s) to install, and where to change them.
+      allMissing.slice(0, 4).forEach(slug => {
+        const sug = suggest(slug);
+        metrics.push({ label: "Replace " + slug, value: sug ? ("install " + sug) : "pick a current slug on OpenRouter" });
+      });
+      detail = (pathDown ? "A model ProQure relies on has NO working slug left - a feature may be failing. " : "A model ProQure uses has been retired by OpenRouter. ")
+        + "Update the slug(s) in api/ai.js and the app's VISION_MODELS: " + allMissing.join(", ") + ".";
+    }
+    return mk("AI models", status, detail, metrics, ms);
+  } catch (e) {
+    return mk("AI models", "degraded", "Couldn't verify model availability: " + (e && e.message ? e.message : "error") + ".");
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
@@ -247,6 +302,7 @@ export default async function handler(req, res) {
     settle(checkSupabase(), "Supabase"),
     settle(checkVercel(), "Vercel (hosting)"),
     settle(checkOpenRouter(), "OpenRouter (AI)"),
+    settle(checkAiModels(), "AI models"),
     settle(checkResend(), "Resend (email)"),
     settle(checkStripe(), "Stripe (billing)"),
   ]);
