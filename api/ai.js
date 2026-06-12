@@ -147,15 +147,35 @@ export default async function handler(req, res) {
     // been retired, so this keeps working when OpenRouter rotates model versions.
     // All are routed through OpenRouter - no other provider is used.
     const webModels = ["google/gemini-2.5-flash", "google/gemini-3.1-flash-lite"];
+    // Vision-capable models, newest-first. Image requests MUST use one of these;
+    // text-only models silently return a blind answer instead of erroring, so we
+    // never want an image request to fall through to one. openai/gpt-4o-mini is a
+    // cross-provider safety net so a Google-wide slug rotation can't break vision.
+    const visionModels = ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "openai/gpt-4o-mini"];
+    // Slugs OpenRouter has retired (Gemini 1.5 / 2.0 Flash shut down by mid-2026).
+    // Filtered out of any caller-supplied list so a stale client can't pin a dead model.
+    const RETIRED = [/gemini-flash-1\.5/i, /gemini-1\.5/i, /gemini-pro-1\.5/i, /gemini-2\.0-flash/i];
     const standardModels = [
       "deepseek/deepseek-chat",
       "meta-llama/llama-3.1-8b-instruct",
       "mistralai/mistral-7b-instruct",
-      "google/gemini-flash-1.5",
+      "google/gemini-2.5-flash-lite",
     ];
-    const modelList = web
-      ? (Array.isArray(models) && models.length ? models : webModels)
-      : (Array.isArray(models) && models.length ? models : standardModels);
+    // Does this request carry any images? (vision content blocks)
+    const hasImages = Array.isArray(messages) && messages.some(m =>
+      Array.isArray(m && m.content) && m.content.some(p => p && p.type === "image_url"));
+    const dropRetired = (arr) => arr.filter(m => typeof m === "string" && !RETIRED.some(re => re.test(m)));
+    let modelList;
+    if (web) {
+      modelList = (Array.isArray(models) && models.length ? models : webModels);
+    } else if (hasImages) {
+      // caller's valid slugs first, then the current vision set; dead slugs removed.
+      const merged = dropRetired([...(Array.isArray(models) ? models : []), ...visionModels]);
+      modelList = [...new Set(merged)];
+      if (!modelList.length) modelList = visionModels;
+    } else {
+      modelList = (Array.isArray(models) && models.length ? models : standardModels);
+    }
 
     // OpenRouter web plugin (Exa-backed). Default 4 results keeps cost low.
     const plugins = web
