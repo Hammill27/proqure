@@ -708,6 +708,8 @@ function renderHealth(){
                   down:["s-down","Service issue","One or more critical services are down \u2014 ProQure may be affected."] };
   const o=OVERALL[HEALTH.overall]||OVERALL.up;
   const SLABEL={ up:"Operational", degraded:"Degraded", down:"Down", unconfigured:"Not set up" };
+  const checkedMs = HEALTH.generatedAt ? Date.parse(HEALTH.generatedAt) : Date.now();
+  const agoText=()=>{ const secs=Math.max(0,Math.round((Date.now()-checkedMs)/1000)); return secs<60?("checked "+secs+"s ago"):("checked "+Math.round(secs/60)+"m ago"); };
   const banner='<div class="hb-banner '+o[0]+'"><span class="bd" style="background:'+
     (HEALTH.overall==="down"?"var(--red)":HEALTH.overall==="degraded"?"var(--amber)":"var(--green-glow)")+'"></span>'+
     '<div><div class="bt">'+o[1]+'</div><div class="bs">'+o[2]+'</div></div></div>';
@@ -718,7 +720,7 @@ function renderHealth(){
       '<div class="hb-top"><div class="hb-name">'+esc(s.name)+'</div><span class="hb-pill '+cls+'"><span class="hb-dot"></span>'+(SLABEL[s.status]||s.status)+'</span></div>'+
       '<div class="hb-detail">'+esc(s.detail||"")+'</div>'+
       (metrics?'<div class="hb-metrics">'+metrics+'</div>':"")+
-      (s.latencyMs!=null?'<div class="hb-lat">responded in '+s.latencyMs+'ms</div>':"")+
+      '<div class="hb-lat">'+(s.latencyMs!=null?("responded in "+s.latencyMs+"ms \u00b7 "):"")+agoText()+'</div>'+
     '</div>';
   }).join("");
   v.innerHTML=
