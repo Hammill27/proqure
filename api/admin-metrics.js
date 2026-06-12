@@ -24,7 +24,7 @@ const ANON_KEY      = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE
 const ADMIN_EMAILS  = (process.env.ADMIN_CONSOLE_EMAILS || "")
   .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
-const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", "piq_activity", "piq_quote_sets", "piq_quote_library", "piq_templates"];
+const COUNT_KEYS = ["piq_orders", "piq_requests", "piq_suppliers", "piq_hires", "piq_activity", "piq_quote_sets", "piq_quote_library", "piq_templates", "piq_costs"];
 
 // Owner-tooling stores (proqure_data store_keys).
 // - Audit log: append-only, written under the ACTING ADMIN's own user_id so it
@@ -226,6 +226,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
         quotes: counts.piq_quote_sets || 0,
         library: counts.piq_quote_library || 0,
         templates: counts.piq_templates || 0,
+        costs: counts.piq_costs || 0,
       },
       aiUsage: usageByCo.get(c.companyId) || null,
       // This-month AI cost from the SERVER-authoritative meter (piq_ai_meter, USD),
@@ -260,6 +261,8 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
   const totalSuppliers = list.reduce((n, c) => n + c.counts.suppliers, 0);
   const totalHires = list.reduce((n, c) => n + c.counts.hires, 0);
   const totalQuotes = list.reduce((n, c) => n + c.counts.quotes, 0);
+  const totalCostEntries = list.reduce((n, c) => n + (c.counts.costs || 0), 0);
+  const companiesUsingCosts = list.filter(c => (c.counts.costs || 0) > 0).length;
   const pendingInvites = list.reduce((n, c) => n + c.pendingInvites, 0);
   const unconfirmedUsers = list.reduce((n, c) => n + c.unconfirmed, 0);
   const onboardedCount = list.filter(c => c.onboarded).length;
@@ -333,6 +336,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
       mrr, arr: mrr * 12,
       signupsLast30d, activeLast7d, staleCompanies, onboardedCount,
       totalOrders, totalRequests, totalSuppliers, totalHires, totalQuotes,
+      totalCostEntries, companiesUsingCosts,
       pendingInvites, unconfirmedUsers, planDist,
       totalAiSpend, totalAiCalls, totalWebCalls,
       aiSpendMonthGbp, nearAiCap, companiesNew30d,
