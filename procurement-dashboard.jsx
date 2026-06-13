@@ -79,6 +79,25 @@ const planOf = (settings) => ENTITLEMENTS[settings && settings.plan] || ENTITLEM
 // sync with /api/ai (server wall) and the admin console.
 const USD_TO_GBP = 0.75;
 const TRIAL_DAYS = 14; // free-trial length; mirrors the admin console
+// Mirror of notify-policy.js (server) — keep in sync. Maps notification categories
+// onto the existing role ranks so in-app visibility + email prefs use one model.
+const NOTIF_RANK = { engineer:1, buyer:2, manager:3, owner:3 };
+const notifRank = (r) => NOTIF_RANK[String(r||"").toLowerCase()] || 1;
+const NOTIF_POLICY = {
+  maintenance:{label:"Planned maintenance",group:"Announcements",inApp:1,email:{roles:1,cadence:"immediate",mandatory:true}},
+  announcement:{label:"Announcements",group:"Announcements",inApp:1,email:{roles:1,cadence:"immediate",mandatory:false}},
+  release:{label:"Product updates",group:"Announcements",inApp:1,email:{roles:1,cadence:"digest",mandatory:false}},
+  billing:{label:"Billing & subscription",group:"Subscription & Usage",inApp:3,email:{roles:3,cadence:"immediate",mandatory:true}},
+  usage_cost:{label:"AI spend",group:"Subscription & Usage",inApp:3,email:{roles:3,cadence:"digest",mandatory:false}},
+  usage:{label:"Plan usage & limits",group:"Subscription & Usage",inApp:3,email:{roles:3,cadence:"digest",mandatory:false}},
+  invoice:{label:"Invoices",group:"Activity",inApp:2,email:{roles:2,cadence:"digest",mandatory:false}},
+  workflow:{label:"RFQs, quotes, orders & hire",group:"Activity",inApp:2,email:{roles:2,cadence:"digest",mandatory:false}},
+  process:{label:"AI task results",group:"Activity",inApp:2,email:{roles:2,cadence:"digest",mandatory:false}},
+  team:{label:"Team activity",group:"Activity",inApp:3,email:{roles:3,cadence:"digest",mandatory:false}},
+  system:{label:"System alerts",group:"Activity",inApp:3,email:{roles:3,cadence:"immediate",mandatory:false}},
+};
+const notifPolicyFor = (c) => NOTIF_POLICY[c] || { inApp:1, email:{roles:1,cadence:"off",mandatory:false}, label:"Notifications", group:"Activity" };
+const notifCanSee = (cat, role, minRole) => notifRank(role) >= Math.max(notifPolicyFor(cat).inApp, minRole ? notifRank(minRole) : 0);
 const billingPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", business: "Business", enterprise: "Enterprise" };
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
@@ -4472,8 +4491,9 @@ ${settings.company||""}`;
   const NMONEY = ["billing","usage_cost","invoice"];
 
   const [notifRaw, setNotifRaw]     = useState({ anns: [], notifs: [] });
-  const [notifState, setNotifState] = useState({ read_ids: [], dismissed: [], last_seen_at: null });
+  const [notifState, setNotifState] = useState({ read_ids: [], dismissed: [], last_seen_at: null, email_prefs: {} });
   const [notifOpen, setNotifOpen]   = useState(false);
+  const [notifView, setNotifView]   = useState("list");
   const [notifTab, setNotifTab]     = useState("all");
   const notifInit = useRef(false);
   const notifSeen = useRef(new Set());
@@ -4489,9 +4509,12 @@ ${settings.company||""}`;
     const me = cloudUserId;
     const anns = (notifRaw.anns || [])
       .filter(a => !a.recalled_at && notifInWindow(a) &&
-        (a.target === "all" || (Array.isArray(a.company_ids) && a.company_ids.includes(me))))
+        (a.target === "all" || (Array.isArray(a.company_ids) && a.company_ids.includes(me))) &&
+        notifCanSee(a.category, myRole, a.min_role))
       .map(a => ({ ...a, source:"admin", createdAt:a.created_at }));
-    const sys = (notifRaw.notifs || []).map(n => ({ ...n, source:"system", createdAt:n.created_at }));
+    const sys = (notifRaw.notifs || [])
+      .filter(n => notifCanSee(n.category, myRole))
+      .map(n => ({ ...n, source:"system", createdAt:n.created_at }));
     return [...anns, ...sys].sort((x,y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime());
   })();
   const notifReadSet = new Set(notifState.read_ids || []);
@@ -4515,7 +4538,7 @@ ${settings.company||""}`;
         supabase.from("notification_state").select("*").eq("user_id", uid).eq("company_id", cloudUserId).maybeSingle(),
       ]);
       setNotifRaw({ anns: aRes.data || [], notifs: nRes.data || [] });
-      if (sRes.data) setNotifState({ read_ids: sRes.data.read_ids || [], dismissed: sRes.data.dismissed || [], last_seen_at: sRes.data.last_seen_at || null });
+      if (sRes.data) setNotifState({ read_ids: sRes.data.read_ids || [], dismissed: sRes.data.dismissed || [], last_seen_at: sRes.data.last_seen_at || null, email_prefs: sRes.data.email_prefs || {} });
     } catch (e) { /* notifications must never break the app */ }
   }, [cloudUserId]);
 
@@ -4527,7 +4550,7 @@ ${settings.company||""}`;
         try {
           supabase.from("notification_state").upsert(
             { user_id: uid, company_id: cloudUserId, last_seen_at: next.last_seen_at || null,
-              read_ids: next.read_ids || [], dismissed: next.dismissed || [], updated_at: new Date().toISOString() },
+              read_ids: next.read_ids || [], dismissed: next.dismissed || [], email_prefs: next.email_prefs || {}, updated_at: new Date().toISOString() },
             { onConflict: "user_id,company_id" }
           ).then(()=>{}, ()=>{});
         } catch (e) {}
@@ -4540,6 +4563,7 @@ ${settings.company||""}`;
   const markNotifRead    = (id) => { if (!notifReadSet.has(id)) persistNotifState({ read_ids: [...(notifState.read_ids||[]), id] }); };
   const dismissNotif     = (id) => persistNotifState({ dismissed: [...(notifState.dismissed||[]), id] });
   const toggleNotifOpen  = () => setNotifOpen(o => { const n = !o; if (n) persistNotifState({ last_seen_at: new Date().toISOString() }); return n; });
+  const setNotifPref     = (cat, val) => persistNotifState({ email_prefs: { ...(notifState.email_prefs || {}), [cat]: val } });
 
   // Emit a system notification for the current company (idempotent on dedupe_key).
   const notify = useCallback(async (n) => {
@@ -4721,11 +4745,57 @@ ${settings.company||""}`;
     </div>
   );
 
+  const renderNotifPrefsPanel = () => {
+    const prefs = notifState.email_prefs || {};
+    const myRank = notifRank(myRole);
+    const cats = Object.keys(NOTIF_POLICY).filter(c => { const p = NOTIF_POLICY[c]; return p.email.cadence !== "off" && myRank >= p.email.roles; });
+    const groups = ["Announcements","Subscription & Usage","Activity"];
+    return (
+      <>
+        {notifOpen && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, zIndex:998 }} />}
+        <div style={{ position:"fixed", top:isMobile?64:16, right:16, width:380, maxWidth:"calc(100vw - 32px)", background:"var(--bg-card-solid)", border:"1px solid var(--border)", borderRadius:14, boxShadow:"var(--shadow-lg)", zIndex:999, overflow:"hidden" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
+            <button onClick={() => setNotifView("list")} aria-label="Back" style={{ border:"none", background:"transparent", cursor:"pointer", color:"var(--text-secondary)", fontSize:18, lineHeight:1, padding:0 }}>&larr;</button>
+            <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Email preferences</span>
+          </div>
+          <div style={{ maxHeight:440, overflowY:"auto", padding:"0 0 8px" }}>
+            <div style={{ padding:"12px 16px 2px", fontSize:12, color:"var(--text-secondary)", lineHeight:1.5 }}>Choose which notifications also reach you by email. In-app notifications always appear in the centre.</div>
+            {groups.map(g => {
+              const inG = cats.filter(c => NOTIF_POLICY[c].group === g);
+              if (!inG.length) return null;
+              return (
+                <div key={g}>
+                  <div style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:9.5, letterSpacing:".12em", textTransform:"uppercase", color:"var(--text-tertiary)", padding:"14px 16px 5px" }}>{g}</div>
+                  {inG.map(c => {
+                    const p = NOTIF_POLICY[c]; const mand = p.email.mandatory; const on = mand ? true : (prefs[c] !== false);
+                    return (
+                      <div key={c} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 16px" }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:13.3, fontWeight:600, color:"var(--text-primary)" }}>{p.label}</div>
+                          <div style={{ fontSize:11, color:"var(--text-tertiary)", marginTop:1 }}>{p.email.cadence === "immediate" ? "Immediate email" : "Daily digest"}{mand ? " \u00b7 required" : ""}</div>
+                        </div>
+                        <button onClick={() => { if (!mand) setNotifPref(c, !on); }} disabled={mand} aria-label="Toggle email"
+                          style={{ width:42, height:24, borderRadius:999, border:"none", cursor:mand?"default":"pointer", background:on?"var(--green)":"var(--bg-subtle2)", position:"relative", opacity:mand?0.65:1, flex:"none" }}>
+                          <span style={{ position:"absolute", top:2, left:on?20:2, width:20, height:20, borderRadius:"50%", background:"#fff", transition:"left .15s", boxShadow:"0 1px 2px rgba(0,0,0,.25)" }} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </>
+    );
+  };
+
   const renderNotifPanel = () => {
     const SUBUSAGE = ["usage","usage_cost","billing","invoice"];
     const rows = notifTab === "unread" ? notifUnreadList
                : notifTab === "subusage" ? notifList.filter(n => SUBUSAGE.includes(n.category))
                : notifList;
+    if (notifView === "prefs") return renderNotifPrefsPanel();
     return (
       <>
         {notifOpen && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, zIndex:998 }} />}
@@ -4736,6 +4806,7 @@ ${settings.company||""}`;
           <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
             <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Notifications</span>
             <button onClick={markAllNotifRead} style={{ marginLeft:"auto", border:"none", background:"transparent", color:"var(--green-dark)", fontWeight:700, fontSize:12.5, cursor:"pointer" }}>Mark all as read</button>
+            <button onClick={() => setNotifView("prefs")} aria-label="Email preferences" title="Email preferences" style={{ border:"none", background:"transparent", color:"var(--text-tertiary)", cursor:"pointer", padding:2, display:"flex" }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 14.6a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9 4.6h.1A1.6 1.6 0 0 0 10 3V2a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V8a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg></button>
           </div>
           <div style={{ display:"flex", gap:4, padding:"8px 12px", borderBottom:"1px solid var(--border)" }}>
             {[["all","All"],["unread","Unread"],["subusage","Subscription & Usage"]].map(([id,label]) => (
