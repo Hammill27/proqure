@@ -73,7 +73,8 @@ async function dispatchAnnouncementEmail(admin, ann) {
     .slice(0, 100);
   if (!eligible.length) return;
   const items = [{ type: ann.type, title: ann.title, body: ann.body, cta_label: ann.cta_label, cta_href: ann.cta_href }];
-  const heading = ann.category === "maintenance" ? "Planned maintenance" : ann.title;
+  const heading = ann.category === "maintenance" ? "Planned maintenance"
+    : ann.category === "release" ? "Product update" : "Announcement";
   const intro = ann.category === "maintenance" ? "Scheduled maintenance affecting your ProQure workspace." : "";
   const subject = ann.category === "maintenance" ? "ProQure \u2014 planned maintenance" : `ProQure \u2014 ${ann.title}`;
   const html = renderNotificationEmail({ heading, intro, items });
