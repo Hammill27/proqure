@@ -4457,6 +4457,276 @@ ${settings.company||""}`;
   const [hireBuyTips, setHireBuyTips] = useState([]);
   const [darkMode, setDarkMode] = useState(()=>{ try{return localStorage.getItem("piq_dark")==="1"}catch{return false} });
   const toggleDark = () => setDarkMode(p=>{ const n=!p; try{localStorage.setItem("piq_dark",n?"1":"0");}catch{} return n; });
+
+  /* ===================== Notifications (Phase 1) ===================== */
+  // Two sources merged into one centre: admin ANNOUNCEMENTS (global broadcasts,
+  // read by every targeted tenant) and per-company NOTIFICATIONS (system events).
+  // Read/unread + dismissed are per-user in notification_state. The client emits
+  // system events by inserting into notifications directly (RLS enforces tenant +
+  // role); server channels (and later email/push) use the proqure_notify() RPC.
+  const NT_COLOR = { info:"var(--indigo)", success:"var(--green)", warning:"var(--amber)", critical:"var(--red)" };
+  const NT_BG    = { info:"var(--indigo-light)", success:"var(--green-light)", warning:"var(--amber-light)", critical:"var(--red-light)" };
+  const NMONEY = ["billing","usage_cost","invoice"];
+
+  const [notifRaw, setNotifRaw]     = useState({ anns: [], notifs: [] });
+  const [notifState, setNotifState] = useState({ read_ids: [], dismissed: [], last_seen_at: null });
+  const [notifOpen, setNotifOpen]   = useState(false);
+  const [notifTab, setNotifTab]     = useState("all");
+  const notifInit = useRef(false);
+  const notifSeen = useRef(new Set());
+
+  const notifInWindow = (a) => {
+    const now = Date.now();
+    if (a.starts_at && new Date(a.starts_at).getTime() > now) return false;
+    if (a.ends_at   && new Date(a.ends_at).getTime()   < now) return false;
+    return true;
+  };
+  // Derived (plain consts; cheap, recomputed each render).
+  const notifList = (() => {
+    const me = cloudUserId;
+    const anns = (notifRaw.anns || [])
+      .filter(a => !a.recalled_at && notifInWindow(a) &&
+        (a.target === "all" || (Array.isArray(a.company_ids) && a.company_ids.includes(me))))
+      .map(a => ({ ...a, source:"admin", createdAt:a.created_at }));
+    const sys = (notifRaw.notifs || []).map(n => ({ ...n, source:"system", createdAt:n.created_at }));
+    return [...anns, ...sys].sort((x,y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime());
+  })();
+  const notifReadSet = new Set(notifState.read_ids || []);
+  const notifUnreadList = notifList.filter(n => !notifReadSet.has(n.id));
+  const notifUnread = notifUnreadList.length;
+  const notifIdsKey = notifList.map(n => n.id).join(",");
+  // Persistent banners: critical/warning, in-window. Maintenance ignores dismissal
+  // and stays until the window passes; other persistent notices respect dismiss.
+  const notifDismissed = new Set(notifState.dismissed || []);
+  const notifBanners = notifList.filter(n =>
+    n.persistent && (n.type === "critical" || n.type === "warning") && notifInWindow(n) &&
+    (n.category === "maintenance" ? true : !notifDismissed.has(n.id)));
+
+  const loadNotifications = useCallback(async () => {
+    const uid = session?.user?.id;
+    if (!cloudEnabled || !supabase || !uid || !cloudUserId) return;
+    try {
+      const [aRes, nRes, sRes] = await Promise.all([
+        supabase.from("announcements").select("*").order("created_at",{ascending:false}).limit(50),
+        supabase.from("notifications").select("*").eq("company_id", cloudUserId).order("created_at",{ascending:false}).limit(100),
+        supabase.from("notification_state").select("*").eq("user_id", uid).eq("company_id", cloudUserId).maybeSingle(),
+      ]);
+      setNotifRaw({ anns: aRes.data || [], notifs: nRes.data || [] });
+      if (sRes.data) setNotifState({ read_ids: sRes.data.read_ids || [], dismissed: sRes.data.dismissed || [], last_seen_at: sRes.data.last_seen_at || null });
+    } catch (e) { /* notifications must never break the app */ }
+  }, [cloudUserId]);
+
+  const persistNotifState = useCallback((patch) => {
+    const uid = session?.user?.id;
+    setNotifState(prev => {
+      const next = { ...prev, ...patch };
+      if (cloudEnabled && supabase && uid && cloudUserId) {
+        try {
+          supabase.from("notification_state").upsert(
+            { user_id: uid, company_id: cloudUserId, last_seen_at: next.last_seen_at || null,
+              read_ids: next.read_ids || [], dismissed: next.dismissed || [], updated_at: new Date().toISOString() },
+            { onConflict: "user_id,company_id" }
+          ).then(()=>{}, ()=>{});
+        } catch (e) {}
+      }
+      return next;
+    });
+  }, [cloudUserId]);
+
+  const markAllNotifRead = () => persistNotifState({ read_ids: notifList.map(n => n.id) });
+  const markNotifRead    = (id) => { if (!notifReadSet.has(id)) persistNotifState({ read_ids: [...(notifState.read_ids||[]), id] }); };
+  const dismissNotif     = (id) => persistNotifState({ dismissed: [...(notifState.dismissed||[]), id] });
+  const toggleNotifOpen  = () => setNotifOpen(o => { const n = !o; if (n) persistNotifState({ last_seen_at: new Date().toISOString() }); return n; });
+
+  // Emit a system notification for the current company (idempotent on dedupe_key).
+  const notify = useCallback(async (n) => {
+    if (!cloudEnabled || !supabase || !cloudUserId) return;
+    if (isEngineer && NMONEY.includes(n.category)) return; // engineers don't receive money alerts
+    const dk = n.dedupeKey || ("evt-" + Date.now() + "-" + Math.random().toString(36).slice(2,8));
+    try {
+      await supabase.from("notifications").upsert(
+        [{ company_id: cloudUserId, type:n.type, category:n.category, title:n.title, body:n.body || "",
+           cta_label: (n.cta && n.cta.label) || null, cta_href: (n.cta && n.cta.href) || null,
+           dedupe_key: dk, meta: n.meta || {} }],
+        { onConflict: "company_id,dedupe_key", ignoreDuplicates: true });
+    } catch (e) {}
+  }, [cloudUserId, isEngineer]);
+
+  // Usage / entitlement thresholds -> warnings (once per period via dedupe_key).
+  const evaluateUsageAlerts = useCallback(async () => {
+    if (!cloudEnabled || !supabase || !cloudUserId) return;
+    const ym = new Date().toISOString().slice(0,7);
+    const plan = (settings && settings.plan) || "trial";
+    const ent = ENTITLEMENTS[plan] || ENTITLEMENTS.trial;
+    const u = (usage && usage.period === ym) ? usage : {};
+    const feats = [
+      ["omWebUsed","omWeb","O&M datasheet lookups"],
+      ["measureWebUsed","measureWeb","Measure web lookups"],
+      ["catalogueWebUsed","catalogueWeb","Catalogue web lookups"],
+    ];
+    for (const [usedKey, limKey, label] of feats) {
+      const lim = ent[limKey]; if (!lim || lim === Infinity) continue;
+      const used = Number(u[usedKey] || 0); const pct = used / lim;
+      if (pct >= 1)
+        await notify({ type:"warning", category:"usage", title:`${label}: monthly allowance used up`,
+          body:`You've used all ${lim} this month. The allowance resets on the 1st, or upgrade your plan for more.`,
+          dedupeKey:`usage:${limKey}:100:${ym}`, cta:{ label:"See plans" }, meta:{ used, lim } });
+      else if (pct >= 0.8)
+        await notify({ type:"warning", category:"usage", title:`${label}: 80% of this month's allowance used`,
+          body:`${used} of ${lim} used. The allowance resets on the 1st.`,
+          dedupeKey:`usage:${limKey}:80:${ym}`, meta:{ used, lim } });
+    }
+    const seats = ent.seats; const inUse = (team || []).length;
+    if (seats && seats !== Infinity && inUse / seats >= 0.8)
+      await notify({ type:"warning", category:"usage", title:"Approaching your seat limit",
+        body:`${inUse} of ${seats} seats are in use on the ${PLAN_LABELS[plan]||plan} plan.`,
+        dedupeKey:`usage:seats:80:${plan}`, meta:{ inUse, seats } });
+    // AI budget (GBP) — authoritative server meter; buyers/managers only.
+    if (!isEngineer) {
+      try {
+        const { data: m } = await supabase.from("proqure_data").select("value")
+          .eq("user_id", cloudUserId).eq("store_key","piq_ai_meter").maybeSingle();
+        const mv = m && m.value;
+        const spentUsd = (mv && mv.period === ym) ? Number(mv.costPeriod || 0) : 0;
+        const gbp = spentUsd * USD_TO_GBP; const cap = ent.aiBudget;
+        if (cap > 0) {
+          if (gbp / cap >= 0.95)
+            await notify({ type:"warning", category:"usage_cost", title:"AI usage at 95% of this month's budget",
+              body:"AI features keep working until 100%. The budget resets on the 1st, or upgrade for more headroom.",
+              dedupeKey:`usage:ai:95:${ym}`, cta:{ label:"See plans" } });
+          else if (gbp / cap >= 0.8)
+            await notify({ type:"warning", category:"usage_cost", title:"AI usage at 80% of this month's budget",
+              body:"You've used 80% of this month's AI allowance. It resets on the 1st.",
+              dedupeKey:`usage:ai:80:${ym}` });
+        }
+      } catch (e) {}
+    }
+    loadNotifications();
+  }, [cloudUserId, settings, usage, team, isEngineer, notify, loadNotifications]);
+
+  // Load on sign-in / company change.
+  useEffect(() => { loadNotifications(); }, [loadNotifications]);
+  // Re-evaluate thresholds after the workspace has hydrated and when usage changes.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const t = setTimeout(() => { evaluateUsageAlerts(); }, 1500);
+    return () => clearTimeout(t);
+  }, [notifIdsKey, evaluateUsageAlerts]); // eslint-disable-line
+  // Toast newly-arrived notifications (skip the initial load).
+  useEffect(() => {
+    const ids = notifList.map(n => n.id);
+    if (!notifInit.current) { notifInit.current = true; notifSeen.current = new Set(ids); return; }
+    notifList.forEach(n => {
+      if (!notifSeen.current.has(n.id)) {
+        notifSeen.current.add(n.id);
+        try { showToast(n.title, (n.type === "critical" || n.type === "warning") ? "warn" : "success"); } catch (e) {}
+      }
+    });
+  }, [notifIdsKey]); // eslint-disable-line
+
+  const notifTimeAgo = (iso) => {
+    const t = new Date(iso).getTime(); const s = (Date.now() - t) / 1000;
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s/60) + "m";
+    if (s < 86400) return Math.floor(s/3600) + "h";
+    const d = Math.floor(s/86400);
+    if (d === 1) return "Yesterday";
+    if (d < 7) return d + "d";
+    return new Date(iso).toLocaleDateString("en-GB",{ day:"numeric", month:"short" });
+  };
+  const notifIcon = (n) => {
+    const p = { width:16, height:16, viewBox:"0 0 24 24", fill:"none", stroke:"currentColor", strokeWidth:2.2, strokeLinecap:"round", strokeLinejoin:"round" };
+    if (n.category === "maintenance") return (<svg {...p}><path d="M14.7 6.3a4 4 0 0 0-5.2 5.2l-6 6a1.8 1.8 0 1 0 2.5 2.5l6-6a4 4 0 0 0 5.2-5.2l-2.6 2.6-2.1-2.1Z"/></svg>);
+    if (n.type === "success")        return (<svg {...p}><path d="M20 6 9 17l-5-5"/></svg>);
+    if (n.type === "info")           return (<svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg>);
+    return (<svg {...p}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg>);
+  };
+
+  const renderBell = (variant) => (
+    <button onClick={toggleNotifOpen} aria-label="Notifications" title="Notifications"
+      style={ variant === "sidebar"
+        ? { position:"relative", width:"100%", display:"flex", alignItems:"center", gap:8, background:"var(--bg-subtle2)", border:"1px solid var(--sidebar-border)", borderRadius:"var(--radius-sm)", padding:"9px 14px", cursor:"pointer", marginBottom:8, color:"var(--sidebar-text)", fontSize:13, fontWeight:600 }
+        : { position:"relative", background:"rgba(255,255,255,0.08)", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer", color:"white", fontSize:13, marginRight:8 } }>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      {variant === "sidebar" && <span style={{ flex:1, textAlign:"left" }}>Notifications</span>}
+      {notifUnread > 0 && (
+        <span style={{ position:"absolute", ...(variant === "sidebar" ? { right:10, top:7 } : { top:-5, right:-5 }),
+          minWidth:16, height:16, padding:"0 4px", borderRadius:999, background:"var(--red)", color:"#fff",
+          fontSize:10, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 }}>
+          {notifUnread > 9 ? "9+" : notifUnread}
+        </span>)}
+    </button>
+  );
+
+  const renderNotifBanners = () => notifBanners.length === 0 ? null : (
+    <div style={{ display:"flex", flexDirection:"column", gap:8, margin:"0 0 16px" }}>
+      {notifBanners.map(n => (
+        <div key={n.id} style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"12px 14px",
+          borderRadius:"var(--radius-sm)", background:NT_BG[n.type], border:`1px solid ${NT_COLOR[n.type]}` }}>
+          <div style={{ width:28, height:28, borderRadius:8, flex:"none", background:NT_COLOR[n.type], color:"#fff",
+            display:"flex", alignItems:"center", justifyContent:"center" }}>{notifIcon(n)}</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontWeight:700, color:"var(--text-primary)", fontSize:13.5 }}>{n.title}</div>
+            {n.body && <div style={{ fontSize:12.5, color:"var(--text-secondary)", marginTop:1 }}>{n.body}</div>}
+            {n.cta_label && n.cta_href && (
+              <a href={n.cta_href} target="_blank" rel="noreferrer" style={{ display:"inline-block", marginTop:6, fontSize:12, fontWeight:700, color:NT_COLOR[n.type], textDecoration:"none" }}>{n.cta_label} &rarr;</a>)}
+          </div>
+          {n.category !== "maintenance" && (
+            <button onClick={() => dismissNotif(n.id)} aria-label="Dismiss" title="Dismiss"
+              style={{ border:"none", background:"transparent", color:"var(--text-tertiary)", fontSize:18, lineHeight:1, cursor:"pointer", padding:"0 4px" }}>&times;</button>)}
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderNotifPanel = () => {
+    const rows = notifTab === "unread" ? notifUnreadList : notifList;
+    return (
+      <>
+        {notifOpen && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, zIndex:998 }} />}
+        <div style={{ position:"fixed", top:isMobile?64:16, right:16, width:380, maxWidth:"calc(100vw - 32px)",
+          background:"var(--bg-card-solid)", border:"1px solid var(--border)", borderRadius:14, boxShadow:"var(--shadow-lg)",
+          zIndex:999, overflow:"hidden", transformOrigin:"top right", transition:"opacity .15s, transform .15s",
+          opacity:notifOpen?1:0, transform:notifOpen?"none":"translateY(-6px) scale(0.98)", pointerEvents:notifOpen?"auto":"none" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
+            <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Notifications</span>
+            <button onClick={markAllNotifRead} style={{ marginLeft:"auto", border:"none", background:"transparent", color:"var(--green-dark)", fontWeight:700, fontSize:12.5, cursor:"pointer" }}>Mark all as read</button>
+          </div>
+          <div style={{ display:"flex", gap:4, padding:"8px 12px", borderBottom:"1px solid var(--border)" }}>
+            {["all","unread"].map(t => (
+              <button key={t} onClick={() => setNotifTab(t)} style={{ border:"none", background:notifTab===t?"var(--green-light)":"transparent",
+                color:notifTab===t?"var(--green-deep)":"var(--text-secondary)", fontWeight:600, fontSize:12.5, padding:"5px 11px",
+                borderRadius:999, cursor:"pointer", textTransform:"capitalize" }}>{t}{t==="unread" && notifUnread>0 ? ` (${notifUnread})` : ""}</button>
+            ))}
+          </div>
+          <div style={{ maxHeight:420, overflowY:"auto" }}>
+            {rows.length === 0
+              ? <div style={{ padding:"40px 20px", textAlign:"center", color:"var(--text-tertiary)", fontSize:13 }}>You&rsquo;re all caught up.</div>
+              : rows.map(n => {
+                  const read = notifReadSet.has(n.id);
+                  return (
+                    <div key={n.id} onClick={() => markNotifRead(n.id)} style={{ display:"flex", gap:11, padding:"11px 14px",
+                      borderBottom:"1px solid var(--border)", cursor:"pointer", opacity:read?0.7:1, position:"relative" }}>
+                      <div style={{ width:3, borderRadius:3, flex:"none", background:NT_COLOR[n.type] }} />
+                      <div style={{ width:30, height:30, borderRadius:8, flex:"none", background:NT_COLOR[n.type], color:"#fff", display:"flex", alignItems:"center", justifyContent:"center" }}>{notifIcon(n)}</div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontWeight:read?600:700, color:"var(--text-primary)", fontSize:13.3, lineHeight:1.3 }}>{n.title}</div>
+                        {n.body && <div style={{ fontSize:12.3, color:"var(--text-secondary)", marginTop:1 }}>{n.body}</div>}
+                        <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:6 }}>
+                          <span style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:10.5, color:"var(--text-tertiary)" }}>{notifTimeAgo(n.createdAt)}</span>
+                          {n.cta_label && n.cta_href && (
+                            <a href={n.cta_href} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize:12, fontWeight:700, color:"var(--green-dark)", textDecoration:"none" }}>{n.cta_label} &rarr;</a>)}
+                        </div>
+                      </div>
+                      {!read && <span style={{ position:"absolute", right:12, top:14, width:8, height:8, borderRadius:"50%", background:"var(--green)" }} />}
+                    </div>
+                  );
+                })}
+          </div>
+        </div>
+      </>
+    );
+  };
   // Keep the page (html/body) background in sync with the theme so no white edges show
   useEffect(() => {
     const pageBg = darkMode ? "#16161A" : "#FAFAF8";
@@ -5434,6 +5704,7 @@ Rules:
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
               <span style={{fontSize:13,fontWeight:600}}>Send feedback</span>
             </button>
+            {renderBell("sidebar")}
             <button onClick={toggleDark} aria-label="Toggle dark mode" title="Toggle dark mode" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg-subtle2)",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -5470,6 +5741,7 @@ Rules:
             <span style={{fontSize:15,fontWeight:800,color:"white"}}>Pro<span style={{color:"#1E9E63"}}>Qure</span></span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {renderBell("topbar")}
             <button onClick={toggleDark} aria-label="Toggle dark mode" title="Toggle dark mode" style={{background:"rgba(255,255,255,0.08)",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:"white",fontSize:13}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">{darkMode?<><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>:<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}</svg></button>
           </div>
         </div>
@@ -5477,6 +5749,8 @@ Rules:
 
       {/* Main content */}
       <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1}} className="main-content">
+        {renderNotifPanel()}
+        {renderNotifBanners()}
 
         {view==="dashboard"&&(
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:1280}}>
