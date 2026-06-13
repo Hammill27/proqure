@@ -81,7 +81,14 @@ async function mergeSettings(companyId, fields) {
   if (fields.plan) v.plan = fields.plan;
   if (fields.subscriptionStatus) v.subscriptionStatus = fields.subscriptionStatus;
   if (fields.stripeCustomerId) v.stripeCustomerId = fields.stripeCustomerId;
+  if (fields.renewsAt !== undefined) v.renewsAt = fields.renewsAt; // ISO date of next renewal (or null to clear)
   await supabase.from("proqure_data").upsert({ user_id: companyId, store_key: "piq_settings", value: v }, { onConflict: "user_id,store_key" });
+}
+
+// Next renewal date from a subscription's current period end (ISO), or undefined.
+function subRenews(sub) {
+  const t = sub && sub.current_period_end;
+  return t ? new Date(t * 1000).toISOString() : undefined;
 }
 
 async function creditAddon(companyId, meta) {
@@ -120,7 +127,7 @@ export default async function handler(req, res) {
           const sub = await stripe.subscriptions.retrieve(s.subscription);
           const plan = planFromSub(sub);
           await mergeBilling(companyId, { customer: s.customer, sub: sub.id, plan, status: normStatus(sub.status) });
-          await mergeSettings(companyId, { plan, subscriptionStatus: normStatus(sub.status), stripeCustomerId: s.customer });
+          await mergeSettings(companyId, { plan, subscriptionStatus: normStatus(sub.status), stripeCustomerId: s.customer, renewsAt: subRenews(sub) });
         }
         break;
       }
@@ -136,7 +143,7 @@ export default async function handler(req, res) {
           try { sub = await stripe.subscriptions.retrieve(evtSub.id); } catch (e) { /* use event copy */ }
           const plan = planFromSub(sub);
           await mergeBilling(companyId, { customer: sub.customer, sub: sub.id, plan, status: normStatus(sub.status) });
-          await mergeSettings(companyId, { plan, subscriptionStatus: normStatus(sub.status) });
+          await mergeSettings(companyId, { plan, subscriptionStatus: normStatus(sub.status), renewsAt: subRenews(sub) });
         }
         break;
       }
@@ -145,7 +152,7 @@ export default async function handler(req, res) {
         const companyId = (sub.metadata && sub.metadata.companyId) || await companyByCustomer(sub.customer);
         if (companyId) {
           await mergeBilling(companyId, { status: "cancelled" });
-          await mergeSettings(companyId, { plan: "trial", subscriptionStatus: "cancelled" });
+          await mergeSettings(companyId, { plan: "trial", subscriptionStatus: "cancelled", renewsAt: null });
         }
         break;
       }
@@ -164,16 +171,17 @@ export default async function handler(req, res) {
           // subscription's CURRENT state and apply that; only treat truly-live
           // statuses as active. If there's no subscription on the invoice (e.g. a
           // one-off), or the lookup fails, fall back to "active" as before.
-          let status = "active";
+          let status = "active"; let renewsAt;
           const subId = inv.subscription;
           if (subId) {
             try {
               const sub = await stripe.subscriptions.retrieve(typeof subId === "string" ? subId : subId.id);
               status = normStatus(sub.status);
+              renewsAt = subRenews(sub);
             } catch (e) { /* keep optimistic "active" on lookup failure */ }
           }
           await mergeBilling(companyId, { status });
-          await mergeSettings(companyId, { subscriptionStatus: status });
+          await mergeSettings(companyId, { subscriptionStatus: status, renewsAt });
         }
         break;
       }
