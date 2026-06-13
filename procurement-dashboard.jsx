@@ -84,6 +84,10 @@ const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
 const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices"];
+// Pure money/price keys an engineer has no operational need for. The real gate is
+// server-side RLS (proqure_security_migration.sql); the client mirrors it so an
+// engineer never caches or echoes this data. KEEP IN SYNC WITH THE SQL POLICY.
+const ENGINEER_BLOCKED = ["piq_costs","piq_quote_sets","piq_quote_library","piq_invoices"];
 
 // Pull every key for this user from the cloud into localStorage (on login)
 async function cloudPull(userId) {
@@ -2909,6 +2913,9 @@ function ProQureApp({ session, companyId }) {
   // Defensive: treat the retired "owner" role (or any unknown role) as manager / engineer sensibly.
   const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
   const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
+  // Only true once membership is actually resolved - never during the brief
+  // pre-load window where myRole transiently defaults to "engineer".
+  const isEngineer = !!myMember && myRole === "engineer";
   // A brand-new company's first Manager should set up their workspace before using it.
   // Only fires for a cloud account that is a manager with no company name saved yet, so
   // it never bothers an existing/established company (or invited engineers/buyers).
@@ -4477,9 +4484,22 @@ ${settings.company||""}`;
   const queueCloudPush = useCallback((key, valueObj) => {
     if (!cloudEnabled || !cloudUserId) return;
     if (!hydratedRef.current) return;
+    // Engineers must never write the money keys - skip so a cleared/empty local
+    // copy can't attempt to overwrite real cloud data (the server RLS also refuses).
+    if (isEngineer && ENGINEER_BLOCKED.includes(key)) return;
     clearTimeout(pushTimers.current[key]);
     pushTimers.current[key] = setTimeout(() => { cloudPush(cloudUserId, key, valueObj).catch(()=>{}); }, 800);
-  }, [cloudUserId]);
+  }, [cloudUserId, isEngineer]);
+
+  // Client hygiene matching the server RBAC: an engineer must not retain price/
+  // cost data cached from a previous higher-privileged session (e.g. a role
+  // downgrade). RLS is the authority; this keeps the local copy honest. Gated on
+  // a CONFIRMED engineer membership so it never wipes a manager mid-load.
+  useEffect(() => {
+    if (!isEngineer) return;
+    ENGINEER_BLOCKED.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+    setCosts([]); setInvoices([]); setSavedQuoteSets([]); setQuoteLibrary([]);
+  }, [isEngineer]);
 
   useEffect(()=>{ queueCloudPush("piq_requests", requests); }, [requests, queueCloudPush]);
   useEffect(()=>{ try{localStorage.setItem("piq_catalogues",JSON.stringify(catalogues))}catch{} },[catalogues]);
