@@ -1171,7 +1171,7 @@ function openCompany(c){
   // --- PANE: Overview ---
   const _ti=trialInfo(c); const trialStr=_ti?(_ti.days==null?"On trial":((_ti.days<0?("ended "+(-_ti.days)+"d ago"):(_ti.days+" days left"))+(_ti.est?" (est.)":""))):null;
   const paneOverview='<div class="dpane on" data-pane="overview">'+
-    '<div class="sec-title">Set plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button>'+(c.stripeCustomerId?'<a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none;margin-left:auto">Stripe \u2197</a>':'')+'</div>'+
+    '<div class="sec-title">Set plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button>'+'<button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="notifyCompany(\''+esc(c.companyId)+'\')">Notify\u2026</button>'+(c.stripeCustomerId?'<a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none;margin-left:auto">Stripe \u2197</a>':'')+'</div>'+
     ((c.aiBudgetPct||0)>=100?'<div class="acc" style="border-color:rgba(229,100,92,.4);margin-top:14px"><div style="padding:12px 15px;font-size:12px;color:var(--red);font-weight:600">AI is at the monthly cap \u2014 paused for this company until the 1st (or a plan change).</div></div>':'')+
     '<div class="sec-title">Company</div>'+
     '<div class="acc-body" style="padding:0">'+
@@ -1229,6 +1229,7 @@ function openCompany(c){
 }
 function closeDrawer(){ $("scrim").classList.remove("open"); $("drawer").classList.remove("open"); }
 $("scrim").addEventListener("click",closeDrawer);
+function notifyCompany(id){ try{ nd.aud="companies"; nd.cos=[id]; closeDrawer(); goTab("notifications"); }catch(e){ toast("Could not open the composer",true); } }
 async function setPlan(id){ try{ const d=await api("set-plan",{companyId:id,plan:$("planSel").value}); toast(d.message||"Plan updated."); await loadData(); closeDrawer(); }catch(e){ toast(e.message,true); } }
 async function doAction(a,p){ try{ const d=await api(a,p); toast(d.message||"Done."); }catch(e){ toast(e.message,true); } }
 async function doActionConfirm(a,p,msg){ if(!window.confirm(msg)) return; try{ const d=await api(a,p); toast(d.message||"Done."); }catch(e){ toast(e.message,true); } }
