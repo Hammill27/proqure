@@ -8,6 +8,8 @@
 // policy, so only the service role can insert). Every send is written to the same
 // piq_admin_audit feed the Audit tab reads.
 import { createClient } from "@supabase/supabase-js";
+import { cadenceOf, emailEligible } from "../notify-policy.js";
+import { renderNotificationEmail, sendMail } from "./notify-mail.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -45,6 +47,40 @@ async function writeAudit(admin, actor, entry) {
       { onConflict: "user_id,store_key" }
     );
   } catch { /* audit must never break the action */ }
+}
+
+// Resolve recipients for an announcement and email the eligible ones (per-recipient
+// for privacy; capped + lightly concurrent to stay within the function budget — very
+// large "all companies" broadcasts should move to a queue, but targeted company
+// notices are small). Filtered by the policy: role rank, the announcement's optional
+// min_role restriction, and each user's saved email preferences.
+async function dispatchAnnouncementEmail(admin, ann) {
+  let mq = admin.from("members").select("email,role,user_id,company_id");
+  if (ann.target === "companies" && Array.isArray(ann.company_ids) && ann.company_ids.length)
+    mq = mq.in("company_id", ann.company_ids);
+  const { data: members } = await mq;
+  const list = (members || []).filter(m => m && m.email);
+  if (!list.length) return;
+  let prefMap = {};
+  try {
+    const { data: states } = await admin.from("notification_state")
+      .select("user_id,company_id,email_prefs").in("user_id", list.map(m => m.user_id));
+    (states || []).forEach(st => { prefMap[`${st.user_id}:${st.company_id}`] = st.email_prefs || {}; });
+  } catch (e) { /* no prefs => defaults */ }
+  const eligible = list
+    .filter(m => emailEligible(ann.category, m.role, prefMap[`${m.user_id}:${m.company_id}`], ann.min_role))
+    .map(m => ({ email: m.email, companyId: m.company_id }))
+    .slice(0, 100);
+  if (!eligible.length) return;
+  const items = [{ type: ann.type, title: ann.title, body: ann.body, cta_label: ann.cta_label, cta_href: ann.cta_href }];
+  const heading = ann.category === "maintenance" ? "Planned maintenance" : ann.title;
+  const intro = ann.category === "maintenance" ? "Scheduled maintenance affecting your ProQure workspace." : "";
+  const subject = ann.category === "maintenance" ? "ProQure \u2014 planned maintenance" : `ProQure \u2014 ${ann.title}`;
+  const html = renderNotificationEmail({ heading, intro, items });
+  for (let i = 0; i < eligible.length; i += 10) {
+    const batch = eligible.slice(i, i + 10);
+    await Promise.all(batch.map(r => sendMail({ to: r.email, subject, html, companyId: r.companyId })));
+  }
 }
 
 export default async function handler(req, res) {
@@ -110,6 +146,7 @@ export default async function handler(req, res) {
         target,
         company_ids: target === "companies" ? companyIds : [],
         persistent: !!body.persistent,
+        min_role: ["buyer","manager"].includes(body.min_role) ? body.min_role : null,
         starts_at: body.starts_at || null,
         ends_at: body.ends_at || null,
         created_by: callerEmail,
@@ -118,6 +155,7 @@ export default async function handler(req, res) {
       if (error) throw error;
       const scope = target === "all" ? "all companies" : `${companyIds.length} compan${companyIds.length === 1 ? "y" : "ies"}`;
       await writeAudit(admin, caller, { action: "send-notification", target: scope, detail: `${type}: ${title}` });
+      try { if (cadenceOf(data.category) === "immediate") await dispatchAnnouncementEmail(admin, data); } catch (e) { /* email never blocks the send */ }
       res.status(200).json({ announcement: data }); return;
     }
 
