@@ -625,7 +625,7 @@ async function loadData(quiet){
 /* ===================== Notifications (Phase 1) ===================== */
 const NTYPES=[["info","Information","#2E5C8A"],["success","Success","#15824F"],["warning","Warning","#9A5B16"],["critical","Critical","#B23B3B"]];
 const NTC=Object.fromEntries(NTYPES.map(t=>[t[0],t[2]]));
-let nd={ tpl:"maintenance", type:"critical", aud:"all", cos:[], persist:true, title:"", body:"",
+let nd={ tpl:"maintenance", type:"critical", aud:"all", cos:[], persist:true, minRole:"", title:"", body:"",
          mDate:"", mStart:"22:00", mDur:90, mImpact:"ProQure may be briefly unavailable. Your data is safe.", ctaLabel:"", ctaHref:"" };
 let nSending=false;
 
@@ -685,6 +685,7 @@ function renderNotifications(){
         : nField("Title",'<input id="nfTitle" value="'+nEsc(nd.title)+'" placeholder="e.g. Faster RFQ analysis is here" style="'+I+'">')+nField("Message",'<textarea id="nfBody" rows="3" placeholder="What changed and why it matters, in plain terms." style="'+I+';resize:vertical">'+nEsc(nd.body)+'</textarea>'))
      +nField("Audience", nSeg("aud",[["all","All companies"],["companies","Specific companies / tenancy"]],nd.aud))
      +(nd.aud==="companies" ? nField("Choose companies",'<select id="nfCos" multiple size="5" style="'+I+'">'+cos.map(c=>'<option value="'+nEsc(c.id)+'"'+(nd.cos.includes(c.id)?" selected":"")+'>'+nEsc(c.name)+'</option>').join("")+'</select>') : "")
+     +nField("Who sees this", nSeg("minrole",[["","Everyone in the company"],["buyer","Buyers & managers"],["manager","Managers only"]],nd.minRole))
      +'<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">'
        +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#222;cursor:pointer"><input id="nfPersist" type="checkbox" '+(nd.persist?"checked":"")+(maint?" disabled":"")+'> Keep visible until dismissed</label>'
      +'</div>'
@@ -704,6 +705,7 @@ function renderNotifications(){
       if(k==='tpl'){ nd.tpl=v; if(v==='maintenance') nd.type='critical'; }
       if(k==='type') nd.type=v;
       if(k==='aud') nd.aud=v;
+      if(k==='minrole') nd.minRole=v;
       renderNotifications();
     }));
   });
@@ -722,7 +724,7 @@ function renderNotifications(){
     try{
       await napi("announce",{ type:d.type, category:d.category, title:d.title, body:d.body,
         cta_label:d.cta_label, cta_href:d.cta_href, persistent:d.persistent, starts_at:d.starts_at, ends_at:d.ends_at,
-        target: nd.aud==="all"?"all":"companies", company_ids: nd.aud==="all"?[]:nd.cos });
+        target: nd.aud==="all"?"all":"companies", company_ids: nd.aud==="all"?[]:nd.cos, min_role: nd.minRole||null });
       toast("Notification sent");
       nd.title=""; nd.body="";
     }catch(e){ toast(e.message,true); }
