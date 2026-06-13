@@ -396,6 +396,24 @@ export default async function handler(req, res) {
     await bumpStat(userId, { received: 1, receivedAttachments: attN });
     await pushEvent(userId, { type: "received", from: fromEmail, matchedBy, att: attN });
 
+    // Notify the buying team that a quote landed. Server-side via proqure_notify
+    // (service role -> bypasses RLS); category "workflow" so buyers + managers see it.
+    // Deduped on the inbound email id so a redelivered webhook can't double-post.
+    try {
+      const jobRef = (wRequests[wRi] && wRequests[wRi].jobRef) || "";
+      await supabase.rpc("proqure_notify", {
+        p_company: userId,
+        p_type: "success",
+        p_category: "workflow",
+        p_title: `${sup.name || "A supplier"} replied to your RFQ`,
+        p_body: `Their quote has been added to the quote box${jobRef ? ` for ${jobRef}` : ""}.`,
+        p_dedupe: `workflow:reply:${emailId || (userId + ":" + wRi + ":" + wSi + ":" + stamp)}`,
+        p_cta_label: "Open ProQure",
+        p_cta_href: "https://app.proqure.co.uk",
+        p_meta: { kind: "supplier-reply", supplier: sup.name || null, jobRef: jobRef || null, matchedBy },
+      });
+    } catch (e) { console.warn("api/inbound: notify failed (non-fatal)", e && e.message); }
+
     try {
       const { data: sRows } = await supabase.from("proqure_data").select("value").eq("store_key", "piq_settings").eq("user_id", userId).limit(1);
       const settings = (sRows && sRows[0]) ? sRows[0].value : null;
