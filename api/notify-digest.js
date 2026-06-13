@@ -8,7 +8,7 @@
 // Triggered by Vercel Cron (see vercel.json). Protected by CRON_SECRET: Vercel sends
 // `Authorization: Bearer <CRON_SECRET>` when that env var is set.
 import { createClient } from "@supabase/supabase-js";
-import { cadenceOf, emailEligible, canSeeInApp, policyFor } from "../notify-policy.js";
+import { cadenceOf, emailEligible, canSeeInApp } from "../notify-policy.js";
 import { renderNotificationEmail, sendMail } from "./notify-mail.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -17,10 +17,13 @@ const CRON_SECRET  = process.env.CRON_SECRET;
 const MAX_COMPANIES = 80;   // per run; raise / paginate as the tenant base grows
 
 export default async function handler(req, res) {
-  // Auth: Vercel Cron bearer, or an explicit ?secret= for manual runs.
+  // Auth: Vercel Cron bearer, or an explicit ?secret= for manual runs. Fail CLOSED —
+  // this endpoint sends email, so it must never run unauthenticated. If CRON_SECRET
+  // isn't set, refuse rather than expose a publicly-triggerable mail sender.
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const qsecret = (req.query && req.query.secret) || "";
-  if (CRON_SECRET && bearer !== CRON_SECRET && qsecret !== CRON_SECRET) {
+  if (!CRON_SECRET) return res.status(500).json({ error: "Digest not configured (set CRON_SECRET)." });
+  if (bearer !== CRON_SECRET && qsecret !== CRON_SECRET) {
     return res.status(401).json({ error: "Unauthorised." });
   }
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: "Server not configured." });
@@ -43,7 +46,13 @@ export default async function handler(req, res) {
         admin.from("members").select("email,role,user_id,company_id").eq("company_id", companyId),
         admin.from("announcements").select("*").eq("category", "release").is("recalled_at", null).gte("created_at", since),
       ]);
-      const digestNotifs = (notifs || []).filter(n => cadenceOf(n.category) === "digest");
+      // System notifications (the notifications table) have no real-time email path yet,
+      // so the daily digest is their ONLY email channel: include everything emailable
+      // (immediate + digest), not just digest-cadence — otherwise mandatory billing /
+      // system emails would never be delivered. Admin announcements that are "immediate"
+      // already emailed at send time and live in the announcements table, so widening
+      // this filter can't double-send them.
+      const digestNotifs = (notifs || []).filter(n => cadenceOf(n.category) !== "off");
       // Release announcements that target this company and are in-window.
       const inWin = (a) => (!a.starts_at || Date.parse(a.starts_at) <= now) && (!a.ends_at || Date.parse(a.ends_at) >= now);
       const relAnns = (anns || []).filter(a => inWin(a) && (a.target === "all" || (Array.isArray(a.company_ids) && a.company_ids.includes(companyId))))
