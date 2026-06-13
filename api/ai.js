@@ -200,7 +200,7 @@ export default async function handler(req, res) {
           headers: {
             "Content-Type": "application/json",
             "Authorization": "Bearer " + key,
-            "HTTP-Referer": "https://proqure.app",
+            "HTTP-Referer": "https://app.proqure.co.uk",
             "X-Title": "ProQure",
           },
           body: JSON.stringify(body),
