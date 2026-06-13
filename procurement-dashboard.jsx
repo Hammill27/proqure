@@ -3016,6 +3016,10 @@ function ProQureApp({ session, companyId }) {
       }
       setTeam(prev => [...prev, member]);
       logActivity("Team member added", `${email} added as ${ROLES[inviteRole]?.label||inviteRole}`, { entity:"team" });
+      notify({ type:"info", category:"team", title:"Team member added",
+        body:`${inviteName.trim() ? inviteName.trim() + " (" + email + ")" : email} was added as ${ROLES[inviteRole]?.label || inviteRole}.`,
+        dedupeKey:`team:invited:${email}:${new Date().toISOString().slice(0,16)}`,
+        meta:{ kind:"invited", email, role: inviteRole } });
       setInviteEmail(""); setInviteName(""); setInviteRole("engineer"); setInviteEmployment("subcontractor");
     } finally { setInviteBusy(false); }
   }
@@ -3166,6 +3170,23 @@ function ProQureApp({ session, companyId }) {
     };
   };
 
+  const notifyInvoiceFlagged = (rec) => {
+    if (!rec || !rec.match || rec.match.result !== "mismatch") return;
+    const flags = rec.match.flags || [];
+    const reds = flags.filter(f => f.level === "red").length;
+    const detail = reds
+      ? `${reds} blocking discrepanc${reds === 1 ? "y" : "ies"}`
+      : `${flags.length || "some"} discrepanc${flags.length === 1 ? "y" : "ies"}`;
+    notify({
+      type: "warning", category: "invoice",
+      title: `Invoice flagged: ${rec.supplier || "supplier"}`,
+      body: `${rec.invoiceNumber ? "#" + rec.invoiceNumber + " " : ""}${invGBP(rec.total, rec.currency)} \u2014 ${detail} against ${rec.orderPoNumber || "the PO"}. A manager must approve it.`,
+      dedupeKey: `invoice:flagged:${rec.id}`,
+      cta: { label: "Review invoice" },
+      meta: { invoiceId: rec.id, supplier: rec.supplier || null, reds },
+    });
+  };
+
   const runInvoiceFile = async (file) => {
     if (invBusy || !file) return;
     setInvBusy(true); setInvStage("Reading the invoice\u2026");
@@ -3177,6 +3198,7 @@ function ProQureApp({ session, companyId }) {
       setInvoices(p => [rec, ...p]); setInvOpenId(rec.id);
       logActivity("Invoice captured", `${rec.supplier || "Supplier"} ${rec.invoiceNumber ? "#" + rec.invoiceNumber : ""} ${invGBP(rec.total, rec.currency)} \u2014 ${rec.match.result}`, { entity: "order", jobRef: rec.jobRef });
       showToast(rec.match.result === "clean" ? "Invoice matched cleanly \u2014 review and approve." : "Invoice captured \u2014 discrepancies flagged for review.", rec.match.result === "mismatch" ? "warn" : "success");
+      notifyInvoiceFlagged(rec);
     } catch (e) {
       showToast("Could not read that invoice: " + (e.message || "error"), "warn");
     } finally { setInvBusy(false); setInvStage(""); }
@@ -3193,6 +3215,7 @@ function ProQureApp({ session, companyId }) {
       setInvoices(p => [rec, ...p]); setInvOpenId(rec.id); setInvText("");
       logActivity("Invoice captured", `${rec.supplier || "Supplier"} ${rec.invoiceNumber ? "#" + rec.invoiceNumber : ""} ${invGBP(rec.total, rec.currency)} \u2014 ${rec.match.result}`, { entity: "order", jobRef: rec.jobRef });
       showToast(rec.match.result === "clean" ? "Invoice matched cleanly \u2014 review and approve." : "Invoice captured \u2014 discrepancies flagged for review.", rec.match.result === "mismatch" ? "warn" : "success");
+      notifyInvoiceFlagged(rec);
     } catch (e) {
       showToast("Could not read that invoice: " + (e.message || "error"), "warn");
     } finally { setInvBusy(false); setInvStage(""); }
@@ -5083,8 +5106,16 @@ ${settings.company||""}`;
       await omGeneratePdf(data, project, settings, { split: omSplit, web: omOnline, full: omFull });
       logActivity("O&M file generated", `O&M pack for ${proj.jobRef} (${mats.length} items)`, { entity:"order", jobRef: proj.jobRef });
       showToast("O&M file generated and downloaded.");
+      notify({ type:"success", category:"process", title:`O&M pack ready: ${proj.jobRef}`,
+        body:`The O&M pack for ${proj.jobRef} (${mats.length} item${mats.length===1?"":"s"}) has been generated.`,
+        dedupeKey:`process:om:${proj.jobRef}:${new Date().toISOString().slice(0,16)}`,
+        meta:{ kind:"om-generated", jobRef: proj.jobRef, items: mats.length } });
     } catch (e) {
       showToast("Could not generate the O&M file: " + (e.message || "error"), "warn");
+      notify({ type:"warning", category:"process", title:`O&M pack failed: ${proj.jobRef}`,
+        body:`The O&M pack for ${proj.jobRef} couldn't be generated. ${(e && e.message) ? e.message : "Please try again."}`,
+        dedupeKey:`process:om-fail:${proj.jobRef}:${new Date().toISOString().slice(0,16)}`,
+        meta:{ kind:"om-failed", jobRef: proj.jobRef } });
     } finally {
       setOmBusy(false); setOmStage(""); setOmJob(null);
     }
