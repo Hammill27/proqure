@@ -91,6 +91,33 @@ async function meterAdd(companyId, cost) {
     { onConflict: "user_id,store_key" });
 }
 
+// Emit a server-authoritative AI-budget notification when this month's spend crosses
+// a threshold. Idempotent: the dedupe keys match the client's (usage:ai:<pct>:<ym>) so
+// the server and client paths can never double-post. proqure_notify runs as the
+// service role and bypasses RLS, so this works regardless of who (if anyone) is online
+// — closing the gap where AI alerts only fired from a manager's open browser.
+async function notifyBudget(companyId, plan, spentUsd) {
+  const cap = AI_BUDGET[plan] != null ? AI_BUDGET[plan] : AI_BUDGET.trial;
+  if (!(cap > 0)) return;
+  const pct = (Number(spentUsd) || 0) * USD_TO_GBP / cap;
+  const ms = [
+    [1,    "100", "critical", "You've reached this month's AI limit",   "AI features pause until the 1st, or upgrade your plan for more headroom."],
+    [0.95, "95",  "warning",  "AI usage at 95% of this month's budget", "AI keeps working until 100%. Resets on the 1st, or upgrade for more headroom."],
+    [0.8,  "80",  "warning",  "AI usage at 80% of this month's budget", "You've used 80% of this month's AI quota. It resets on the 1st."],
+    [0.5,  "50",  "info",     "You've used 50% of your AI quota",       "Halfway through this month's AI allowance. It resets on the 1st."],
+  ];
+  const hit = ms.find(m => pct >= m[0]);
+  if (!hit) return;
+  try {
+    await sb.rpc("proqure_notify", {
+      p_company: companyId, p_type: hit[2], p_category: "usage_cost",
+      p_title: hit[3], p_body: hit[4], p_dedupe: `usage:ai:${hit[1]}:${aiPeriod()}`,
+      p_cta_label: hit[0] >= 0.8 ? "See plans" : null, p_cta_href: null,
+      p_meta: { pct: Math.round(pct * 100) },
+    });
+  } catch (e) { /* notify is best-effort; never affects the AI response */ }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -222,7 +249,13 @@ export default async function handler(req, res) {
           const usage = d.usage || null;
           const cost = usage && usage.cost != null ? Number(usage.cost) : null;
           // Record authoritative spend so the cap can't be bypassed client-side.
-          if (sb && effectiveCompany && cost != null) { try { await meterAdd(effectiveCompany, cost); } catch (e) { /* never break on meter write */ } }
+          if (sb && effectiveCompany && cost != null) {
+            try {
+              await meterAdd(effectiveCompany, cost);
+              const after = await meterRead(effectiveCompany);
+              await notifyBudget(effectiveCompany, after.plan, after.spent);
+            } catch (e) { /* never break the AI response on a meter/notify write */ }
+          }
           return res.status(200).json({ text, citations, usage, cost, model, web: !!web });
         }
       } catch (e) {
