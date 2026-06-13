@@ -4488,7 +4488,6 @@ ${settings.company||""}`;
   // role); server channels (and later email/push) use the proqure_notify() RPC.
   const NT_COLOR = { info:"var(--indigo)", success:"var(--green)", warning:"var(--amber)", critical:"var(--red)" };
   const NT_BG    = { info:"var(--indigo-light)", success:"var(--green-light)", warning:"var(--amber-light)", critical:"var(--red-light)" };
-  const NMONEY = ["billing","usage_cost","invoice"];
 
   const [notifRaw, setNotifRaw]     = useState({ anns: [], notifs: [] });
   const [notifState, setNotifState] = useState({ read_ids: [], dismissed: [], last_seen_at: null, email_prefs: {} });
@@ -4568,7 +4567,10 @@ ${settings.company||""}`;
   // Emit a system notification for the current company (idempotent on dedupe_key).
   const notify = useCallback(async (n) => {
     if (!cloudEnabled || !supabase || !cloudUserId) return;
-    if (isEngineer && NMONEY.includes(n.category)) return; // engineers don't receive money alerts
+    // Only emit a category this user's role is allowed to see/emit. This mirrors the
+    // database RBAC (notif_role_guard) exactly, so a client insert is never rejected
+    // and the in-app model matches the server one-for-one.
+    if (notifRank(myRole) < notifPolicyFor(n.category).inApp) return;
     const dk = n.dedupeKey || ("evt-" + Date.now() + "-" + Math.random().toString(36).slice(2,8));
     try {
       await supabase.from("notifications").upsert(
@@ -4577,7 +4579,7 @@ ${settings.company||""}`;
            dedupe_key: dk, meta: n.meta || {} }],
         { onConflict: "company_id,dedupe_key", ignoreDuplicates: true });
     } catch (e) {}
-  }, [cloudUserId, isEngineer]);
+  }, [cloudUserId, myRole]);
 
   // Usage / entitlement thresholds -> warnings (once per period via dedupe_key).
   const evaluateUsageAlerts = useCallback(async () => {
