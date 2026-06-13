@@ -479,6 +479,7 @@ const ICON = {
   zzz:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h6l-6 8h6M14 4h6l-6 6h6"/></svg>',
   coin:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="16.5" text-anchor="middle" font-family="ui-sans-serif,system-ui,Segoe UI,sans-serif" font-size="12" font-weight="800" fill="currentColor">\u00A3</text></svg>',
   shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
+  bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
 };
 function ic(name){ return '<span class="ic">'+(ICON[name]||"")+'</span>'; }
 
@@ -503,7 +504,7 @@ function applyTheme(t){ document.documentElement.setAttribute("data-theme",t); t
 (function(){ let t="dark"; try{ t=localStorage.getItem("pq_admin_theme")||"dark"; }catch(e){} applyTheme(t); })();
 $("themeBtn").addEventListener("click",()=>applyTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark"));
 
-const TABS=[["overview","Overview","overview"],["companies","Companies","building"],["costs","Cost & usage","coin"],["health","Health","health"],["users","Users","users"],["signups","Signups","signup"],["audit","Audit log","shield"]];
+const TABS=[["overview","Overview","overview"],["companies","Companies","building"],["costs","Cost & usage","coin"],["health","Health","health"],["notifications","Notifications","bell"],["users","Users","users"],["signups","Signups","signup"],["audit","Audit log","shield"]];
 $("nav").innerHTML = TABS.map(([id,label,icon])=>'<button class="navitem'+(id==="overview"?" on":"")+'" data-tab="'+id+'">'+ic(icon)+'<span class="lbl">'+label+'</span></button>').join("");
 document.querySelectorAll(".navitem").forEach(b=>b.addEventListener("click",()=>goTab(b.dataset.tab)));
 function goTab(id, plan){
@@ -620,7 +621,142 @@ async function loadData(quiet){
   }
 }
 
-function render(){ if(currentTab==="health"){ renderHealth(); return; } if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
+
+/* ===================== Notifications (Phase 1) ===================== */
+const NTYPES=[["info","Information","#2E5C8A"],["success","Success","#15824F"],["warning","Warning","#9A5B16"],["critical","Critical","#B23B3B"]];
+const NTC=Object.fromEntries(NTYPES.map(t=>[t[0],t[2]]));
+let nd={ tpl:"maintenance", type:"critical", aud:"all", cos:[], persist:true, title:"", body:"",
+         mDate:"", mStart:"22:00", mDur:90, mImpact:"ProQure may be briefly unavailable. Your data is safe.", ctaLabel:"", ctaHref:"" };
+let nSending=false;
+
+async function napi(action,payload){
+  const opt={ method:"POST", headers:{ "Authorization":"Bearer "+session.access_token, "Content-Type":"application/json" }, body:JSON.stringify({action,...(payload||{})}) };
+  const r=await fetch(API_BASE+"/api/notifications",opt); let d={}; try{ d=await r.json(); }catch{}
+  if(!r.ok){ const e=new Error((d&&d.error)||("Request failed ("+r.status+")")); e.status=r.status; throw e; }
+  return d;
+}
+
+function nBuild(){
+  if(nd.tpl==="maintenance"){
+    const dt = nd.mDate ? new Date(nd.mDate+"T"+(nd.mStart||"22:00")) : null;
+    const end = dt ? new Date(dt.getTime()+(+nd.mDur||90)*60000) : null;
+    const day = dt ? dt.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}) : "(set a date)";
+    const fmt = x=> x ? x.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}) : "";
+    const win = dt ? (day+", "+fmt(dt)+"\u2013"+fmt(end)+" BST") : "(set a date)";
+    return { type:"critical", category:"maintenance", persistent:true,
+      title:"Planned maintenance \u2014 "+win, body:"~"+(+nd.mDur||90)+" min. "+(nd.mImpact||""),
+      starts_at: dt ? new Date(dt.getTime()-48*3600000).toISOString() : null,
+      ends_at: end ? end.toISOString() : null,
+      cta_label: nd.ctaLabel||null, cta_href: nd.ctaHref||null };
+  }
+  return { type:nd.type, category: nd.tpl==="release"?"release":"announcement", persistent:nd.persist,
+    title:(nd.title||"(title)"), body:(nd.body||""), starts_at:null, ends_at:null,
+    cta_label: nd.ctaLabel||null, cta_href: nd.ctaHref||null };
+}
+function nEsc(x){ return (x==null?"":String(x)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function nPreview(){
+  const d=nBuild(); const col=NTC[d.type]; const wash={info:"#EAF0F6",success:"#EAF3EE",warning:"#FBF3E8",critical:"#FBECEC"}[d.type];
+  let cd=""; if(d.starts_at){ const mins=Math.max(0,Math.round((new Date(d.starts_at).getTime()+48*3600000-Date.now())/60000)); cd=' <span style="font-family:JetBrains Mono,monospace;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;background:rgba(0,0,0,.06)">starts in '+Math.floor(mins/60)+'h '+(mins%60)+'m</span>'; }
+  return '<div style="border-radius:8px;padding:11px 13px;background:'+wash+';border-left:3px solid '+col+';margin-bottom:12px">'
+    +'<div style="font-weight:700;color:#222">'+nEsc(d.title)+cd+'</div>'
+    +'<div style="font-size:12.5px;color:#555;margin-top:2px">'+nEsc(d.body)+'</div></div>'
+    +'<div style="border:1px solid #e7e6e0;border-radius:10px;padding:10px 12px;display:flex;gap:10px">'
+    +'<div style="width:3px;border-radius:3px;background:'+col+'"></div>'
+    +'<div><div style="font-weight:700;color:#222;font-size:13px">'+nEsc(d.title)+'</div>'
+    +'<div style="font-size:12px;color:#666;margin-top:1px">'+nEsc(d.body)+'</div>'
+    +'<div style="font-family:JetBrains Mono,monospace;font-size:10px;color:#999;margin-top:5px">just now</div></div></div>';
+}
+function nField(label,inner){ return '<div style="margin-bottom:12px"><label style="display:block;font-size:11px;font-weight:700;color:#222;margin-bottom:5px">'+label+'</label>'+inner+'</div>'; }
+function nSeg(id,opts,cur){ return '<div class="nseg" data-seg="'+id+'" style="display:flex;gap:6px;flex-wrap:wrap">'+opts.map(o=>'<button data-v="'+o[0]+'" style="border:1px solid '+(o[0]===cur?"#15824F":"#e2e1da")+';background:'+(o[0]===cur?"#EAF3EE":"#fff")+';color:'+(o[0]===cur?"#0F5E39":"#666")+';border-radius:9px;padding:8px 12px;font-size:12.5px;font-weight:600;cursor:pointer">'+o[1]+'</button>').join("")+'</div>'; }
+
+function renderNotifications(){
+  const cos=(DATA&&DATA.companies||[]).map(c=>({id:c.companyId,name:c.name}));
+  const I='font:inherit;font-size:13px;width:100%;border:1px solid #e2e1da;border-radius:9px;padding:9px 11px;box-sizing:border-box';
+  const maint = nd.tpl==="maintenance";
+  $("view").innerHTML =
+   '<div style="display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start">'
+   +'<div class="panel">'
+     +'<h2 style="margin:0 0 2px">Send a notification</h2>'
+     +'<p class="muted" style="margin:0 0 16px;font-size:12.5px">Reaches the in-app notification centre for everyone you target. Critical notices also show a banner across the top of the app, and persistent ones stay until dismissed (maintenance stays until the window passes).</p>'
+     +nField("Template", nSeg("tpl",[["general","General announcement"],["maintenance","Planned maintenance"],["release","Feature release"]],nd.tpl))
+     +nField("Type", nSeg("type",NTYPES.map(t=>[t[0],t[1]]),nd.type))
+     +(maint
+        ? '<div style="display:flex;gap:10px">'+nField("Date",'<input id="nfDate" type="date" value="'+nd.mDate+'" style="'+I+'">')+nField("Start time",'<input id="nfStart" type="time" value="'+nd.mStart+'" style="'+I+'">')+nField("Duration (min)",'<input id="nfDur" type="number" min="5" step="5" value="'+nd.mDur+'" style="'+I+'">')+'</div>'+nField("Expected impact",'<input id="nfImpact" value="'+nEsc(nd.mImpact)+'" style="'+I+'">')
+        : nField("Title",'<input id="nfTitle" value="'+nEsc(nd.title)+'" placeholder="e.g. Faster RFQ analysis is here" style="'+I+'">')+nField("Message",'<textarea id="nfBody" rows="3" placeholder="What changed and why it matters, in plain terms." style="'+I+';resize:vertical">'+nEsc(nd.body)+'</textarea>'))
+     +nField("Audience", nSeg("aud",[["all","All companies"],["companies","Specific companies / tenancy"]],nd.aud))
+     +(nd.aud==="companies" ? nField("Choose companies",'<select id="nfCos" multiple size="5" style="'+I+'">'+cos.map(c=>'<option value="'+nEsc(c.id)+'"'+(nd.cos.includes(c.id)?" selected":"")+'>'+nEsc(c.name)+'</option>').join("")+'</select>') : "")
+     +'<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">'
+       +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#222;cursor:pointer"><input id="nfPersist" type="checkbox" '+(nd.persist?"checked":"")+(maint?" disabled":"")+'> Keep visible until dismissed</label>'
+     +'</div>'
+     +'<div style="display:flex;gap:10px">'+nField("Link label (optional)",'<input id="nfCtaLabel" value="'+nEsc(nd.ctaLabel)+'" placeholder="Read more" style="'+I+'">')+nField("Link URL (optional)",'<input id="nfCtaHref" value="'+nEsc(nd.ctaHref)+'" placeholder="https://\u2026" style="'+I+'">')+'</div>'
+     +'<button id="nfSend" class="btn" style="width:100%;background:#15824F;color:#fff;border:0;border-radius:10px;padding:11px;font-weight:700;font-size:13.5px;cursor:pointer">'+(nSending?"Sending\u2026":"Send notification")+'</button>'
+     +'<p class="muted" style="font-size:11px;margin-top:10px">Every send is recorded in the Audit log with who sent it and the audience. Recipients\u2019 read state is per person. You can recall or expire a notice below.</p>'
+   +'</div>'
+   +'<div>'
+     +'<div class="panel"><div style="font-family:JetBrains Mono,monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#999;margin-bottom:10px;font-weight:700">Live preview</div><div id="nfPreview">'+nPreview()+'</div></div>'
+     +'<div class="panel" style="margin-top:14px"><div style="font-family:JetBrains Mono,monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#999;margin-bottom:10px;font-weight:700">Recently sent</div><div id="nfSent" class="muted" style="font-size:12.5px">Loading\u2026</div></div>'
+   +'</div></div>';
+
+  // wire segmented controls
+  document.querySelectorAll('.nseg').forEach(seg=>{
+    seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      const k=seg.dataset.seg, v=b.dataset.v;
+      if(k==='tpl'){ nd.tpl=v; if(v==='maintenance') nd.type='critical'; }
+      if(k==='type') nd.type=v;
+      if(k==='aud') nd.aud=v;
+      renderNotifications();
+    }));
+  });
+  const upd=()=>{ const p=$("nfPreview"); if(p) p.innerHTML=nPreview(); };
+  const bind=(id,prop,ev)=>{ const el=$(id); if(el) el.addEventListener(ev||'input',e=>{ nd[prop]= el.type==='checkbox'?el.checked:el.value; upd(); }); };
+  bind("nfDate","mDate"); bind("nfStart","mStart"); bind("nfDur","mDur"); bind("nfImpact","mImpact");
+  bind("nfTitle","title"); bind("nfBody","body"); bind("nfCtaLabel","ctaLabel"); bind("nfCtaHref","ctaHref"); bind("nfPersist","persist","change");
+  const sel=$("nfCos"); if(sel) sel.addEventListener('change',()=>{ nd.cos=[...sel.selectedOptions].map(o=>o.value); });
+
+  const send=$("nfSend");
+  if(send) send.addEventListener('click',async()=>{
+    const d=nBuild();
+    if(!d.title || d.title==="(title)"){ toast("Add a title first",true); return; }
+    if(nd.aud==="companies" && nd.cos.length===0){ toast("Pick at least one company",true); return; }
+    nSending=true; send.textContent="Sending\u2026"; send.disabled=true;
+    try{
+      await napi("announce",{ type:d.type, category:d.category, title:d.title, body:d.body,
+        cta_label:d.cta_label, cta_href:d.cta_href, persistent:d.persistent, starts_at:d.starts_at, ends_at:d.ends_at,
+        target: nd.aud==="all"?"all":"companies", company_ids: nd.aud==="all"?[]:nd.cos });
+      toast("Notification sent");
+      nd.title=""; nd.body="";
+    }catch(e){ toast(e.message,true); }
+    nSending=false; renderNotifications(); loadSent();
+  });
+  loadSent();
+}
+
+async function loadSent(){
+  const box=$("nfSent"); if(!box) return;
+  try{
+    const d=await napi("list");
+    const rows=(d.announcements||[]);
+    if(!rows.length){ box.innerHTML='<span class="muted">Nothing sent yet.</span>'; return; }
+    box.innerHTML=rows.slice(0,12).map(a=>{
+      const col=NTC[a.type]||"#999"; const recalled=!!a.recalled_at;
+      const scope = a.target==="all" ? "All" : ((a.company_ids||[]).length+" co.");
+      const when = new Date(a.created_at).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #eee'+(recalled?';opacity:.5':'')+'">'
+        +'<span style="font-family:JetBrains Mono,monospace;font-size:9px;font-weight:700;padding:2px 6px;border-radius:999px;color:'+col+';background:rgba(0,0,0,.04)">'+a.type+'</span>'
+        +'<span style="flex:1;min-width:0;font-size:12.5px;color:#222;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+nEsc(a.title)+'</span>'
+        +'<span class="muted" style="font-size:10.5px">'+scope+' \u00b7 '+when+'</span>'
+        +(recalled?'<span class="muted" style="font-size:10.5px">recalled</span>'
+          :'<button data-recall="'+a.id+'" style="border:0;background:transparent;color:#B23B3B;font-size:11px;font-weight:700;cursor:pointer">Recall</button>')
+        +'</div>';
+    }).join("");
+    box.querySelectorAll('[data-recall]').forEach(b=>b.addEventListener('click',async()=>{
+      if(!confirm("Recall this notification? It will disappear for everyone.")) return;
+      try{ await napi("recall",{id:b.dataset.recall}); toast("Recalled"); loadSent(); }catch(e){ toast(e.message,true); }
+    }));
+  }catch(e){ box.innerHTML='<span class="muted">Could not load: '+nEsc(e.message)+'</span>'; }
+}
+
+function render(){ if(currentTab==="health"){ renderHealth(); return; } if(currentTab==="notifications"){ renderNotifications(); return; } if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,notifications:renderNotifications,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
 function planBadge(p){ p=esc(p||"trial"); return '<span class="badge b-'+p+'">'+p+'</span>'; }
 const PLAN_LABELS_ADM={trial:"Trial",sole:"Sole Trader",team:"Team",business:"Business",enterprise:"Enterprise",suspended:"Suspended",cancelled:"Cancelled"};
 function PLAN_LABEL(p){ return PLAN_LABELS_ADM[p]||(p?(p.charAt(0).toUpperCase()+p.slice(1)):"Trial"); }
