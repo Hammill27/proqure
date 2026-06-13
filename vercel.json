@@ -22,6 +22,10 @@
     {
       "path": "/api/notify-digest",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/notify-sweep",
+      "schedule": "0 7 * * *"
     }
   ]
 }
