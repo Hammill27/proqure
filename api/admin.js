@@ -67,6 +67,18 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: "You can only assign roles up to your own level" });
     }
 
+    // Guard: refuse to reassign an email that already belongs to a DIFFERENT company.
+    //    onConflict:"email" would otherwise silently move that person out of their
+    //    existing company (a griefing / integrity hazard). A genuine company change
+    //    must remove them from the old company first.
+    try {
+      const { data: existing } = await admin.from("members")
+        .select("company_id").eq("email", email).limit(1).maybeSingle();
+      if (existing && existing.company_id && existing.company_id !== companyId) {
+        return res.status(409).json({ error: "That email already belongs to another company. They must be removed from it before being invited here." });
+      }
+    } catch (e) { /* lookup failed - fall through; the upsert below still binds them */ }
+
     // 1) Register the membership first so that, however they sign in, they land in the
     //    right company with the right role.
     try {
