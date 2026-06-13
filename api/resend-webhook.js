@@ -22,7 +22,9 @@ import { createClient } from "@supabase/supabase-js";
 export const config = { api: { bodyParser: false } };
 
 const WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET || "";
-const SKIP_VERIFY = process.env.INBOUND_SKIP_VERIFY === "1";
+// Debug escape hatch for signature issues - HARD-DISABLED in production so a stray
+// env var can never make the live deploy accept unverified webhooks.
+const SKIP_VERIFY = process.env.INBOUND_SKIP_VERIFY === "1" && process.env.VERCEL_ENV !== "production";
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const supabase = (SUPABASE_URL && SERVICE_KEY) ? createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
@@ -74,6 +76,15 @@ function fieldFor(type) {
 
 async function bump(companyId, field) {
   if (!supabase) return;
+  // Atomic path: a row-locked increment (proqure_stats_bump) so a burst of
+  // concurrent events cannot lose a count via read-modify-write.
+  try {
+    const { error } = await supabase.rpc("proqure_stats_bump", {
+      p_company: companyId, p_key: STATS_KEY, p_fields: { [field]: 1 },
+    });
+    if (!error) return;
+  } catch (e) { /* RPC not installed yet - fall through to legacy path */ }
+  // Legacy fallback (non-atomic) so stats still record if the RPC is absent.
   const { data } = await supabase.from("proqure_data")
     .select("value").eq("user_id", companyId).eq("store_key", STATS_KEY).maybeSingle();
   const v = (data && data.value) || {};
@@ -88,11 +99,19 @@ async function bump(companyId, field) {
 // Append to the rolling webhook-event feed (metadata only: type, recipient, time).
 async function pushEvent(companyId, evt) {
   if (!supabase) return;
+  const event = { ts: new Date().toISOString(), ...evt };
+  // Atomic append (row-locked, capped) so concurrent events don't clobber the feed.
+  try {
+    const { error } = await supabase.rpc("proqure_event_push", {
+      p_company: companyId, p_key: EVENTS_KEY, p_event: event, p_cap: EVENTS_CAP,
+    });
+    if (!error) return;
+  } catch (e) { /* fall through to legacy path */ }
   try {
     const { data } = await supabase.from("proqure_data")
       .select("value").eq("user_id", companyId).eq("store_key", EVENTS_KEY).maybeSingle();
     const log = Array.isArray(data && data.value) ? data.value : [];
-    log.push({ ts: new Date().toISOString(), ...evt });
+    log.push(event);
     await supabase.from("proqure_data").upsert(
       { user_id: companyId, store_key: EVENTS_KEY, value: log.slice(-EVENTS_CAP), updated_at: new Date().toISOString() },
       { onConflict: "user_id,store_key" }
