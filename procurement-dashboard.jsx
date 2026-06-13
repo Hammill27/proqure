@@ -78,6 +78,7 @@ const planOf = (settings) => ENTITLEMENTS[settings && settings.plan] || ENTITLEM
 // converts recorded spend for the cap check and the Settings display. Keep in
 // sync with /api/ai (server wall) and the admin console.
 const USD_TO_GBP = 0.75;
+const TRIAL_DAYS = 14; // free-trial length; mirrors the admin console
 const billingPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", business: "Business", enterprise: "Enterprise" };
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
@@ -123,6 +124,8 @@ async function cloudPush(userId, storeKey, valueObj) {
         if (cv.plan != null) out.plan = cv.plan;
         if (cv.subscriptionStatus != null) out.subscriptionStatus = cv.subscriptionStatus;
         if (cv.stripeCustomerId != null) out.stripeCustomerId = cv.stripeCustomerId;
+        if (cv.trialEndsAt != null) out.trialEndsAt = cv.trialEndsAt;
+        if (cv.renewsAt != null) out.renewsAt = cv.renewsAt;
       }
     } catch (e) { /* best-effort */ }
   }
@@ -4559,28 +4562,36 @@ ${settings.company||""}`;
     const plan = (settings && settings.plan) || "trial";
     const ent = ENTITLEMENTS[plan] || ENTITLEMENTS.trial;
     const u = (usage && usage.period === ym) ? usage : {};
+    const planName = PLAN_LABELS[plan] || plan;
+    const pl = (n,w) => `${n} ${w}${n===1?"":"s"}`;
     const feats = [
-      ["omWebUsed","omWeb","O&M datasheet lookups"],
-      ["measureWebUsed","measureWeb","Measure web lookups"],
-      ["catalogueWebUsed","catalogueWeb","Catalogue web lookups"],
+      ["omWebUsed","omWeb","O&M pack"],
+      ["measureWebUsed","measureWeb","Measure web lookup"],
+      ["catalogueWebUsed","catalogueWeb","catalogue web lookup"],
     ];
-    for (const [usedKey, limKey, label] of feats) {
+    for (const [usedKey, limKey, noun] of feats) {
       const lim = ent[limKey]; if (!lim || lim === Infinity) continue;
-      const used = Number(u[usedKey] || 0); const pct = used / lim;
+      const used = Number(u[usedKey] || 0); const left = Math.max(0, lim - used); const pct = used / lim;
       if (pct >= 1)
-        await notify({ type:"warning", category:"usage", title:`${label}: monthly allowance used up`,
-          body:`You've used all ${lim} this month. The allowance resets on the 1st, or upgrade your plan for more.`,
-          dedupeKey:`usage:${limKey}:100:${ym}`, cta:{ label:"See plans" }, meta:{ used, lim } });
+        await notify({ type:"warning", category:"usage", title:`No ${noun}s left this month`,
+          body:`You've used all ${lim} of your ${noun} allowance. It resets on the 1st \u2014 upgrade your plan for more.`,
+          dedupeKey:`usage:${limKey}:100:${ym}`, cta:{ label:"See plans" }, meta:{ used, lim, left } });
       else if (pct >= 0.8)
-        await notify({ type:"warning", category:"usage", title:`${label}: 80% of this month's allowance used`,
-          body:`${used} of ${lim} used. The allowance resets on the 1st.`,
-          dedupeKey:`usage:${limKey}:80:${ym}`, meta:{ used, lim } });
+        await notify({ type:"warning", category:"usage", title:`${pl(left, noun)} remaining this month`,
+          body:`You've used ${used} of ${lim}. The allowance resets on the 1st.`,
+          dedupeKey:`usage:${limKey}:80:${ym}`, meta:{ used, lim, left } });
     }
     const seats = ent.seats; const inUse = (team || []).length;
-    if (seats && seats !== Infinity && inUse / seats >= 0.8)
-      await notify({ type:"warning", category:"usage", title:"Approaching your seat limit",
-        body:`${inUse} of ${seats} seats are in use on the ${PLAN_LABELS[plan]||plan} plan.`,
-        dedupeKey:`usage:seats:80:${plan}`, meta:{ inUse, seats } });
+    if (seats && seats !== Infinity) {
+      if (inUse >= seats)
+        await notify({ type:"warning", category:"usage", title:"All your seats are in use",
+          body:`All ${seats} seats on the ${planName} plan are taken. Upgrade to add more people.`,
+          dedupeKey:`usage:seats:100:${plan}`, cta:{ label:"See plans" }, meta:{ inUse, seats } });
+      else if (inUse / seats >= 0.8)
+        await notify({ type:"warning", category:"usage", title:"Approaching your seat limit",
+          body:`${inUse} of ${seats} seats are in use on the ${planName} plan.`,
+          dedupeKey:`usage:seats:80:${plan}`, meta:{ inUse, seats } });
+    }
     // AI budget (GBP) — authoritative server meter; buyers/managers only.
     if (!isEngineer) {
       try {
@@ -4588,18 +4599,49 @@ ${settings.company||""}`;
           .eq("user_id", cloudUserId).eq("store_key","piq_ai_meter").maybeSingle();
         const mv = m && m.value;
         const spentUsd = (mv && mv.period === ym) ? Number(mv.costPeriod || 0) : 0;
-        const gbp = spentUsd * USD_TO_GBP; const cap = ent.aiBudget;
-        if (cap > 0) {
-          if (gbp / cap >= 0.95)
-            await notify({ type:"warning", category:"usage_cost", title:"AI usage at 95% of this month's budget",
-              body:"AI features keep working until 100%. The budget resets on the 1st, or upgrade for more headroom.",
-              dedupeKey:`usage:ai:95:${ym}`, cta:{ label:"See plans" } });
-          else if (gbp / cap >= 0.8)
-            await notify({ type:"warning", category:"usage_cost", title:"AI usage at 80% of this month's budget",
-              body:"You've used 80% of this month's AI allowance. It resets on the 1st.",
-              dedupeKey:`usage:ai:80:${ym}` });
-        }
+        const cap = ent.aiBudget; const pct = cap > 0 ? (spentUsd * USD_TO_GBP) / cap : 0;
+        // Emit only the highest milestone crossed so 50/80/95/100 never stack at once.
+        const aiMs = [
+          [1,    "100", "critical", "You've reached this month's AI limit", "AI features pause until the 1st, or upgrade your plan for more headroom."],
+          [0.95, "95",  "warning",  "AI usage at 95% of this month's budget", "AI keeps working until 100%. Resets on the 1st, or upgrade for more headroom."],
+          [0.8,  "80",  "warning",  "AI usage at 80% of this month's budget", "You've used 80% of this month's AI quota. It resets on the 1st."],
+          [0.5,  "50",  "info",     "You've used 50% of your AI quota", "Halfway through this month's AI allowance. It resets on the 1st."],
+        ];
+        const hit = cap > 0 ? aiMs.find(ms => pct >= ms[0]) : null;
+        if (hit)
+          await notify({ type:hit[2], category:"usage_cost", title:hit[3], body:hit[4],
+            dedupeKey:`usage:ai:${hit[1]}:${ym}`, cta: hit[0] >= 0.8 ? { label:"See plans" } : undefined, meta:{ pct: Math.round(pct*100) } });
       } catch (e) {}
+    }
+    // Subscription & trial (buyers/managers).
+    if (!isEngineer && settings) {
+      if (settings.subscriptionStatus === "past_due")
+        await notify({ type:"critical", category:"billing", title:"Payment failed \u2014 update your card",
+          body:"We couldn't take your last payment. Update your card to keep your plan active.",
+          dedupeKey:`billing:past_due:${ym}`, cta:{ label:"Manage billing" } });
+      if (plan === "trial" && settings.trialEndsAt) {
+        const td = Date.parse(settings.trialEndsAt);
+        if (!isNaN(td)) {
+          const days = Math.ceil((td - Date.now()) / 86400000);
+          const date10 = new Date(td).toISOString().slice(0,10);
+          const trialMs = [[0,"critical","Your trial has ended"],[1,"warning","Your trial expires tomorrow"],[3,"warning","Your trial expires in 3 days"],[7,"warning","Your trial expires in 7 days"]];
+          const t = trialMs.find(x => days <= x[0]);
+          if (t) await notify({ type:t[1], category:"billing", title:t[2],
+            body:"Choose a plan to keep your team, history and settings \u2014 nothing is lost.",
+            dedupeKey:`billing:trial:${t[0]}:${date10}`, cta:{ label:"Choose a plan" } });
+        }
+      }
+      if (settings.renewsAt) {
+        const rd = Date.parse(settings.renewsAt);
+        if (!isNaN(rd)) {
+          const days = Math.ceil((rd - Date.now()) / 86400000);
+          if (days >= 0 && days <= 7)
+            await notify({ type:"info", category:"billing",
+              title:`Your subscription renews on ${new Date(rd).toLocaleDateString("en-GB",{ day:"numeric", month:"long" })}`,
+              body:`Your ${planName} plan renews in ${pl(days,"day")}.`,
+              dedupeKey:`billing:renew:${new Date(rd).toISOString().slice(0,10)}` });
+        }
+      }
     }
     loadNotifications();
   }, [cloudUserId, settings, usage, team, isEngineer, notify, loadNotifications]);
@@ -4680,7 +4722,10 @@ ${settings.company||""}`;
   );
 
   const renderNotifPanel = () => {
-    const rows = notifTab === "unread" ? notifUnreadList : notifList;
+    const SUBUSAGE = ["usage","usage_cost","billing","invoice"];
+    const rows = notifTab === "unread" ? notifUnreadList
+               : notifTab === "subusage" ? notifList.filter(n => SUBUSAGE.includes(n.category))
+               : notifList;
     return (
       <>
         {notifOpen && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, zIndex:998 }} />}
@@ -4693,10 +4738,10 @@ ${settings.company||""}`;
             <button onClick={markAllNotifRead} style={{ marginLeft:"auto", border:"none", background:"transparent", color:"var(--green-dark)", fontWeight:700, fontSize:12.5, cursor:"pointer" }}>Mark all as read</button>
           </div>
           <div style={{ display:"flex", gap:4, padding:"8px 12px", borderBottom:"1px solid var(--border)" }}>
-            {["all","unread"].map(t => (
-              <button key={t} onClick={() => setNotifTab(t)} style={{ border:"none", background:notifTab===t?"var(--green-light)":"transparent",
-                color:notifTab===t?"var(--green-deep)":"var(--text-secondary)", fontWeight:600, fontSize:12.5, padding:"5px 11px",
-                borderRadius:999, cursor:"pointer", textTransform:"capitalize" }}>{t}{t==="unread" && notifUnread>0 ? ` (${notifUnread})` : ""}</button>
+            {[["all","All"],["unread","Unread"],["subusage","Subscription & Usage"]].map(([id,label]) => (
+              <button key={id} onClick={() => setNotifTab(id)} style={{ border:"none", background:notifTab===id?"var(--green-light)":"transparent",
+                color:notifTab===id?"var(--green-deep)":"var(--text-secondary)", fontWeight:600, fontSize:12, padding:"5px 10px",
+                borderRadius:999, cursor:"pointer", whiteSpace:"nowrap" }}>{label}{id==="unread" && notifUnread>0 ? ` (${notifUnread})` : ""}</button>
             ))}
           </div>
           <div style={{ maxHeight:420, overflowY:"auto" }}>
@@ -10102,7 +10147,7 @@ function CompanyOnboarding({ session, initial, onComplete }) {
   const TRADES = ["Plumbing", "Heating & HVAC", "Electrical", "Mechanical", "Building / General", "Other"];
   const finish = () => {
     if (!f.company.trim()) { setErr("Your company name is needed to set up the workspace."); return; }
-    onComplete({ ...f, company: f.company.trim(), contactName: f.contactName.trim(), plan: "trial", onboarded: true });
+    onComplete({ ...f, company: f.company.trim(), contactName: f.contactName.trim(), plan: "trial", onboarded: true, trialEndsAt: new Date(Date.now()+TRIAL_DAYS*86400000).toISOString() });
   };
   const inputStyle = { width: "100%", boxSizing: "border-box", padding: "10px 12px", border: "1px solid var(--border)", background: "var(--bg-input)", color: "var(--text-primary)", borderRadius: "var(--radius-sm)", fontSize: 14, outline: "none" };
   const labelStyle = { fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 5, marginTop: 12 };
