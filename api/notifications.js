@@ -9,7 +9,7 @@
 // piq_admin_audit feed the Audit tab reads.
 import { createClient } from "@supabase/supabase-js";
 import { cadenceOf, emailEligible } from "../notify-policy.js";
-import { renderNotificationEmail, sendMail } from "./notify-mail.js";
+import { renderNotificationEmail, sendMail } from "../lib/notify-mail.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
