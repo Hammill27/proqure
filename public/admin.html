@@ -760,6 +760,26 @@ function nStatus(a){ const now=Date.now();
 }
 function nkpi(icon,n,l,x){ return '<div class="kpi">'+ic(icon)+'<div class="n">'+n+'</div><div class="l">'+l+'</div>'+(x?'<div class="x">'+x+'</div>':'')+'</div>'; }
 
+function nMaintHtml(){
+  const rows=nList||[];
+  const active=rows.filter(a=>a.category==="maintenance" && !a.recalled_at && nStatus(a)==="active");
+  if(active.length){
+    const a=active[0];
+    const when=a.ends_at?(" \u00b7 until "+new Date(a.ends_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})):"";
+    return '<div class="panel" style="margin-bottom:18px;border-color:var(--amber)">'
+      +'<div style="display:flex;align-items:center;gap:13px">'
+        +'<div style="width:40px;height:40px;border-radius:11px;background:rgba(224,160,77,.15);color:var(--amber);display:flex;align-items:center;justify-content:center;flex-shrink:0">'+ic("alert")+'</div>'
+        +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:800;color:var(--amber)">Maintenance mode is on</div>'
+          +'<div style="font-size:12.5px;color:var(--sub);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+nEsc(a.title)+when+(active.length>1?(" \u00b7 +"+(active.length-1)+" more"):"")+'</div></div>'
+        +'<button id="nMaintOff" class="btn btn-sm btn-danger" style="flex-shrink:0">Turn off now</button>'
+      +'</div></div>';
+  }
+  return '<div class="panel" style="margin-bottom:18px"><div style="display:flex;align-items:center;gap:13px">'
+    +'<div style="width:40px;height:40px;border-radius:11px;background:var(--chip);color:var(--soft);display:flex;align-items:center;justify-content:center;flex-shrink:0">'+ic("health")+'</div>'
+    +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:800">Maintenance mode is off</div>'
+      +'<div style="font-size:12.5px;color:var(--soft);margin-top:2px">Use the \u201CPlanned maintenance\u201D template below to schedule a banner \u2014 it shows across the app for everyone and clears automatically when the window ends. Turn it off here any time.</div></div>'
+  +'</div></div>';
+}
 function nMetricsHtml(){
   const rows=nList||[]; const now=Date.now(); const d30=now-30*864e5;
   const in30=rows.filter(a=>Date.parse(a.created_at||0)>=d30);
@@ -815,6 +835,12 @@ function nSentHtml(){
 }
 
 function nPaint(){
+  const mt=$("nMaint"); if(mt){ mt.innerHTML=nMaintHtml();
+    const off=$("nMaintOff"); if(off) off.addEventListener('click',async()=>{
+      if(!confirm("Turn off maintenance mode? The maintenance banner will be recalled for everyone.")) return;
+      try{ const act=(nList||[]).filter(a=>a.category==="maintenance"&&!a.recalled_at&&nStatus(a)==="active"); for(const a of act){ await napi("recall",{id:a.id}); } toast("Maintenance mode off."); await nLoad(true); }catch(e){ toast(e.message,true); }
+    });
+  }
   const m=$("nMetrics"); if(m) m.innerHTML=nMetricsHtml();
   const box=$("nfSent"); if(box) box.innerHTML=nSentHtml();
   document.querySelectorAll('[data-recall]').forEach(b=>b.addEventListener('click',async()=>{
@@ -838,7 +864,8 @@ function renderNotifications(){
   const cos=(DATA&&DATA.companies||[]).map(c=>({id:c.companyId,name:c.name}));
   const maint = nd.tpl==="maintenance";
   $("view").innerHTML =
-    '<div id="nMetrics"><div class="muted" style="padding:4px 0 18px">Loading\u2026</div></div>'
+    '<div id="nMaint"></div>'
+   +'<div id="nMetrics"><div class="muted" style="padding:4px 0 18px">Loading\u2026</div></div>'
    +'<div class="cols" style="align-items:start">'
    +'<div class="panel">'
      +'<h2 style="margin-bottom:2px">Send a notification</h2>'
