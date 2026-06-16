@@ -26,6 +26,10 @@
     {
       "path": "/api/notify-sweep",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/retention-sweep",
+      "schedule": "0 3 * * *"
     }
   ]
 }
