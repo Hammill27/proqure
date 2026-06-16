@@ -530,6 +530,12 @@ async function loadActivityInto(companyId){
     box.innerHTML = visible.length ? visible.slice(0,100).map(actRowHtml).join("") : '<div class="muted" style="padding:8px 0">No activity captured yet. Sign-ins and page visits will appear here as the team uses the app.</div>';
   }catch(e){ box.innerHTML='<div class="muted" style="padding:8px 0">Could not load: '+esc(e.message)+'</div>'; }
 }
+async function eraseActivity(){
+  const c=window.__drawerCo; if(!c) return;
+  if(!confirm("Permanently erase ALL usage telemetry for "+(c.name||"this company")+"? This deletes sign-in and page history and cannot be undone. Business data is not affected.")) return;
+  try{ const d=await api("erase-activity",{companyId:c.companyId}); toast(d.message||"Erased."); loadActivityInto(c.companyId); }catch(e){ toast(e.message,true); }
+}
+window.eraseActivity=eraseActivity;
 async function loadEventsInto(elId, companyId, showCo, limit){
   if(!$(elId)) return;
   try{
@@ -1457,6 +1463,7 @@ function openCompany(c){
     '<div class="muted" style="font-size:11px;margin:-4px 0 12px">Sign-ins, page visits and actions for this company. Login &amp; page history is captured going forward; existing actions show from day one.</div>'+
     '<div id="actSummary" class="countpills" style="margin-bottom:14px"></div>'+
     '<div id="actTimeline"><div class="muted" style="padding:8px 0">Loading\u2026</div></div>'+
+    '<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button class="btn btn-sm btn-danger" onclick="eraseActivity()">Erase activity log</button><span class="muted" style="font-size:11px">Permanently deletes this company\u2019s usage telemetry \u2014 for a data-subject erasure request.</span></div>'+
   '</div>';
 
   $("drawer").innerHTML=
