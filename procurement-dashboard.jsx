@@ -3169,9 +3169,26 @@ function ProQureApp({ session, companyId }) {
   const [contactRef, setContactRef] = useState("");
   const [contactSent, setContactSent] = useState(false);
   const [ackEmailed, setAckEmailed] = useState(false);
+  const [myTickets, setMyTickets] = useState([]);
   // When navigating away from the support page, clear the "Request logged"
   // confirmation so returning to it shows a fresh form, not a stale receipt.
   useEffect(()=>{ if(view!=="contact"){ setContactSent(false); setAckEmailed(false); } },[view]);
+  // On the support page, load the requests THIS user has logged (their own only),
+  // so they can track status. Reloads after a submit and on re-entering the page.
+  useEffect(()=>{
+    if(view!=="contact"||!(cloudEnabled&&supabase&&cloudUserId)) return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        const { data } = await supabase.from("proqure_data").select("value").eq("user_id",cloudUserId).eq("store_key","piq_feedback").maybeSingle();
+        const all=Array.isArray(data&&data.value)?data.value:[];
+        const mail=((session&&session.user&&session.user.email)||"").toLowerCase();
+        const mine=all.filter(t=>String((t&&(t.email||t.account))||"").toLowerCase()===mail);
+        if(!cancelled) setMyTickets(mine);
+      }catch(e){ if(!cancelled) setMyTickets([]); }
+    })();
+    return ()=>{ cancelled=true; };
+  },[view,cloudUserId,contactSent]);
   const [contactBusy, setContactBusy] = useState(false);
 
   // Keyboard shortcuts
@@ -8943,7 +8960,7 @@ Rules:
                     if(!contactForm.description.trim()){showToast("Please describe what you need","warn");return;}
                     if(!(cloudEnabled && supabase && cloudUserId)){showToast("You need to be online to send this","warn");return;}
                     const myMail=(session&&session.user&&session.user.email)||"";
-                    const myName=(settings&&settings.contactName)||(myMember&&myMember.name)||myMail||"You";
+                    const myName=(myMember&&myMember.name)||((session&&session.user&&session.user.user_metadata&&(session.user.user_metadata.name||session.user.user_metadata.full_name)))||myMail||"You";
                     setContactBusy(true);
                     try {
                       const ref="PQ-"+Date.now().toString(36).toUpperCase().slice(-6);
@@ -8970,6 +8987,37 @@ Rules:
                   style={{background:"linear-gradient(135deg,#5B5BD6,#4A4AB8)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:contactBusy?"wait":"pointer",opacity:(contactBusy||!contactForm.description.trim())?0.5:1}}>
                   {contactBusy?"Sending...":"Submit request"}
                 </button>
+              </Card>
+            )}
+            {myTickets.length>0 && (
+              <Card style={{marginTop:20}}>
+                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:4}}>Your requests</div>
+                <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginBottom:16}}>Requests you've logged and where they're up to.</div>
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {myTickets.map(t=>{
+                    const st=(t.status||"new");
+                    const cfg=({"new":{l:"New",bg:"var(--amber-light)",c:"var(--amber)"},"open":{l:"In progress",bg:"var(--indigo-light)",c:"var(--indigo)"},"on-hold":{l:"On hold",bg:"var(--bg-subtle2)",c:"var(--text-secondary)"},"resolved":{l:"Resolved",bg:"var(--green-light)",c:"var(--green-dark)"}})[st]||{l:st,bg:"var(--bg-subtle2)",c:"var(--text-secondary)"};
+                    const reps=Array.isArray(t.replies)?t.replies:[];
+                    const lastOut=[...reps].reverse().find(r=>r&&r.dir!=="in");
+                    const when=t.ts?new Date(t.ts).toLocaleDateString("en-GB",{day:"numeric",month:"short"}):"";
+                    return (
+                      <div key={t.id||t.ref} style={{border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"12px 14px",background:"var(--bg-subtle)"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span style={{fontSize:11,fontWeight:700,padding:"2px 9px",borderRadius:99,background:cfg.bg,color:cfg.c}}>{cfg.l}</span>
+                          <span style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{t.category||"Request"}</span>
+                          {t.ref&&<span style={{fontSize:11,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-tertiary)"}}>{t.ref}</span>}
+                          <span style={{marginLeft:"auto",fontSize:11,color:"var(--text-tertiary)"}}>{when}</span>
+                        </div>
+                        <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:8,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{t.message||""}</div>
+                        {lastOut&&(
+                          <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid var(--border)",fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.5}}>
+                            <span style={{fontWeight:600,color:"var(--green-dark)"}}>Support replied: </span>{lastOut.message||""}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </Card>
             )}
           </div>
