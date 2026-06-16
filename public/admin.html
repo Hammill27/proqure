@@ -514,6 +514,7 @@ const ICON = {
   coin:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="16.5" text-anchor="middle" font-family="ui-sans-serif,system-ui,Segoe UI,sans-serif" font-size="12" font-weight="800" fill="currentColor">\u00A3</text></svg>',
   shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
   bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+  chat:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.9-.9L3 20l1-3.1A8.4 8.4 0 1 1 21 11.5Z"/></svg>',
 };
 function ic(name){ return '<span class="ic">'+(ICON[name]||"")+'</span>'; }
 
@@ -538,7 +539,7 @@ function applyTheme(t){ document.documentElement.setAttribute("data-theme",t); t
 (function(){ let t="dark"; try{ t=localStorage.getItem("pq_admin_theme")||"dark"; }catch(e){} applyTheme(t); })();
 $("themeBtn").addEventListener("click",()=>applyTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark"));
 
-const NAV_GROUPS=[["Monitor",[["overview","Overview","overview"],["health","Health","health"],["costs","Cost & usage","coin"]]],["Manage",[["companies","Companies","building"],["users","Users","users"],["signups","Signups","signup"]]],["Comms",[["notifications","Notifications","bell"]]],["Trust",[["audit","Audit log","shield"]]]];
+const NAV_GROUPS=[["Monitor",[["overview","Overview","overview"],["health","Health","health"],["costs","Cost & usage","coin"]]],["Manage",[["companies","Companies","building"],["users","Users","users"],["signups","Signups","signup"]]],["Comms",[["notifications","Notifications","bell"],["support","Support","chat"]]],["Trust",[["audit","Audit log","shield"]]]];
 const TABS=NAV_GROUPS.reduce((a,g)=>a.concat(g[1]),[]);
 try{ const _savedTab=localStorage.getItem("pq_admin_tab"); if(_savedTab && TABS.some(t=>t[0]===_savedTab)) currentTab=_savedTab; }catch(e){}
 $("nav").innerHTML = NAV_GROUPS.map(([gname,items],gi)=>'<div class="navgroup'+(gi===0?" first":"")+'">'+gname+'</div>'+items.map(([id,label,icon])=>'<button class="navitem'+(id===currentTab?" on":"")+'" data-tab="'+id+'">'+ic(icon)+'<span class="lbl">'+label+'</span></button>').join("")).join("");
@@ -898,7 +899,7 @@ function renderNotifications(){
   });
   nLoad();
 }
-function render(){ if(currentTab==="health"){ renderHealth(); return; } if(currentTab==="notifications"){ renderNotifications(); return; } if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,notifications:renderNotifications,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
+function render(){ if(currentTab==="health"){ renderHealth(); return; } if(currentTab==="notifications"){ renderNotifications(); return; } if(currentTab==="support"){ renderSupport(); return; } if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,notifications:renderNotifications,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
 function planBadge(p){ p=esc(p||"trial"); return '<span class="badge b-'+p+'">'+p+'</span>'; }
 const PLAN_LABELS_ADM={trial:"Trial",sole:"Sole Trader",team:"Team",business:"Business",enterprise:"Enterprise",suspended:"Suspended",cancelled:"Cancelled"};
 function PLAN_LABEL(p){ return PLAN_LABELS_ADM[p]||(p?(p.charAt(0).toUpperCase()+p.slice(1)):"Trial"); }
@@ -1401,6 +1402,65 @@ async function exportTenant(id){ try{ toast("Preparing export..."); const d=awai
 async function eraseTenant(id,name){ if(!window.confirm("Erase ALL data for \u201c"+name+"\u201d?\n\nFor account closure / right-to-erasure. This removes the tenant\u2019s stored data and cannot be undone from here.")) return; if(!window.confirm("Final check \u2014 permanently erase \u201c"+name+"\u201d?")) return; try{ const d=await api("delete-tenant",{companyId:id}); toast(d.message||"Tenant erased."); closeDrawer(); await loadData(); }catch(e){ toast(e.message,true); } }
 window.exportTenant=exportTenant; window.eraseTenant=eraseTenant;
 window.doAction=doAction; window.doActionConfirm=doActionConfirm; window.setPlan=setPlan; window.closeDrawer=closeDrawer;
+
+/* ===================== Support inbox (Phase 2) ===================== */
+let SUPPORT=null;
+function supName(id){ const c=DATA&&DATA.companies&&DATA.companies.find(x=>x.companyId===id); return c?c.name:id; }
+const SUP_STCOL={ new:"var(--amber)", open:"var(--green-glow)", resolved:"var(--soft)" };
+const SUP_PRCOL={ Urgent:"var(--red)", High:"var(--amber)", Normal:"var(--soft)", Low:"var(--soft)" };
+const TA_STYLE="flex:1;height:54px;font-size:13px;padding:9px 11px;background:var(--card-2);border:1px solid var(--line-2);border-radius:10px;color:var(--text);font-family:inherit;outline:none;resize:vertical";
+function supMetricsHtml(){
+  const rows=SUPPORT||[]; const nw=rows.filter(r=>r.status==="new").length; const op=rows.filter(r=>r.status==="open").length; const rs=rows.filter(r=>r.status==="resolved").length;
+  return '<div class="kpis">'+nkpi("chat",nw,"New","awaiting triage")+nkpi("bell",op,"Open","in progress")+nkpi("shield",rs,"Resolved","closed")+nkpi("users",rows.length,"Total","all time")+'</div>';
+}
+function supRowHtml(r){
+  const stc=SUP_STCOL[r.status]||"var(--soft)"; const prc=SUP_PRCOL[r.priority]||"var(--soft)";
+  const when=new Date(r.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  const key=esc(r.companyId)+'|'+esc(r.id);
+  const replied=r.reply?'<div class="minirow"><span class="mk" style="color:var(--green-glow)">\u21B3 Replied</span><span class="mv" style="font-family:inherit;font-weight:500;text-align:right;max-width:62%">'+esc(r.reply.message)+'</span></div>':'';
+  return '<div class="panel" style="margin-bottom:12px;padding:16px 18px">'
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px">'
+      +'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+stc+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(r.status||"new")+'</span>'
+      +'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+prc+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(r.priority||"Normal")+'</span>'
+      +'<span style="font-size:12.5px;font-weight:700">'+esc(r.category||"Enquiry")+'</span>'
+      +'<span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--soft)">'+when+'</span>'
+    +'</div>'
+    +'<div style="font-size:13.5px;line-height:1.55;color:var(--text);white-space:pre-wrap;margin-bottom:10px">'+esc(r.message||"")+'</div>'
+    +'<div class="minirow" style="border-top:1px solid var(--line)"><span class="mk">From</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(r.name||"-")+' \u00b7 '+esc(r.email||r.account||"-")+'</span></div>'
+    +'<div class="minirow"><span class="mk">Company</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(supName(r.companyId))+'</span></div>'
+    +replied
+    +'<div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end">'
+      +'<textarea data-reply="'+key+'" placeholder="Reply to this person \u2014 sent to them in-app\u2026" style="'+TA_STYLE+'"></textarea>'
+      +'<button class="btn btn-primary btn-sm" data-send="'+key+'">Send reply</button>'
+      +(r.status==="resolved"
+          ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Reopen</button>'
+          : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|resolved">Resolve</button>')
+    +'</div>'
+  +'</div>';
+}
+function paintSupport(){
+  const m=$("supMetrics"); if(m) m.innerHTML=supMetricsHtml();
+  const box=$("supList"); if(!box) return;
+  const rows=SUPPORT||[];
+  box.innerHTML = rows.length ? rows.map(supRowHtml).join("") : '<div class="muted" style="padding:28px 0;text-align:center">No feedback yet \u2014 submissions from the app will appear here.</div>';
+  box.querySelectorAll('[data-send]').forEach(b=>b.addEventListener('click',async()=>{
+    const [cid,id]=b.dataset.send.split("|"); const ta=box.querySelector('[data-reply="'+b.dataset.send+'"]'); const msg=((ta&&ta.value)||"").trim();
+    if(!msg){ toast("Type a reply first",true); return; }
+    b.disabled=true; try{ await api("feedback-action",{companyId:cid,id:id,reply:msg}); toast("Reply sent in-app."); await loadSupport(); }catch(e){ toast(e.message,true); b.disabled=false; }
+  }));
+  box.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click',async()=>{
+    const [cid,id,st]=b.dataset.status.split("|");
+    try{ await api("feedback-action",{companyId:cid,id:id,status:st}); toast("Updated."); await loadSupport(); }catch(e){ toast(e.message,true); }
+  }));
+}
+async function loadSupport(){ try{ const d=await api("feedback"); SUPPORT=d.items||[]; }catch(e){ SUPPORT=SUPPORT||[]; const box=$("supList"); if(box) box.innerHTML='<div class="muted" style="padding:16px 0">Could not load: '+esc(e.message)+'</div>'; }
+  paintSupport(); }
+function renderSupport(){
+  $("view").innerHTML='<div id="supMetrics"><div class="muted" style="padding:4px 0 18px">Loading\u2026</div></div>'
+    +'<div class="panel" style="padding:16px 18px;margin-bottom:14px"><h2 style="margin:0">Support inbox <span class="hint">feedback &amp; requests from the app</span></h2></div>'
+    +'<div id="supList"><div class="loading"><span class="spin"></span>Loading feedback\u2026</div></div>';
+  loadSupport();
+}
 
 init();
 </script>
