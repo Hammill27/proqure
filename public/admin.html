@@ -106,6 +106,8 @@
   .kpi .x{font-size:11.5px;color:var(--soft);margin-top:3px;background:none;border:0;border-radius:0;width:auto;height:auto;line-height:1.4;flex-shrink:1}
   @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
   .kpi.clickable,.stat.clickable,.attn .a.clickable,.feed .row.clickable{cursor:pointer}
+  .suprow{transition:border-color .15s}
+  .suprow:hover{border-color:var(--line-2)}
   .stat.clickable{transition:border-color .2s,transform .2s} .stat.clickable:hover{border-color:var(--tint-line);transform:translateY(-2px)}
   .attn .a.clickable{transition:border-color .2s} .attn .a.clickable:hover{border-color:var(--green)}
   .feed .row.clickable:hover .e{color:var(--accent)}
@@ -1516,7 +1518,7 @@ const SUP_PRCOL={ Urgent:"var(--red)", High:"var(--amber)", Normal:"var(--soft)"
 const TA_STYLE="flex:1;height:54px;font-size:13px;padding:9px 11px;background:var(--card-2);border:1px solid var(--line-2);border-radius:10px;color:var(--text);font-family:inherit;outline:none;resize:vertical";
 let SUP_FILTER={ status:"all", q:"", category:"all", priority:"all", sort:"new" };
 let SUP_OPEN=null; // Set of expanded "cid|id" keys; null until first paint seeds it
-let SUP_ANALYTICS_OPEN=false;
+let SUP_ANALYTICS_OPEN=true;
 /* SLA targets in hours, per priority (response = time to first staff reply; resolution = time to resolved).
    Sensible defaults — can be made configurable later. */
 const SUP_SLA={ Urgent:{resp:1,res:8}, High:{resp:4,res:24}, Normal:{resp:8,res:72}, Low:{resp:24,res:120} };
@@ -1565,7 +1567,21 @@ function supAnalyticsHtml(){
   const catArr=Object.keys(cats).map(k=>({k:k,n:cats[k]})).sort((a,b)=>b.n-a.n);
   const cmax=Math.max.apply(null,[1].concat(catArr.map(c=>c.n)));
   const catBars=catArr.map(c=>'<div style="display:flex;align-items:center;gap:9px;margin-bottom:5px"><div style="width:130px;font-size:11.5px;color:var(--sub);flex-shrink:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.k)+'</div><div style="flex:1;background:var(--line);border-radius:4px;height:14px;overflow:hidden"><div style="height:100%;width:'+Math.round(c.n/cmax*100)+'%;background:var(--accent)"></div></div><div class="mono" style="font-size:11px;color:var(--soft);width:22px;text-align:right">'+c.n+'</div></div>').join("")||'<div class="muted" style="font-size:12px">No requests yet.</div>';
-  return statRow+volume+'<div><div style="font-size:11px;color:var(--soft);margin-bottom:6px">By category</div>'+catBars+'</div>';
+  const realTotal=rows.length;
+  const stOrder=[["new","New","var(--amber)"],["open","Open","var(--green-glow)"],["on-hold","On hold","var(--sub)"],["resolved","Resolved","var(--soft)"]];
+  const stCounts=stOrder.map(function(a){ return {k:a[0],l:a[1],c:a[2],n:rows.filter(function(r){return (r.status||"new")===a[0];}).length}; });
+  const stTot=realTotal||1, RAD=42, CIRC=2*Math.PI*RAD; let acc=0;
+  const segs=stCounts.filter(function(s){return s.n>0;}).map(function(s){ var len=s.n/stTot*CIRC, off=acc; acc+=len; return '<circle cx="56" cy="56" r="'+RAD+'" fill="none" stroke="'+s.c+'" stroke-width="14" stroke-dasharray="'+len+' '+(CIRC-len)+'" stroke-dashoffset="'+(-off)+'"/>'; }).join("");
+  const donut='<div style="position:relative;flex-shrink:0;width:112px;height:112px"><svg width="112" height="112" viewBox="0 0 112 112" style="transform:rotate(-90deg)"><circle cx="56" cy="56" r="'+RAD+'" fill="none" stroke="var(--line)" stroke-width="14"/>'+segs+'</svg><div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center"><div class="mono" style="font-size:21px;font-weight:700;color:var(--text)">'+realTotal+'</div><div style="font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.08em">total</div></div></div>';
+  const stLegend=stCounts.map(function(s){ return '<div style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--sub)"><span style="width:9px;height:9px;border-radius:3px;background:'+s.c+';flex-shrink:0"></span>'+s.l+'<span style="margin-left:auto;font-family:var(--mono);color:var(--text)">'+s.n+'</span></div>'; }).join("");
+  const statusChart='<div style="flex:1;min-width:230px"><div style="font-size:11px;color:var(--soft);margin-bottom:8px">By status</div><div style="display:flex;gap:16px;align-items:center">'+donut+'<div style="flex:1;display:flex;flex-direction:column;gap:6px;min-width:110px">'+stLegend+'</div></div></div>';
+  const prOrder=[["Urgent","var(--red)"],["High","var(--amber)"],["Normal","var(--green-glow)"],["Low","var(--sub)"]];
+  const prCounts=prOrder.map(function(a){ return {k:a[0],c:a[1],n:rows.filter(function(r){return (r.priority||"Normal")===a[0];}).length}; });
+  const prMax=Math.max.apply(null,[1].concat(prCounts.map(function(p){return p.n;})));
+  const prBars=prCounts.map(function(p){ return '<div style="display:flex;align-items:center;gap:9px;margin-bottom:7px"><div style="width:62px;font-size:11.5px;color:var(--sub);flex-shrink:0;text-align:right">'+p.k+'</div><div style="flex:1;background:var(--line);border-radius:4px;height:14px;overflow:hidden"><div style="height:100%;width:'+Math.round(p.n/prMax*100)+'%;background:'+p.c+'"></div></div><div class="mono" style="font-size:11px;color:var(--soft);width:20px;text-align:right">'+p.n+'</div></div>'; }).join("");
+  const priorityChart='<div style="flex:1;min-width:230px"><div style="font-size:11px;color:var(--soft);margin-bottom:8px">By priority</div>'+prBars+'</div>';
+  const chartsRow='<div style="display:flex;gap:22px;flex-wrap:wrap;margin-bottom:16px">'+statusChart+priorityChart+'</div>';
+  return statRow+chartsRow+volume+'<div><div style="font-size:11px;color:var(--soft);margin-bottom:6px">By category</div>'+catBars+'</div>';
 }
 function supAnalyticsPanelHtml(){
   return '<div class="panel" style="padding:14px 16px;margin-bottom:14px">'
@@ -1624,40 +1640,62 @@ function supTimelineHtml(r){
 function supRowHtml(r){
   const stc=SUP_STCOL[r.status]||"var(--soft)"; const prc=SUP_PRCOL[r.priority]||"var(--soft)";
   const when=new Date(r.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
-  const rawkey=r.companyId+'|'+r.id; const key=esc(rawkey);
-  const open=SUP_OPEN&&SUP_OPEN.has(rawkey);
+  const key=esc(r.companyId+'|'+r.id);
   const chip=(txt,col)=>'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+col+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(txt)+'</span>';
   const snippet=String(r.message||"").replace(/\s+/g," ").trim().slice(0,90);
   const nReplies=(Array.isArray(r.replies)?r.replies:[]).length;
-  const header='<div data-toggle="'+key+'" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer">'
-    +'<span style="display:inline-block;color:var(--soft);transform:rotate('+(open?'90':'0')+'deg);flex-shrink:0;font-size:15px;line-height:1">\u203A</span>'
+  return '<div class="panel suprow" data-open="'+key+'" style="margin-bottom:10px;padding:13px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
     +chip(r.status||"new",stc)+chip(r.priority||"Normal",prc)
     +'<span style="font-size:12.5px;font-weight:700">'+esc(r.category||"Enquiry")+'</span>'
     +(r.ref?'<span class="mono" style="font-size:10px;color:var(--soft)">'+esc(r.ref)+'</span>':'')
     +(nReplies?'<span class="mono" style="font-size:9px;color:var(--green-glow)">\u21B3 '+nReplies+'</span>':'')
     +supSlaBadge(r)
-    +(!open?'<span style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px">'+esc(snippet)+(r.message&&r.message.length>90?'\u2026':'')+'</span>':'')
+    +'<span style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px">'+esc(snippet)+(r.message&&r.message.length>90?'\u2026':'')+'</span>'
     +'<span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--soft)">'+esc(supName(r.companyId))+' \u00b7 '+when+'</span>'
-    +'</div>';
-  if(!open) return '<div class="panel" style="margin-bottom:10px;padding:13px 16px">'+header+'</div>';
-  const statusBtns=(r.status==="resolved"
-    ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Reopen</button>'
-    : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|resolved">Resolve</button>'
-       + (r.status!=="on-hold" ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|on-hold">On hold</button>' : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Take off hold</button>'));
-  return '<div class="panel" style="margin-bottom:12px;padding:14px 18px 16px">'+header
-    +'<div style="font-size:13.5px;line-height:1.55;color:var(--text);white-space:pre-wrap;margin:12px 0 10px">'+esc(r.message||"")+'</div>'
-    +'<div class="minirow"><span class="mk">From</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(r.name||"-")+' \u00b7 '+esc(r.email||r.account||"-")+'</span></div>'
-    +'<div class="minirow"><span class="mk">Company</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(supName(r.companyId))+'</span></div>'
-    +'<div class="minirow"><span class="mk">SLA</span><span class="mv" style="font-family:inherit;font-weight:500">'+(function(){var s=supSla(r);var pill=function(x){var col=x.state==="breach"?"var(--red)":(x.state==="due"?"var(--amber)":"var(--green-glow)");return '<span style="color:'+col+'">'+esc(x.label)+'</span>';};return pill(s.resp)+' <span style="color:var(--soft)">\u00b7</span> '+pill(s.resn);})()+'</span></div>'
-    +'<div style="font-size:10.5px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:14px">Activity</div>'
-    +supTimelineHtml(r)
-    +'<div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end;flex-wrap:wrap">'
-      +'<textarea data-reply="'+key+'" placeholder="Reply \u2014 emailed to the customer and shown in-app\u2026" style="'+TA_STYLE+'"></textarea>'
-      +'<button class="btn btn-primary btn-sm" data-send="'+key+'">Send reply</button>'
-      +statusBtns
-    +'</div>'
+    +'<span style="color:var(--soft);font-size:16px;line-height:1;flex-shrink:0">\u203A</span>'
   +'</div>';
 }
+// Open a single support request in the side drawer - full detail, activity timeline,
+// reply box and status actions, mirroring the user drawer for a consistent feel.
+function openSupportTicket(cid,id){
+  const t=(SUPPORT||[]).find(x=>x.companyId===cid && x.id===id);
+  if(!t){ toast("That request no longer exists.",true); closeDrawer(); loadSupport(); return; }
+  const stc=SUP_STCOL[t.status]||"var(--soft)"; const prc=SUP_PRCOL[t.priority]||"var(--soft)";
+  const C=String(cid).replace(/'/g,"\\'"), I=String(id).replace(/'/g,"\\'");
+  const s=supSla(t);
+  const pill=function(x){ var col=x.state==="breach"?"var(--red)":(x.state==="due"?"var(--amber)":"var(--green-glow)"); return '<span style="color:'+col+'">'+esc(x.label)+'</span>'; };
+  const mrow=(k,v)=>'<div class="minirow"><span class="mk">'+k+'</span><span class="mv" style="font-family:inherit;font-weight:500">'+v+'</span></div>';
+  const badge=(txt,col)=>'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;color:'+col+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(txt)+'</span>';
+  const statusBtns = t.status==="resolved"
+    ? '<button class="btn btn-ghost btn-sm" onclick="supDrawerStatus(\''+C+'\',\''+I+'\',\'open\')">Reopen</button>'
+    : '<button class="btn btn-ghost btn-sm" onclick="supDrawerStatus(\''+C+'\',\''+I+'\',\'resolved\')">Resolve</button>'
+       + (t.status!=="on-hold" ? '<button class="btn btn-ghost btn-sm" onclick="supDrawerStatus(\''+C+'\',\''+I+'\',\'on-hold\')">On hold</button>' : '<button class="btn btn-ghost btn-sm" onclick="supDrawerStatus(\''+C+'\',\''+I+'\',\'open\')">Take off hold</button>');
+  $("drawer").innerHTML=
+    '<div class="dh"><div class="uhead"><div class="uavatar">'+esc(((t.category||"R")[0]||"R").toUpperCase())+'</div><div><h3>'+esc(t.category||"Request")+'</h3><div class="dh-badges" style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+badge(t.status||"new",stc)+badge(t.priority||"Normal",prc)+(t.ref?'<span style="font-family:var(--mono);font-size:11px;color:var(--soft)">'+esc(t.ref)+'</span>':'')+'</div></div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
+    '<div class="dbody">'+
+      '<div class="sec-title">Request</div><div style="padding:0">'+
+        mrow("From", esc(t.name||"-")+' \u00b7 '+esc(t.email||t.account||"-"))+
+        mrow("Company", esc(supName(t.companyId)))+
+        mrow("Category", esc(t.category||"Enquiry"))+
+        mrow("Priority", esc(t.priority||"Normal"))+
+        mrow("Submitted", esc(new Date(t.ts).toLocaleString("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})))+
+        mrow("SLA", pill(s.resp)+' <span style="color:var(--soft)">\u00b7</span> '+pill(s.resn))+
+      '</div>'+
+      '<div class="sec-title">Message</div><div style="font-size:13.5px;line-height:1.6;color:var(--text);white-space:pre-wrap">'+esc(t.message||"")+'</div>'+
+      '<div class="sec-title">Activity</div>'+supTimelineHtml(t)+
+      '<div class="sec-title">Reply</div>'+
+      '<textarea id="supDrawerReply" placeholder="Reply \u2014 emailed to the customer and shown in-app\u2026" style="'+TA_STYLE+';width:100%;height:92px;box-sizing:border-box"></textarea>'+
+      '<div class="u-actions-grid" style="margin-top:10px">'+
+        '<button id="supDrawerSend" class="btn btn-primary btn-sm" onclick="supDrawerReply(\''+C+'\',\''+I+'\')">Send reply</button>'+
+        statusBtns+
+      '</div>'+
+    '</div>';
+  $("scrim").classList.add("open"); $("drawer").classList.add("open");
+}
+window.openSupportTicket=openSupportTicket;
+async function supDrawerStatus(cid,id,st){ try{ await api("feedback-action",{companyId:cid,id:id,status:st}); toast("Updated."); await loadSupport(); openSupportTicket(cid,id); }catch(e){ toast(e.message,true); } }
+async function supDrawerReply(cid,id){ const ta=document.getElementById("supDrawerReply"); const msg=((ta&&ta.value)||"").trim(); if(!msg){ toast("Type a reply first",true); return; } const b=document.getElementById("supDrawerSend"); if(b)b.disabled=true; try{ const d=await api("feedback-action",{companyId:cid,id:id,reply:msg}); toast(d.message||"Reply sent."); await loadSupport(); openSupportTicket(cid,id); }catch(e){ toast(e.message,true); if(b)b.disabled=false; } }
+window.supDrawerStatus=supDrawerStatus; window.supDrawerReply=supDrawerReply;
 function paintSupportControls(){
   const m=$("supMetrics"); if(!m) return;
   m.innerHTML=supMetricsHtml()+supAnalyticsPanelHtml()+supControlsHtml();
@@ -1671,20 +1709,10 @@ function paintSupportControls(){
 }
 function paintSupportList(){
   const box=$("supList"); if(!box) return;
-  if(!SUP_OPEN){ SUP_OPEN=new Set(); (SUPPORT||[]).forEach(r=>{ if((r.status||"new")==="new") SUP_OPEN.add(r.companyId+'|'+r.id); }); }
   const rows=supFiltered(); const total=(SUPPORT||[]).length;
   box.innerHTML = rows.length ? rows.map(supRowHtml).join("")
     : '<div class="muted" style="padding:28px 0;text-align:center">'+(total?'No requests match these filters.':'No feedback yet \u2014 submissions from the app will appear here.')+'</div>';
-  box.querySelectorAll('[data-toggle]').forEach(h=>h.addEventListener('click',()=>{ const raw=h.dataset.toggle; if(SUP_OPEN.has(raw)) SUP_OPEN.delete(raw); else SUP_OPEN.add(raw); paintSupportList(); }));
-  box.querySelectorAll('[data-send]').forEach(b=>b.addEventListener('click',async()=>{
-    const [cid,id]=b.dataset.send.split("|"); const ta=box.querySelector('[data-reply="'+b.dataset.send+'"]'); const msg=((ta&&ta.value)||"").trim();
-    if(!msg){ toast("Type a reply first",true); return; }
-    b.disabled=true; try{ const d=await api("feedback-action",{companyId:cid,id:id,reply:msg}); toast(d.message||"Reply sent."); await loadSupport(); }catch(e){ toast(e.message,true); b.disabled=false; }
-  }));
-  box.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click',async()=>{
-    const [cid,id,st]=b.dataset.status.split("|");
-    try{ await api("feedback-action",{companyId:cid,id:id,status:st}); toast("Updated."); await loadSupport(); }catch(e){ toast(e.message,true); }
-  }));
+  box.querySelectorAll('[data-open]').forEach(function(h){ h.addEventListener('click',function(){ var k=h.dataset.open; var i=k.indexOf("|"); openSupportTicket(k.slice(0,i), k.slice(i+1)); }); });
 }
 function paintSupport(){ paintSupportControls(); paintSupportList(); }
 async function loadSupport(){ try{ const d=await api("feedback"); SUPPORT=d.items||[]; }catch(e){ SUPPORT=SUPPORT||[]; const box=$("supList"); if(box) box.innerHTML='<div class="muted" style="padding:16px 0">Could not load: '+esc(e.message)+'</div>'; }
