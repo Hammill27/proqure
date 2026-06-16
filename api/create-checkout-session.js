@@ -37,7 +37,7 @@ const ADDONS = {
 const SB_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 const sbAnon = (SUPABASE_URL && SB_ANON_KEY) ? createClient(SUPABASE_URL, SB_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 async function verifyManager(req, companyId) {
-  if (!sbAnon) return { ok: true, open: true };
+  if (!sbAnon) return { ok: false, reason: "Billing verification unavailable." };
   const h = req.headers.authorization || req.headers.Authorization || "";
   const token = h.startsWith("Bearer ") ? h.slice(7).trim() : null;
   if (!token) return { ok: false, reason: "Please sign in." };
