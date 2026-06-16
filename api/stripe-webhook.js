@@ -91,7 +91,7 @@ function subRenews(sub) {
   return t ? new Date(t * 1000).toISOString() : undefined;
 }
 
-async function creditAddon(companyId, meta) {
+async function creditAddon(companyId, meta, eventId) {
   if (!supabase || !companyId || !meta) return;
   const feature = meta.feature; const qty = Number(meta.qty) || 0;
   if (!feature || !qty) return;
@@ -99,9 +99,15 @@ async function creditAddon(companyId, meta) {
     .select("value").eq("user_id", companyId).eq("store_key", "piq_usage").maybeSingle();
   const u = (data && data.value) || {};
   const p = period();
+  // Spreading u carries appliedAddonEvents across a period reset, so a redelivered
+  // event still can't double-credit even after the monthly rollover.
   const base = (u.period === p) ? u : { ...u, period: p, measureWebUsed: 0, omWebUsed: 0, catalogueWebUsed: 0, addons: {} };
+  // Idempotency: Stripe retries/redelivers events. Never apply the same one twice.
+  const applied = Array.isArray(base.appliedAddonEvents) ? base.appliedAddonEvents : [];
+  if (eventId && applied.includes(eventId)) return;
   base.addons = { ...(base.addons || {}) };
   base.addons[feature] = (base.addons[feature] || 0) + qty;
+  if (eventId) base.appliedAddonEvents = [...applied, eventId].slice(-200);
   await supabase.from("proqure_data").upsert({ user_id: companyId, store_key: "piq_usage", value: base }, { onConflict: "user_id,store_key" });
 }
 
@@ -122,7 +128,7 @@ export default async function handler(req, res) {
         const s = event.data.object;
         const companyId = s.client_reference_id || (s.metadata && s.metadata.companyId);
         if (s.mode === "payment") {
-          await creditAddon(companyId, s.metadata);
+          await creditAddon(companyId, s.metadata, event.id);
         } else if (s.mode === "subscription" && s.subscription) {
           const sub = await stripe.subscriptions.retrieve(s.subscription);
           const plan = planFromSub(sub);
