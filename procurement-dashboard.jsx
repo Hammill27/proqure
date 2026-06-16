@@ -1215,6 +1215,12 @@ function makeReplyToken() {
 function captureReplyAddress(token) {
   return INBOUND_CAPTURE_DOMAIN ? `q-${token}@${INBOUND_CAPTURE_DOMAIN}` : null;
 }
+// Support-ticket reply capture: customer replies to s-<token>@<capture-domain> land on
+// the same api/inbound.js webhook and are matched back to the ticket by replyToken.
+// Returns null when capture is disabled, so the email simply has no Reply-To.
+function captureSupportAddress(token) {
+  return INBOUND_CAPTURE_DOMAIN ? `s-${token}@${INBOUND_CAPTURE_DOMAIN}` : null;
+}
 
 async function sendRFQEmails(suppliers, subject, body, apiKey, fromEmail, settings={}, jobCtx={}, attachments=[]) {
   const results = [];
@@ -8935,14 +8941,15 @@ Rules:
                     try {
                       const ref="PQ-"+Date.now().toString(36).toUpperCase().slice(-6);
                       const fid=(typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():("fb-"+Date.now());
-                      const ticket={ id:fid, ref, ts:new Date().toISOString(), name:myName, email:myMail, account:myMail, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim(), status:"new", replies:[] };
+                      const rtok=makeReplyToken();
+                      const ticket={ id:fid, ref, replyToken:rtok, ts:new Date().toISOString(), name:myName, email:myMail, account:myMail, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim(), status:"new", replies:[] };
                       const { data:ex, error:rErr } = await supabase.from("proqure_data").select("value").eq("user_id",cloudUserId).eq("store_key","piq_feedback").maybeSingle();
                       if(rErr) throw rErr;
                       const arr=Array.isArray(ex&&ex.value)?ex.value:[];
                       arr.unshift(ticket);
                       const { error:wErr } = await supabase.from("proqure_data").upsert({ user_id:cloudUserId, store_key:"piq_feedback", value:arr.slice(0,200), updated_at:new Date().toISOString() },{ onConflict:"user_id,store_key" });
                       if(wErr) throw wErr;
-                      if(myMail){ try{ await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())}, body:JSON.stringify({ from:"ProQure Support <support@proqure.co.uk>", to:[myMail], subject:`We've received your request [${ref}]`, html:supportAckEmailHtml({ ref, name:myName, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim() }), company_id:cloudUserId })}); }catch(e){} }
+                      if(myMail){ try{ await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())}, body:JSON.stringify({ from:"ProQure Support <support@proqure.co.uk>", to:[myMail], reply_to: captureSupportAddress(rtok)||undefined, subject:`We've received your request [${ref}]`, html:supportAckEmailHtml({ ref, name:myName, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim() }), company_id:cloudUserId })}); }catch(e){} }
                       setContactRef(ref);
                       setContactSent(true);
                       setContactForm(p=>({...p,description:""}));
