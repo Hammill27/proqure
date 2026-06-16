@@ -498,7 +498,7 @@ function actRowHtml(it){
     : it.kind==="action"?(it.label||"Action")
     : (it.kind||"Event");
   const who = it.user?('<span style="color:var(--soft);font-weight:400"> \u00b7 '+esc(it.user)+'</span>'):"";
-  const det = it.kind==="error"?(it.msg||""):(it.kind==="action"?(it.detail||""):"");
+  const det = it.kind==="error"?(it.errName||"App error"):(it.kind==="action"?(it.detail||""):"");
   const detHtml = det?('<div style="font-size:11.5px;color:var(--soft);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(det)+'</div>'):"";
   const col = it.kind==="error"?"var(--red)":it.kind==="login"?"var(--green-glow)":it.kind==="action"?"var(--accent)":"var(--soft)";
   const when=it.ts?new Date(it.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";
@@ -515,6 +515,10 @@ async function loadActivityInto(companyId){
     const d=await api("activity",{companyId});
     const items=(d.items||[]);
     const visible=items.filter(it=>it.kind!=="active");
+    // Resolve opaque user IDs to a name for display only — the stored log itself is pseudonymous.
+    const co=window.__drawerCo; const uidMap={};
+    if(co&&Array.isArray(co.users)) co.users.forEach(u=>{ if(u.id) uidMap[u.id]=u.email; });
+    visible.forEach(it=>{ if(!it.user&&it.uid){ it.user = uidMap[it.uid] || ("user "+String(it.uid).slice(0,6)); } });
     if(sum){
       const wk=Date.now()-7*864e5;
       const logins=items.filter(it=>it.kind==="login"&&Date.parse(it.ts)>=wk).length;
