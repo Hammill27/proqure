@@ -8844,11 +8844,28 @@ Rules:
                   onClick={async ()=>{
                     if(!contactForm.name.trim()||!contactForm.email.trim()){showToast("Please add your name and email","warn");return;}
                     if(!contactForm.description.trim()){showToast("Please add a description","warn");return;}
-                    // No support mailbox wired yet: keep the form fully usable and just confirm.
+                    // No email mailbox needed: feedback is stored in Supabase and
+                    // surfaced in the admin Support tab; replies come back in-app.
                     if(!FEEDBACK_EMAIL){
-                      showToast("Thanks - we've got it");
-                      setContactSent(true);
-                      setContactForm(p=>({...p,description:""}));
+                      setContactBusy(true);
+                      try {
+                        if (cloudEnabled && supabase && cloudUserId) {
+                          const { data: ex } = await supabase.from("proqure_data").select("value").eq("user_id", cloudUserId).eq("store_key", "piq_feedback").maybeSingle();
+                          const arr = Array.isArray(ex && ex.value) ? ex.value : [];
+                          const fid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("fb-" + Date.now() + "-" + Math.random().toString(36).slice(2,7));
+                          arr.unshift({ id: fid, ts: new Date().toISOString(), name: contactForm.name.trim(), email: contactForm.email.trim(),
+                            account: (session && session.user && session.user.email) || "", category: contactForm.category, priority: contactForm.priority,
+                            message: contactForm.description.trim(), status: "new", reply: null });
+                          await supabase.from("proqure_data").upsert(
+                            { user_id: cloudUserId, store_key: "piq_feedback", value: arr.slice(0,200), updated_at: new Date().toISOString() },
+                            { onConflict: "user_id,store_key" });
+                        }
+                        showToast("Thanks - we've got it");
+                        setContactSent(true);
+                        setContactForm(p=>({...p,description:""}));
+                      } catch (e) {
+                        showToast("Couldn't send just now - please try again","warn");
+                      } finally { setContactBusy(false); }
                       return;
                     }
                     setContactBusy(true);
