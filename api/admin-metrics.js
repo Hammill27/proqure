@@ -771,9 +771,11 @@ export default async function handler(req, res) {
           const u = { ...it };
           if (!u.replyToken) u.replyToken = makeReplyToken();
           if (!Array.isArray(u.replies)) u.replies = u.reply ? [u.reply] : []; // migrate legacy single reply
+          if (!Array.isArray(u.log)) u.log = [];
           delete u.reply;
+          const prevStatus = u.status || "new";
           if (reply) { u.replies = [...u.replies, { ts: new Date().toISOString(), by: callerEmail, dir: "out", message: reply }]; u.status = u.status === "resolved" ? u.status : "open"; }
-          if (status) u.status = status;
+          if (status && status !== prevStatus) { u.log = [...u.log, { ts: new Date().toISOString(), by: callerEmail, type: "status", from: prevStatus, to: status }]; u.status = status; }
           u.updatedAt = new Date().toISOString();
           ticket = u; return u;
         }
