@@ -658,6 +658,18 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (action === "erase-activity") {
+      // Right to erasure: permanently delete this tenant's usage telemetry
+      // (piq_events:<uid> rows). Does not touch business data. Audited.
+      const companyId = (body.companyId || "").trim();
+      if (!companyId) { res.status(400).json({ error: "companyId is required." }); return; }
+      const { error } = await admin.from("proqure_data").delete().like("store_key", "piq_events:%").eq("user_id", companyId);
+      if (error) { res.status(400).json({ error: error.message }); return; }
+      await writeAudit(admin, caller, { action: "erase-activity", target: companyId, detail: "usage telemetry erased" });
+      res.status(200).json({ ok: true, message: "Activity telemetry erased for this company." });
+      return;
+    }
+
     if (action === "reset-onboarding") {
       const companyId = (body.companyId || "").trim();
       if (!companyId) { res.status(400).json({ error: "companyId required." }); return; }
