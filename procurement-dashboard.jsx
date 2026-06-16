@@ -8942,7 +8942,7 @@ Rules:
                       arr.unshift(ticket);
                       const { error:wErr } = await supabase.from("proqure_data").upsert({ user_id:cloudUserId, store_key:"piq_feedback", value:arr.slice(0,200), updated_at:new Date().toISOString() },{ onConflict:"user_id,store_key" });
                       if(wErr) throw wErr;
-                      if(myMail){ try{ await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())}, body:JSON.stringify({ from:"ProQure Support <quotes@proqure.co.uk>", to:[myMail], subject:`We've received your request [${ref}]`, html:supportAckEmailHtml({ ref, name:myName, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim() }), company_id:cloudUserId })}); }catch(e){} }
+                      if(myMail){ try{ await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())}, body:JSON.stringify({ from:"ProQure Support <support@proqure.co.uk>", to:[myMail], subject:`We've received your request [${ref}]`, html:supportAckEmailHtml({ ref, name:myName, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim() }), company_id:cloudUserId })}); }catch(e){} }
                       setContactRef(ref);
                       setContactSent(true);
                       setContactForm(p=>({...p,description:""}));
