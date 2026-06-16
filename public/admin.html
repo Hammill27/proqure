@@ -337,6 +337,34 @@
   .filter-sel{max-width:170px}
   .loading{display:flex;align-items:center;justify-content:center;padding:80px;color:var(--sub);font-size:14px}
   .spin{width:18px;height:18px;border:2px solid var(--line-2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;margin-right:11px}
+  /* nav section labels */
+  .navgroup{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);padding:14px 13px 6px}
+  .navgroup.first{padding-top:2px}
+  /* command palette */
+  .cmdk-trigger{display:flex;align-items:center;gap:8px;width:100%;background:var(--card-2);border:1px solid var(--line-2);border-radius:11px;padding:9px 12px;color:var(--soft);font-size:12.5px;cursor:pointer;margin:0 0 12px;transition:border-color .2s}
+  .cmdk-trigger:hover{border-color:var(--green)}
+  .cmdk-trigger svg{width:15px;height:15px}
+  .cmdk-trigger kbd,.cmdk-hint kbd{font-family:var(--mono);background:var(--chip);border:1px solid var(--line-2);border-radius:5px;padding:1px 5px;font-size:10px;color:var(--sub)}
+  .cmdk-trigger kbd{margin-left:auto}
+  .cmdk-wrap{position:fixed;inset:0;z-index:400;display:none;align-items:flex-start;justify-content:center;padding-top:11vh;background:rgba(0,0,0,.5);backdrop-filter:blur(3px)}
+  .cmdk-wrap.open{display:flex}
+  .cmdk{width:100%;max-width:560px;background:var(--card);border:1px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;animation:rise .2s both}
+  .cmdk input{width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:16px 18px;font-size:15px;background:transparent;color:var(--text);outline:none;font-family:inherit}
+  .cmdk-list{max-height:52vh;overflow-y:auto;padding:6px}
+  .cmdk-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;cursor:pointer}
+  .cmdk-item.sel{background:var(--tint)}
+  .cmdk-item .ci{width:30px;height:30px;border-radius:8px;background:var(--chip);display:flex;align-items:center;justify-content:center;color:var(--sub);flex:none;font-weight:700;font-size:11px;font-family:var(--mono)}
+  .cmdk-item .ct{font-weight:600;color:var(--text);font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cmdk-item .cs{font-size:11.5px;color:var(--soft)}
+  .cmdk-hint{display:flex;gap:16px;padding:10px 16px;border-top:1px solid var(--line);font-size:11px;color:var(--soft)}
+  /* skeleton loaders */
+  .skel{background:linear-gradient(90deg,var(--card) 25%,var(--card-2) 37%,var(--card) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;border:1px solid var(--line);border-radius:var(--r)}
+  @keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+  .sk-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:16px}
+  .sk-card{height:118px}.sk-row{height:62px;margin-bottom:12px}
+  /* env badge */
+  .envbadge{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--green-glow);background:var(--tint);border:1px solid var(--tint-line);border-radius:6px;padding:3px 8px;margin-left:11px}
+  @media(max-width:860px){ .navgroup{display:none} .cmdk-trigger{display:none} }
   @keyframes sp{to{transform:rotate(360deg)}}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--card);border:1px solid var(--line-2);border-radius:12px;padding:13px 19px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow);opacity:0;transition:.3s;z-index:300;pointer-events:none}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -404,6 +432,7 @@
   <div class="shell">
     <aside class="rail">
       <div class="brand"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></div>
+      <button class="cmdk-trigger" id="cmdkTrigger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Search&hellip;<kbd>&#8984;K</kbd></button>
       <nav id="nav"></nav>
       <div class="foot">
         <div class="who" id="whoami"></div>
@@ -415,7 +444,7 @@
       </div>
     </aside>
     <main>
-      <div class="pagehead"><h1 id="pageTitle">Overview</h1><div class="meta" id="genAt"></div></div>
+      <div class="pagehead"><div style="display:flex;align-items:center"><h1 id="pageTitle">Overview</h1><span class="envbadge">Live</span></div><div class="meta" id="genAt"></div></div>
       <div class="banner" id="banner"></div>
       <div id="view"><div class="loading"><span class="spin"></span>Loading platform data...</div></div>
     </main>
@@ -425,6 +454,7 @@
 <div class="scrim" id="scrim"></div>
 <div class="drawer" id="drawer"></div>
 <div class="toast" id="toast"></div>
+<div class="cmdk-wrap" id="cmdk"><div class="cmdk"><input id="cmdkInput" placeholder="Search companies, people, sections&hellip;" autocomplete="off" spellcheck="false"><div class="cmdk-list" id="cmdkList"></div><div class="cmdk-hint"><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> navigate</span><span><kbd>&crarr;</kbd> open</span><span><kbd>esc</kbd> close</span></div></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -504,11 +534,14 @@ function applyTheme(t){ document.documentElement.setAttribute("data-theme",t); t
 (function(){ let t="dark"; try{ t=localStorage.getItem("pq_admin_theme")||"dark"; }catch(e){} applyTheme(t); })();
 $("themeBtn").addEventListener("click",()=>applyTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark"));
 
-const TABS=[["overview","Overview","overview"],["companies","Companies","building"],["costs","Cost & usage","coin"],["health","Health","health"],["notifications","Notifications","bell"],["users","Users","users"],["signups","Signups","signup"],["audit","Audit log","shield"]];
-$("nav").innerHTML = TABS.map(([id,label,icon])=>'<button class="navitem'+(id==="overview"?" on":"")+'" data-tab="'+id+'">'+ic(icon)+'<span class="lbl">'+label+'</span></button>').join("");
+const NAV_GROUPS=[["Monitor",[["overview","Overview","overview"],["health","Health","health"],["costs","Cost & usage","coin"]]],["Manage",[["companies","Companies","building"],["users","Users","users"],["signups","Signups","signup"]]],["Comms",[["notifications","Notifications","bell"]]],["Trust",[["audit","Audit log","shield"]]]];
+const TABS=NAV_GROUPS.reduce((a,g)=>a.concat(g[1]),[]);
+try{ const _savedTab=localStorage.getItem("pq_admin_tab"); if(_savedTab && TABS.some(t=>t[0]===_savedTab)) currentTab=_savedTab; }catch(e){}
+$("nav").innerHTML = NAV_GROUPS.map(([gname,items],gi)=>'<div class="navgroup'+(gi===0?" first":"")+'">'+gname+'</div>'+items.map(([id,label,icon])=>'<button class="navitem'+(id===currentTab?" on":"")+'" data-tab="'+id+'">'+ic(icon)+'<span class="lbl">'+label+'</span></button>').join("")).join("");
 document.querySelectorAll(".navitem").forEach(b=>b.addEventListener("click",()=>goTab(b.dataset.tab)));
+(function(){ const _ct=TABS.find(t=>t[0]===currentTab); if(_ct) $("pageTitle").textContent=_ct[1]; })();
 function goTab(id, plan){
-  currentTab=id; search=""; companyPlanFilter=plan||""; if(id==="audit") AUDIT=null;
+  currentTab=id; search=""; companyPlanFilter=plan||""; if(id==="audit") AUDIT=null; try{localStorage.setItem("pq_admin_tab",id);}catch(e){}
   document.querySelectorAll(".navitem").forEach(x=>x.classList.toggle("on",x.dataset.tab===id));
   const t=TABS.find(t=>t[0]===id); if(t) $("pageTitle").textContent=t[1];
   render();
@@ -516,6 +549,42 @@ function goTab(id, plan){
 function openCompanyById(id){ const c=DATA&&DATA.companies.find(x=>x.companyId===id); if(c) openCompany(c); }
 function openCompanyByEmail(email){ email=(email||"").toLowerCase(); const c=DATA&&DATA.companies.find(x=>(x.users||[]).some(u=>(u.email||"").toLowerCase()===email)); if(c) openCompany(c); else toast("No company found for "+email,true); }
 window.goTab=goTab; window.openCompanyById=openCompanyById; window.openCompanyByEmail=openCompanyByEmail;
+// --- Command palette (Cmd/Ctrl-K) ---
+let cmdkItems=[], cmdkSel=0;
+function cmdkResults(q){
+  q=(q||"").toLowerCase().trim(); const out=[];
+  TABS.forEach(([id,label])=>{ if(!q||label.toLowerCase().includes(q)) out.push({type:"section",id,label,sub:"Section"}); });
+  if(DATA&&DATA.companies){
+    DATA.companies.forEach(c=>{ if(!q||(c.name||"").toLowerCase().includes(q)) out.push({type:"company",id:c.companyId,label:c.name||"(unnamed)",sub:(c.plan||"trial")+" \u00b7 "+((c.users||[]).length)+" user"+(((c.users||[]).length)===1?"":"s")}); });
+    if(q) DATA.companies.forEach(c=>(c.users||[]).forEach(u=>{ if((u.email||"").toLowerCase().includes(q)) out.push({type:"user",email:u.email,label:u.email,sub:(u.role||"engineer")+" \u00b7 "+(c.name||"")}); }));
+  }
+  return out.slice(0,40);
+}
+function renderCmdk(q){
+  cmdkItems=cmdkResults(q); cmdkSel=0;
+  const tag={section:"#",company:"Co",user:"@"};
+  $("cmdkList").innerHTML = cmdkItems.length
+    ? cmdkItems.map((r,i)=>'<div class="cmdk-item'+(i===0?" sel":"")+'" data-i="'+i+'"><span class="ci">'+tag[r.type]+'</span><span style="min-width:0"><div class="ct">'+esc(r.label)+'</div><div class="cs">'+esc(r.sub)+'</div></span></div>').join("")
+    : '<div class="cmdk-item"><span class="cs" style="padding:6px 2px">No matches</span></div>';
+  $("cmdkList").querySelectorAll(".cmdk-item[data-i]").forEach(el=>el.addEventListener("click",()=>cmdkGo(+el.dataset.i)));
+}
+function updCmdkSel(){ const els=$("cmdkList").querySelectorAll(".cmdk-item[data-i]"); els.forEach((el,i)=>el.classList.toggle("sel",i===cmdkSel)); const s=els[cmdkSel]; if(s) s.scrollIntoView({block:"nearest"}); }
+function cmdkGo(i){ const r=cmdkItems[i]; if(!r) return; closeCmdk(); if(r.type==="section") goTab(r.id); else if(r.type==="company") openCompanyById(r.id); else if(r.type==="user") openUserByEmail(r.email); }
+function openCmdk(){ const app=$("app"); if(!app||app.style.display==="none") return; $("cmdk").classList.add("open"); const i=$("cmdkInput"); if(i){ i.value=""; renderCmdk(""); setTimeout(()=>i.focus(),30); } }
+function closeCmdk(){ $("cmdk").classList.remove("open"); }
+(function(){
+  const t=$("cmdkTrigger"); if(t) t.addEventListener("click",openCmdk);
+  const inp=$("cmdkInput"); if(inp) inp.addEventListener("input",e=>renderCmdk(e.target.value));
+  const wrap=$("cmdk"); if(wrap) wrap.addEventListener("click",e=>{ if(e.target===wrap) closeCmdk(); });
+  document.addEventListener("keydown",e=>{
+    if((e.metaKey||e.ctrlKey) && (e.key==="k"||e.key==="K")){ e.preventDefault(); $("cmdk").classList.contains("open")?closeCmdk():openCmdk(); return; }
+    if(!$("cmdk").classList.contains("open")) return;
+    if(e.key==="Escape"){ e.preventDefault(); closeCmdk(); }
+    else if(e.key==="ArrowDown"){ e.preventDefault(); cmdkSel=Math.min(cmdkItems.length-1,cmdkSel+1); updCmdkSel(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); cmdkSel=Math.max(0,cmdkSel-1); updCmdkSel(); }
+    else if(e.key==="Enter"){ e.preventDefault(); cmdkGo(cmdkSel); }
+  });
+})();
 
 // Open a single USER in the drawer - everything about this person, plus actions.
 // (Distinct from openCompany: clicking a user should be about the user, not bounce
@@ -613,7 +682,7 @@ async function api(action,payload){
 }
 async function loadData(quiet){
   $("banner").style.display="none";
-  if(!quiet) $("view").innerHTML='<div class="loading"><span class="spin"></span>Loading platform data...</div>';
+  if(!quiet) $("view").innerHTML='<div class="sk-kpis">'+Array(4).fill('<div class="skel sk-card"></div>').join("")+'</div>'+Array(3).fill('<div class="skel sk-row"></div>').join("");
   try{ DATA=await api("summary"); $("genAt").textContent="Updated "+new Date(DATA.generatedAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}); render(); }
   catch(e){
     if(e.status===403){ $("view").innerHTML='<div class="panel"><h2>Not authorised</h2><p class="muted" style="margin-top:8px">This account isn\u2019t on the admin allow-list. Add its email to ADMIN_CONSOLE_EMAILS in Vercel, then redeploy.</p><button class="btn btn-ghost btn-sm" style="margin-top:14px" onclick="document.getElementById(\'signoutBtn\').click()">Sign out</button></div>'; }
