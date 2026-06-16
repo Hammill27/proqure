@@ -162,6 +162,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
     const c = companies.get(co);
     const au = m.user_id ? userById.get(m.user_id) : userByEmail.get((m.email || "").toLowerCase());
     c.users.push({
+      id: m.user_id || (au && au.id) || null,
       email: m.email,
       role: m.role || "engineer",
       employment: m.employment || null,
@@ -180,6 +181,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
     const co = u.id; // a brand-new signup becomes their own company on first resolve
     if (!companies.has(co)) companies.set(co, { companyId: co, users: [] });
     companies.get(co).users.push({
+      id: u.id,
       email: u.email, role: "manager", employment: null,
       joinedAt: u.created_at || null, active: !!u.last_sign_in_at,
       confirmed: !!(u.email_confirmed_at || u.confirmed_at), lastSignIn: u.last_sign_in_at || null,
@@ -572,10 +574,17 @@ export default async function handler(req, res) {
       // platform-wide. Also returns a per-company last-active map (max ts seen).
       const companyId = (body.companyId || "").trim();
       const items = [];
-      let q1 = admin.from("proqure_data").select("user_id,value").like("store_key", "piq_events:%");
+      const evCutoff = Date.now() - 90 * 864e5; // retention: ignore telemetry older than 90 days
+      let q1 = admin.from("proqure_data").select("user_id,store_key,value").like("store_key", "piq_events:%");
       if (companyId) q1 = q1.eq("user_id", companyId);
       const { data: ev } = await q1;
-      for (const r of (ev || [])) { if (Array.isArray(r.value)) for (const e of r.value) items.push({ companyId: r.user_id, ts: e.ts, kind: e.t, user: e.u || null, role: e.r || null, view: e.v || null, msg: e.m || null, plan: e.plan || null }); }
+      for (const r of (ev || [])) {
+        const uid = (r.store_key || "").slice("piq_events:".length) || null;
+        if (Array.isArray(r.value)) for (const e of r.value) {
+          if (e && e.ts && Date.parse(e.ts) < evCutoff) continue;
+          items.push({ companyId: r.user_id, uid, ts: e.ts, kind: e.t, role: e.r || null, view: e.v || null, errName: e.n || null, plan: e.plan || null });
+        }
+      }
       let q2 = admin.from("proqure_data").select("user_id,value").eq("store_key", "piq_activity");
       if (companyId) q2 = q2.eq("user_id", companyId);
       const { data: ac } = await q2;
