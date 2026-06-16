@@ -640,6 +640,55 @@ export default async function handler(req, res) {
       return;
     }
 
+    // ----- support inbox: list every tenant's feedback (newest first) -----
+    if (action === "feedback") {
+      const { data: rows } = await admin
+        .from("proqure_data").select("user_id,value").eq("store_key", "piq_feedback");
+      const items = [];
+      for (const r of (rows || [])) { if (Array.isArray(r.value)) for (const it of r.value) if (it && it.id) items.push({ ...it, companyId: r.user_id }); }
+      items.sort((a, b) => Date.parse(b.ts || 0) - Date.parse(a.ts || 0));
+      res.status(200).json({ ok: true, items: items.slice(0, 300) });
+      return;
+    }
+
+    // ----- support inbox: set status and/or reply (reply also goes in-app) -----
+    if (action === "feedback-action") {
+      const companyId = (body.companyId || "").trim();
+      const id = (body.id || "").trim();
+      const status = ["new", "open", "resolved"].includes(body.status) ? body.status : null;
+      const reply = (body.reply || "").trim();
+      if (!companyId || !id) { res.status(400).json({ error: "companyId and id are required." }); return; }
+      const { data: ex, error: rErr } = await admin
+        .from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", "piq_feedback").maybeSingle();
+      if (rErr) { res.status(400).json({ error: rErr.message }); return; }
+      const arr = Array.isArray(ex && ex.value) ? ex.value : [];
+      let found = false;
+      const next = arr.map(it => {
+        if (it && it.id === id) {
+          found = true; const u = { ...it };
+          if (reply) { u.reply = { ts: new Date().toISOString(), by: callerEmail, message: reply }; u.status = u.status === "resolved" ? "resolved" : "open"; }
+          if (status) u.status = status;
+          return u;
+        }
+        return it;
+      });
+      if (!found) { res.status(404).json({ error: "That feedback item no longer exists." }); return; }
+      const { error: wErr } = await admin.from("proqure_data").upsert(
+        { user_id: companyId, store_key: "piq_feedback", value: next, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,store_key" });
+      if (wErr) { res.status(400).json({ error: wErr.message }); return; }
+      if (reply) {
+        // category "announcement" is the only in-app tier every role sees (inApp rank 1)
+        try {
+          await admin.from("notifications").insert([{ company_id: companyId, type: "info", category: "announcement",
+            title: "Response to your feedback", body: reply, dedupe_key: "fbreply-" + id + "-" + Date.now(), meta: { feedbackId: id } }]);
+        } catch (e) { /* the notification is best-effort; the status change already saved */ }
+      }
+      await writeAudit(admin, caller, { action: reply ? "feedback-reply" : "feedback-status", target: companyId, detail: reply ? "replied" : ("status=" + status) });
+      res.status(200).json({ ok: true, message: reply ? "Reply sent." : "Updated." });
+      return;
+    }
+
     if (action === "verify-email") {
       const email = (body.email || "").trim().toLowerCase();
       if (!email) { res.status(400).json({ error: "Email required." }); return; }
