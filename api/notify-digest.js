@@ -9,7 +9,7 @@
 // `Authorization: Bearer <CRON_SECRET>` when that env var is set.
 import { createClient } from "@supabase/supabase-js";
 import { cadenceOf, emailEligible, canSeeInApp } from "../notify-policy.js";
-import { renderNotificationEmail, sendMail } from "./notify-mail.js";
+import { renderNotificationEmail, sendMail } from "../lib/notify-mail.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
