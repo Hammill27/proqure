@@ -698,6 +698,7 @@ let nd={ tpl:"maintenance", type:"critical", aud:"all", cos:[], persist:true, mi
          mDate:"", mStart:"22:00", mDur:90, mImpact:"ProQure may be briefly unavailable. Your data is safe.", ctaLabel:"", ctaHref:"" };
 let nSending=false;
 let nList=null;   // cached announcements (the Sent panel + metrics derive from this)
+let nStats={};    // per-announcement read stats { [id]: {read, eligible} }
 
 async function napi(action,payload){
   const opt={ method:"POST", headers:{ "Authorization":"Bearer "+session.access_token, "Content-Type":"application/json" }, body:JSON.stringify({action,...(payload||{})}) };
@@ -793,6 +794,7 @@ function nSentHtml(){
     const col=NCOL[a.type]||"var(--soft)"; const st=nStatus(a);
     const scope = a.target==="all" ? "All companies" : (((a.company_ids||[]).length)+" compan"+(((a.company_ids||[]).length)===1?"y":"ies"));
     const when = new Date(a.created_at).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+    const rd = nStats[a.id]; const readStr = rd ? (' \u00b7 read '+rd.read+'/~'+rd.eligible+(rd.eligible>0?' ('+Math.round(rd.read/rd.eligible*100)+'%)':'')) : "";
     const chip='<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+col+';background:var(--chip);text-transform:uppercase;letter-spacing:.04em">'+a.type+'</span>';
     let right;
     if(st==="recalled") right='<span class="badge b-off">recalled</span>';
@@ -802,7 +804,7 @@ function nSentHtml(){
     return '<div class="row"'+(st!=="active"?' style="opacity:.55"':'')+'>'
       +'<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">'+chip
         +'<div style="min-width:0"><div class="e" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+nEsc(a.title)+'</div>'
-        +'<div class="m">'+scope+' \u00b7 '+when+(a.min_role?' \u00b7 '+(a.min_role==="manager"?"managers":"buyers+"):"")+'</div></div></div>'
+        +'<div class="m">'+scope+' \u00b7 '+when+(a.min_role?' \u00b7 '+(a.min_role==="manager"?"managers":"buyers+"):"")+readStr+'</div></div></div>'
       +right+'</div>';
   }).join("")+'</div>';
 }
@@ -823,6 +825,7 @@ function nPaint(){
 async function nLoad(force){
   if(nList && !force){ nPaint(); return; }
   try{ const d=await napi("list"); nList=d.announcements||[]; }catch(e){ nList=nList||[]; const box=$("nfSent"); if(box && !nList.length) box.innerHTML='<span class="muted">Could not load: '+nEsc(e.message)+'</span>'; }
+  try{ const ds=await napi("stats"); nStats=ds.stats||{}; }catch(e){ /* read stats are best-effort; the panel still works without them */ }
   nPaint();
 }
 
