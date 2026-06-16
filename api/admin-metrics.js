@@ -408,15 +408,20 @@ function readBody(req) {
 
 // Append one entry to the acting admin's audit row (read-merge-write, capped).
 // Failures here must never block the action itself, so this swallows errors.
+const INBOUND_CAPTURE_DOMAIN = (process.env.VITE_INBOUND_CAPTURE_DOMAIN || process.env.INBOUND_CAPTURE_DOMAIN || "").trim();
+function makeReplyToken() { return (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)).toLowerCase(); }
+function supportCaptureAddress(token) { return INBOUND_CAPTURE_DOMAIN && token ? `s-${token}@${INBOUND_CAPTURE_DOMAIN}` : null; }
 function escapeHtml(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-async function sendSupportEmail(to, subject, html) {
+async function sendSupportEmail(to, subject, html, replyTo) {
   const key = process.env.RESEND_API_KEY;
   if (!key || !to) return false;
   try {
+    const payload = { from: "ProQure Support <support@proqure.co.uk>", to: [to], subject, html };
+    if (replyTo) payload.reply_to = replyTo;
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-      body: JSON.stringify({ from: "ProQure Support <support@proqure.co.uk>", to: [to], subject, html }),
+      body: JSON.stringify(payload),
     });
     return r.ok;
   } catch (e) { return false; }
@@ -764,9 +769,10 @@ export default async function handler(req, res) {
       const next = arr.map(it => {
         if (it && it.id === id) {
           const u = { ...it };
+          if (!u.replyToken) u.replyToken = makeReplyToken();
           if (!Array.isArray(u.replies)) u.replies = u.reply ? [u.reply] : []; // migrate legacy single reply
           delete u.reply;
-          if (reply) { u.replies = [...u.replies, { ts: new Date().toISOString(), by: callerEmail, message: reply }]; u.status = u.status === "resolved" ? u.status : "open"; }
+          if (reply) { u.replies = [...u.replies, { ts: new Date().toISOString(), by: callerEmail, dir: "out", message: reply }]; u.status = u.status === "resolved" ? u.status : "open"; }
           if (status) u.status = status;
           u.updatedAt = new Date().toISOString();
           ticket = u; return u;
@@ -782,7 +788,8 @@ export default async function handler(req, res) {
       if (reply) {
         if (ticket.email) emailed = await sendSupportEmail(
           ticket.email, `Update on your request [${ticket.ref || id}]`,
-          supportReplyEmailHtml({ ref: ticket.ref || "", name: ticket.name, message: ticket.message, replyText: reply, status: ticket.status }));
+          supportReplyEmailHtml({ ref: ticket.ref || "", name: ticket.name, message: ticket.message, replyText: reply, status: ticket.status }),
+          supportCaptureAddress(ticket.replyToken));
         try {
           await admin.from("notifications").insert([{ company_id: companyId, type: "info", category: "announcement",
             title: "Update on your support request", body: reply, dedupe_key: "fbreply-" + id + "-" + Date.now(), meta: { feedbackId: id } }]);
