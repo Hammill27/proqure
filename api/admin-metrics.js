@@ -408,6 +408,38 @@ function readBody(req) {
 
 // Append one entry to the acting admin's audit row (read-merge-write, capped).
 // Failures here must never block the action itself, so this swallows errors.
+function escapeHtml(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+async function sendSupportEmail(to, subject, html) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key || !to) return false;
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+      body: JSON.stringify({ from: "ProQure Support <quotes@proqure.co.uk>", to: [to], subject, html }),
+    });
+    return r.ok;
+  } catch (e) { return false; }
+}
+function supportReplyEmailHtml({ ref, name, message, replyText, status }) {
+  const statusLabel = status === "resolved" ? "Resolved" : status === "on-hold" ? "On hold" : "In progress";
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#F4F4F1;font-family:'Helvetica Neue',Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F4F1"><tr><td align="center" style="padding:24px 16px">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #E8E7E1;border-radius:12px;overflow:hidden">
+      <tr><td style="padding:22px 32px 16px;font-size:18px;font-weight:800;color:#15824F"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#15824F;vertical-align:middle;margin-right:6px"></span>ProQure Support</td></tr>
+      <tr><td style="height:3px;background:#15824F;font-size:0;line-height:3px">&nbsp;</td></tr>
+      <tr><td style="padding:24px 32px 26px">
+        <p style="margin:0 0 14px;font-size:15px;color:#1A1A17">Hi ${escapeHtml(name || "there")},</p>
+        <p style="margin:0 0 8px;font-size:13px;color:#6B6A63">An update on your request <strong style="color:#1A1A17">${escapeHtml(ref || "")}</strong> &mdash; status: <strong style="color:#15824F">${statusLabel}</strong></p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:#F8F8F5;border:1px solid #EAE9E3;border-radius:10px;margin:12px 0 16px"><tr><td style="padding:14px 16px;font-size:14px;line-height:1.55;color:#1A1A17;white-space:pre-wrap">${escapeHtml(replyText || "")}</td></tr></table>
+        ${message ? `<p style="margin:0 0 4px;font-size:11px;color:#908F86;text-transform:uppercase;letter-spacing:.05em">Your original request</p><div style="font-size:12.5px;color:#6B6A63;line-height:1.5;white-space:pre-wrap;border-left:3px solid #EAE9E3;padding-left:12px">${escapeHtml(message)}</div>` : ""}
+      </td></tr>
+    </table>
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%"><tr><td align="center" style="padding:14px 12px 0"><span style="font-size:11px;color:#908F86">Sent with <strong style="color:#15824F">ProQure</strong></span></td></tr></table>
+  </td></tr></table>
+</body></html>`;
+}
 async function writeAudit(admin, actor, entry) {
   try {
     const actorId = actor && actor.id;
@@ -721,37 +753,43 @@ export default async function handler(req, res) {
     if (action === "feedback-action") {
       const companyId = (body.companyId || "").trim();
       const id = (body.id || "").trim();
-      const status = ["new", "open", "resolved"].includes(body.status) ? body.status : null;
+      const status = ["new", "open", "on-hold", "resolved"].includes(body.status) ? body.status : null;
       const reply = (body.reply || "").trim();
       if (!companyId || !id) { res.status(400).json({ error: "companyId and id are required." }); return; }
       const { data: ex, error: rErr } = await admin
         .from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", "piq_feedback").maybeSingle();
       if (rErr) { res.status(400).json({ error: rErr.message }); return; }
       const arr = Array.isArray(ex && ex.value) ? ex.value : [];
-      let found = false;
+      let ticket = null;
       const next = arr.map(it => {
         if (it && it.id === id) {
-          found = true; const u = { ...it };
-          if (reply) { u.reply = { ts: new Date().toISOString(), by: callerEmail, message: reply }; u.status = u.status === "resolved" ? "resolved" : "open"; }
+          const u = { ...it };
+          if (!Array.isArray(u.replies)) u.replies = u.reply ? [u.reply] : []; // migrate legacy single reply
+          delete u.reply;
+          if (reply) { u.replies = [...u.replies, { ts: new Date().toISOString(), by: callerEmail, message: reply }]; u.status = u.status === "resolved" ? u.status : "open"; }
           if (status) u.status = status;
-          return u;
+          u.updatedAt = new Date().toISOString();
+          ticket = u; return u;
         }
         return it;
       });
-      if (!found) { res.status(404).json({ error: "That feedback item no longer exists." }); return; }
+      if (!ticket) { res.status(404).json({ error: "That request no longer exists." }); return; }
       const { error: wErr } = await admin.from("proqure_data").upsert(
         { user_id: companyId, store_key: "piq_feedback", value: next, updated_at: new Date().toISOString() },
         { onConflict: "user_id,store_key" });
       if (wErr) { res.status(400).json({ error: wErr.message }); return; }
+      let emailed = false;
       if (reply) {
-        // category "announcement" is the only in-app tier every role sees (inApp rank 1)
+        if (ticket.email) emailed = await sendSupportEmail(
+          ticket.email, `Update on your request [${ticket.ref || id}]`,
+          supportReplyEmailHtml({ ref: ticket.ref || "", name: ticket.name, message: ticket.message, replyText: reply, status: ticket.status }));
         try {
           await admin.from("notifications").insert([{ company_id: companyId, type: "info", category: "announcement",
-            title: "Response to your feedback", body: reply, dedupe_key: "fbreply-" + id + "-" + Date.now(), meta: { feedbackId: id } }]);
-        } catch (e) { /* the notification is best-effort; the status change already saved */ }
+            title: "Update on your support request", body: reply, dedupe_key: "fbreply-" + id + "-" + Date.now(), meta: { feedbackId: id } }]);
+        } catch (e) { /* best-effort in-app copy */ }
       }
-      await writeAudit(admin, caller, { action: reply ? "feedback-reply" : "feedback-status", target: companyId, detail: reply ? "replied" : ("status=" + status) });
-      res.status(200).json({ ok: true, message: reply ? "Reply sent." : "Updated." });
+      await writeAudit(admin, caller, { action: reply ? "feedback-reply" : "feedback-status", target: companyId, detail: reply ? ("replied" + (emailed ? "+emailed" : "")) : ("status=" + status) });
+      res.status(200).json({ ok: true, message: reply ? (emailed ? "Reply sent and emailed to the customer." : "Reply saved (email could not be sent).") : "Updated.", emailed });
       return;
     }
 
