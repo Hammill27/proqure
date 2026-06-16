@@ -623,11 +623,12 @@ async function loadData(quiet){
 
 
 /* ===================== Notifications (Phase 1) ===================== */
-const NTYPES=[["info","Information","#2E5C8A"],["success","Success","#15824F"],["warning","Warning","#9A5B16"],["critical","Critical","#B23B3B"]];
-const NTC=Object.fromEntries(NTYPES.map(t=>[t[0],t[2]]));
+const NTYPES=[["info","Information"],["success","Success"],["warning","Warning"],["critical","Critical"]];
+const NCOL={ info:"var(--blue)", success:"var(--green-glow)", warning:"var(--amber)", critical:"var(--red)" };
 let nd={ tpl:"maintenance", type:"critical", aud:"all", cos:[], persist:true, minRole:"", title:"", body:"",
          mDate:"", mStart:"22:00", mDur:90, mImpact:"ProQure may be briefly unavailable. Your data is safe.", ctaLabel:"", ctaHref:"" };
 let nSending=false;
+let nList=null;   // cached announcements (the Sent panel + metrics derive from this)
 
 async function napi(action,payload){
   const opt={ method:"POST", headers:{ "Authorization":"Bearer "+session.access_token, "Content-Type":"application/json" }, body:JSON.stringify({action,...(payload||{})}) };
@@ -654,48 +655,136 @@ function nBuild(){
     cta_label: nd.ctaLabel||null, cta_href: nd.ctaHref||null };
 }
 function nEsc(x){ return (x==null?"":String(x)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
 function nPreview(){
-  const d=nBuild(); const col=NTC[d.type]; const wash={info:"#EAF0F6",success:"#EAF3EE",warning:"#FBF3E8",critical:"#FBECEC"}[d.type];
-  let cd=""; if(d.starts_at){ const mins=Math.max(0,Math.round((new Date(d.starts_at).getTime()+48*3600000-Date.now())/60000)); cd=' <span style="font-family:JetBrains Mono,monospace;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;background:rgba(0,0,0,.06)">starts in '+Math.floor(mins/60)+'h '+(mins%60)+'m</span>'; }
-  return '<div style="border-radius:8px;padding:11px 13px;background:'+wash+';border-left:3px solid '+col+';margin-bottom:12px">'
-    +'<div style="font-weight:700;color:#222">'+nEsc(d.title)+cd+'</div>'
-    +'<div style="font-size:12.5px;color:#555;margin-top:2px">'+nEsc(d.body)+'</div></div>'
-    +'<div style="border:1px solid #e7e6e0;border-radius:10px;padding:10px 12px;display:flex;gap:10px">'
-    +'<div style="width:3px;border-radius:3px;background:'+col+'"></div>'
-    +'<div><div style="font-weight:700;color:#222;font-size:13px">'+nEsc(d.title)+'</div>'
-    +'<div style="font-size:12px;color:#666;margin-top:1px">'+nEsc(d.body)+'</div>'
-    +'<div style="font-family:JetBrains Mono,monospace;font-size:10px;color:#999;margin-top:5px">just now</div></div></div>';
+  const d=nBuild(); const col=NCOL[d.type]||"var(--soft)"; const wash="color-mix(in srgb,"+col+" 13%,transparent)";
+  let cd=""; if(d.starts_at){ const mins=Math.max(0,Math.round((new Date(d.starts_at).getTime()+48*3600000-Date.now())/60000)); cd=' <span class="mono" style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--sub)">starts in '+Math.floor(mins/60)+'h '+(mins%60)+'m</span>'; }
+  return '<div style="border-radius:10px;padding:11px 13px;background:'+wash+';border-left:3px solid '+col+';margin-bottom:12px">'
+    +'<div style="font-weight:700;color:var(--text)">'+nEsc(d.title)+cd+'</div>'
+    +'<div style="font-size:12.5px;color:var(--sub);margin-top:2px">'+nEsc(d.body)+'</div></div>'
+    +'<div style="font-size:10px;color:var(--soft);margin-bottom:6px">In the notification centre</div>'
+    +'<div style="border:1px solid var(--line);border-left:3px solid '+col+';border-radius:10px;padding:10px 12px;background:var(--card-2)">'
+    +'<div style="font-weight:700;color:var(--text);font-size:13px">'+nEsc(d.title)+'</div>'
+    +'<div style="font-size:12px;color:var(--sub);margin-top:1px">'+nEsc(d.body)+'</div>'
+    +'<div class="mono" style="font-size:10px;color:var(--soft);margin-top:5px">just now \u00b7 '+(nd.aud==="all"?"everyone":"selected tenants")+'</div></div>';
 }
-function nField(label,inner){ return '<div style="margin-bottom:12px"><label style="display:block;font-size:11px;font-weight:700;color:#222;margin-bottom:5px">'+label+'</label>'+inner+'</div>'; }
-function nSeg(id,opts,cur){ return '<div class="nseg" data-seg="'+id+'" style="display:flex;gap:6px;flex-wrap:wrap">'+opts.map(o=>'<button data-v="'+o[0]+'" style="border:1px solid '+(o[0]===cur?"#15824F":"#e2e1da")+';background:'+(o[0]===cur?"#EAF3EE":"#fff")+';color:'+(o[0]===cur?"#0F5E39":"#666")+';border-radius:9px;padding:8px 12px;font-size:12.5px;font-weight:600;cursor:pointer">'+o[1]+'</button>').join("")+'</div>'; }
+function nField(label,inner){ return '<div style="margin-bottom:13px"><label style="display:block;font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--sub);margin-bottom:6px">'+label+'</label>'+inner+'</div>'; }
+function nSeg(id,opts,cur){
+  const base="border-radius:9px;padding:8px 12px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s";
+  const on="border:1px solid var(--green);background:var(--tint);color:var(--accent)";
+  const off="border:1px solid var(--line-2);background:var(--card-2);color:var(--sub)";
+  return '<div class="nseg" data-seg="'+id+'" style="display:flex;gap:6px;flex-wrap:wrap">'+opts.map(o=>'<button data-v="'+o[0]+'" style="'+base+';'+(o[0]===cur?on:off)+'">'+o[1]+'</button>').join("")+'</div>';
+}
+function nTextarea(id,val,ph){ return '<textarea id="'+id+'" rows="3" placeholder="'+ph+'" style="width:100%;background:var(--card-2);border:1px solid var(--line-2);border-radius:11px;padding:11px 14px;color:var(--text);font-size:14px;font-family:inherit;outline:none;resize:vertical;line-height:1.5">'+nEsc(val)+'</textarea>'; }
+
+// ---- metrics + charts, derived from the cached announcements list (honest: read-state isn't returned by /list) ----
+function nStatus(a){ const now=Date.now();
+  if(a.recalled_at) return "recalled";
+  if(a.ends_at && new Date(a.ends_at).getTime()<=now) return "ended";
+  return "active";
+}
+function nkpi(icon,n,l,x){ return '<div class="kpi">'+ic(icon)+'<div class="n">'+n+'</div><div class="l">'+l+'</div>'+(x?'<div class="x">'+x+'</div>':'')+'</div>'; }
+
+function nMetricsHtml(){
+  const rows=nList||[]; const now=Date.now(); const d30=now-30*864e5;
+  const in30=rows.filter(a=>Date.parse(a.created_at||0)>=d30);
+  const active=rows.filter(a=>nStatus(a)==="active");
+  const recalled30=rows.filter(a=>a.recalled_at && Date.parse(a.recalled_at)>=d30);
+  const critActive=active.filter(a=>a.type==="critical");
+
+  // 14-day send volume
+  const days=[]; for(let i=13;i>=0;i--){ const dt=new Date(now-i*864e5); days.push({key:dt.toISOString().slice(0,10), lab:dt.toLocaleDateString("en-GB",{day:"numeric",month:"short"}), n:0}); }
+  const idx=Object.fromEntries(days.map((d,i)=>[d.key,i]));
+  rows.forEach(a=>{ const k=(a.created_at||"").slice(0,10); if(k in idx) days[idx[k]].n++; });
+  const maxN=Math.max(1,...days.map(d=>d.n));
+  const bars=days.map(d=>'<div class="b" style="height:'+Math.round(d.n/maxN*100)+'%"><span>'+d.n+'</span></div>').join("");
+  const xlab=days.map((d,i)=>i%3===0?'<div>'+d.lab+'</div>':'<div></div>').join("");
+
+  // type distribution (last 30 days)
+  const byType=NTYPES.map(t=>[t[0],t[1],in30.filter(a=>a.type===t[0]).length]);
+  const tot=byType.reduce((a,b)=>a+b[2],0)||1;
+  const tbar=byType.filter(t=>t[2]>0).map(t=>'<i style="width:'+(t[2]/tot*100)+'%;background:'+NCOL[t[0]]+'"></i>').join("") || '<i style="width:100%;background:var(--chip)"></i>';
+  const tleg=byType.map(t=>'<div class="pl"><span class="lab"><span class="dot" style="background:'+NCOL[t[0]]+'"></span>'+t[1]+'</span><span class="v">'+t[2]+'</span></div>').join("");
+
+  return '<div class="kpis">'
+      +nkpi("bell",in30.length,"Sent","last 30 days")
+      +nkpi("shield",active.length,"Active now","visible in-app")
+      +nkpi("alert",critActive.length,"Critical","active & critical")
+      +nkpi("zzz",recalled30.length,"Recalled","last 30 days")
+    +'</div>'
+    +'<div class="cols">'
+      +'<div class="panel"><h2>Send volume <span class="hint">last 14 days</span></h2><div class="chart">'+bars+'</div><div class="chart-x">'+xlab+'</div></div>'
+      +'<div class="panel"><h2>By type <span class="hint">last 30 days</span></h2><div class="planbar">'+tbar+'</div><div class="planlegend">'+tleg+'</div></div>'
+    +'</div>';
+}
+
+function nSentHtml(){
+  const rows=nList||[]; if(!rows.length) return '<div class="muted" style="padding:6px 0">Nothing sent yet \u2014 your first notification will appear here.</div>';
+  return '<div class="feed">'+rows.slice(0,12).map(a=>{
+    const col=NCOL[a.type]||"var(--soft)"; const st=nStatus(a);
+    const scope = a.target==="all" ? "All companies" : (((a.company_ids||[]).length)+" compan"+(((a.company_ids||[]).length)===1?"y":"ies"));
+    const when = new Date(a.created_at).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+    const chip='<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+col+';background:var(--chip);text-transform:uppercase;letter-spacing:.04em">'+a.type+'</span>';
+    let right;
+    if(st==="recalled") right='<span class="badge b-off">recalled</span>';
+    else if(st==="ended") right='<span class="badge b-off">ended</span>';
+    else { const canExpire = a.persistent || a.category==="maintenance" || a.ends_at;
+      right='<div style="display:flex;gap:6px">'+(canExpire?'<button class="btn btn-ghost btn-sm" data-expire="'+a.id+'">Expire</button>':'')+'<button class="btn btn-danger btn-sm" data-recall="'+a.id+'">Recall</button></div>'; }
+    return '<div class="row"'+(st!=="active"?' style="opacity:.55"':'')+'>'
+      +'<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">'+chip
+        +'<div style="min-width:0"><div class="e" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+nEsc(a.title)+'</div>'
+        +'<div class="m">'+scope+' \u00b7 '+when+(a.min_role?' \u00b7 '+(a.min_role==="manager"?"managers":"buyers+"):"")+'</div></div></div>'
+      +right+'</div>';
+  }).join("")+'</div>';
+}
+
+function nPaint(){
+  const m=$("nMetrics"); if(m) m.innerHTML=nMetricsHtml();
+  const box=$("nfSent"); if(box) box.innerHTML=nSentHtml();
+  document.querySelectorAll('[data-recall]').forEach(b=>b.addEventListener('click',async()=>{
+    if(!confirm("Recall this notification? It will disappear for everyone.")) return;
+    try{ await napi("recall",{id:b.dataset.recall}); toast("Recalled"); await nLoad(true); }catch(e){ toast(e.message,true); }
+  }));
+  document.querySelectorAll('[data-expire]').forEach(b=>b.addEventListener('click',async()=>{
+    if(!confirm("Expire this notice now? It will stop showing, but stays in the log.")) return;
+    try{ await napi("expire",{id:b.dataset.expire}); toast("Expired"); await nLoad(true); }catch(e){ toast(e.message,true); }
+  }));
+}
+
+async function nLoad(force){
+  if(nList && !force){ nPaint(); return; }
+  try{ const d=await napi("list"); nList=d.announcements||[]; }catch(e){ nList=nList||[]; const box=$("nfSent"); if(box && !nList.length) box.innerHTML='<span class="muted">Could not load: '+nEsc(e.message)+'</span>'; }
+  nPaint();
+}
 
 function renderNotifications(){
   const cos=(DATA&&DATA.companies||[]).map(c=>({id:c.companyId,name:c.name}));
-  const I='font:inherit;font-size:13px;width:100%;border:1px solid #e2e1da;border-radius:9px;padding:9px 11px;box-sizing:border-box';
   const maint = nd.tpl==="maintenance";
   $("view").innerHTML =
-   '<div style="display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start">'
+    '<div id="nMetrics"><div class="muted" style="padding:4px 0 18px">Loading\u2026</div></div>'
+   +'<div class="cols" style="align-items:start">'
    +'<div class="panel">'
-     +'<h2 style="margin:0 0 2px">Send a notification</h2>'
-     +'<p class="muted" style="margin:0 0 16px;font-size:12.5px">Reaches the in-app notification centre for everyone you target. Critical notices also show a banner across the top of the app, and persistent ones stay until dismissed (maintenance stays until the window passes).</p>'
+     +'<h2 style="margin-bottom:2px">Send a notification</h2>'
+     +'<p class="muted" style="margin:0 0 16px;font-size:12.5px">Reaches the in-app notification centre for everyone you target. Critical notices also show a banner across the top of the app; persistent ones stay until dismissed (maintenance stays until the window passes).</p>'
      +nField("Template", nSeg("tpl",[["general","General announcement"],["maintenance","Planned maintenance"],["release","Feature release"]],nd.tpl))
-     +nField("Type", nSeg("type",NTYPES.map(t=>[t[0],t[1]]),nd.type))
+     +nField("Type", nSeg("type",NTYPES,nd.type))
      +(maint
-        ? '<div style="display:flex;gap:10px">'+nField("Date",'<input id="nfDate" type="date" value="'+nd.mDate+'" style="'+I+'">')+nField("Start time",'<input id="nfStart" type="time" value="'+nd.mStart+'" style="'+I+'">')+nField("Duration (min)",'<input id="nfDur" type="number" min="5" step="5" value="'+nd.mDur+'" style="'+I+'">')+'</div>'+nField("Expected impact",'<input id="nfImpact" value="'+nEsc(nd.mImpact)+'" style="'+I+'">')
-        : nField("Title",'<input id="nfTitle" value="'+nEsc(nd.title)+'" placeholder="e.g. Faster RFQ analysis is here" style="'+I+'">')+nField("Message",'<textarea id="nfBody" rows="3" placeholder="What changed and why it matters, in plain terms." style="'+I+';resize:vertical">'+nEsc(nd.body)+'</textarea>'))
+        ? '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">'+nField("Date",'<input id="nfDate" type="date" value="'+nd.mDate+'">')+nField("Start time",'<input id="nfStart" type="time" value="'+nd.mStart+'">')+nField("Duration (min)",'<input id="nfDur" type="number" min="5" step="5" value="'+nd.mDur+'">')+'</div>'+nField("Expected impact",'<input id="nfImpact" value="'+nEsc(nd.mImpact)+'">')
+        : nField("Title",'<input id="nfTitle" value="'+nEsc(nd.title)+'" placeholder="e.g. Faster RFQ analysis is here">')+nField("Message",nTextarea("nfBody",nd.body,"What changed and why it matters, in plain terms.")))
      +nField("Audience", nSeg("aud",[["all","All companies"],["companies","Specific companies / tenancy"]],nd.aud))
-     +(nd.aud==="companies" ? nField("Choose companies",'<select id="nfCos" multiple size="5" style="'+I+'">'+cos.map(c=>'<option value="'+nEsc(c.id)+'"'+(nd.cos.includes(c.id)?" selected":"")+'>'+nEsc(c.name)+'</option>').join("")+'</select>') : "")
+     +(nd.aud==="companies" ? nField("Choose companies",'<select id="nfCos" multiple size="5" style="width:100%">'+cos.map(c=>'<option value="'+nEsc(c.id)+'"'+(nd.cos.includes(c.id)?" selected":"")+'>'+nEsc(c.name)+'</option>').join("")+'</select>') : "")
      +nField("Who sees this", nSeg("minrole",[["","Everyone in the company"],["buyer","Buyers & managers"],["manager","Managers only"]],nd.minRole))
-     +'<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">'
-       +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#222;cursor:pointer"><input id="nfPersist" type="checkbox" '+(nd.persist?"checked":"")+(maint?" disabled":"")+'> Keep visible until dismissed</label>'
+     +'<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card-2);border:1px solid var(--line);border-radius:12px;margin-bottom:13px">'
+       +'<button id="nfPersist" type="button" role="switch" aria-checked="'+(nd.persist?"true":"false")+'"'+(maint?" disabled":"")+' style="width:38px;height:22px;border-radius:11px;border:0;flex-shrink:0;cursor:'+(maint?"not-allowed":"pointer")+';position:relative;background:'+(nd.persist?"var(--green)":"var(--line-2)")+';opacity:'+(maint?".6":"1")+'"><span style="position:absolute;top:2px;left:'+(nd.persist?"18px":"2px")+';width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3)"></span></button>'
+       +'<div><div style="font-size:13px;font-weight:600;color:var(--text)">Keep visible until dismissed</div><div style="font-size:11.5px;color:var(--soft);margin-top:1px">'+(maint?"Maintenance notices stay until the window passes.":"Otherwise it clears once the person has read it.")+'</div></div>'
      +'</div>'
-     +'<div style="display:flex;gap:10px">'+nField("Link label (optional)",'<input id="nfCtaLabel" value="'+nEsc(nd.ctaLabel)+'" placeholder="Read more" style="'+I+'">')+nField("Link URL (optional)",'<input id="nfCtaHref" value="'+nEsc(nd.ctaHref)+'" placeholder="https://\u2026" style="'+I+'">')+'</div>'
-     +'<button id="nfSend" class="btn" style="width:100%;background:#15824F;color:#fff;border:0;border-radius:10px;padding:11px;font-weight:700;font-size:13.5px;cursor:pointer">'+(nSending?"Sending\u2026":"Send notification")+'</button>'
-     +'<p class="muted" style="font-size:11px;margin-top:10px">Every send is recorded in the Audit log with who sent it and the audience. Recipients\u2019 read state is per person. You can recall or expire a notice below.</p>'
+     +'<div style="display:grid;grid-template-columns:1fr 1.4fr;gap:10px">'+nField("Link label (optional)",'<input id="nfCtaLabel" value="'+nEsc(nd.ctaLabel)+'" placeholder="Read more">')+nField("Link URL (optional)",'<input id="nfCtaHref" value="'+nEsc(nd.ctaHref)+'" placeholder="https://\u2026">')+'</div>'
+     +'<button id="nfSend" class="btn btn-primary" style="width:100%;padding:12px">'+(nSending?"Sending\u2026":"Send notification")+'</button>'
+     +'<p class="muted" style="font-size:11px;margin-top:11px;text-align:center">Every send is recorded in the Audit log with who sent it and the audience. You can recall or expire any notice below.</p>'
    +'</div>'
    +'<div>'
-     +'<div class="panel"><div style="font-family:JetBrains Mono,monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#999;margin-bottom:10px;font-weight:700">Live preview</div><div id="nfPreview">'+nPreview()+'</div></div>'
-     +'<div class="panel" style="margin-top:14px"><div style="font-family:JetBrains Mono,monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#999;margin-bottom:10px;font-weight:700">Recently sent</div><div id="nfSent" class="muted" style="font-size:12.5px">Loading\u2026</div></div>'
+     +'<div class="panel"><h2 style="margin-bottom:12px">Live preview</h2><div id="nfPreview">'+nPreview()+'</div></div>'
+     +'<div class="panel" style="margin-top:18px"><h2>Recently sent <span class="hint">last 30 days</span></h2><div id="nfSent"><div class="muted">Loading\u2026</div></div></div>'
    +'</div></div>';
 
   // wire segmented controls
@@ -710,9 +799,10 @@ function renderNotifications(){
     }));
   });
   const upd=()=>{ const p=$("nfPreview"); if(p) p.innerHTML=nPreview(); };
-  const bind=(id,prop,ev)=>{ const el=$(id); if(el) el.addEventListener(ev||'input',e=>{ nd[prop]= el.type==='checkbox'?el.checked:el.value; upd(); }); };
+  const bind=(id,prop,ev)=>{ const el=$(id); if(el) el.addEventListener(ev||'input',e=>{ nd[prop]=el.value; upd(); }); };
   bind("nfDate","mDate"); bind("nfStart","mStart"); bind("nfDur","mDur"); bind("nfImpact","mImpact");
-  bind("nfTitle","title"); bind("nfBody","body"); bind("nfCtaLabel","ctaLabel"); bind("nfCtaHref","ctaHref"); bind("nfPersist","persist","change");
+  bind("nfTitle","title"); bind("nfBody","body"); bind("nfCtaLabel","ctaLabel"); bind("nfCtaHref","ctaHref");
+  const pb=$("nfPersist"); if(pb && !maint) pb.addEventListener('click',()=>{ nd.persist=!nd.persist; renderNotifications(); });
   const sel=$("nfCos"); if(sel) sel.addEventListener('change',()=>{ nd.cos=[...sel.selectedOptions].map(o=>o.value); });
 
   const send=$("nfSend");
@@ -728,36 +818,10 @@ function renderNotifications(){
       toast("Notification sent");
       nd.title=""; nd.body="";
     }catch(e){ toast(e.message,true); }
-    nSending=false; renderNotifications(); loadSent();
+    nSending=false; renderNotifications(); nLoad(true);
   });
-  loadSent();
+  nLoad();
 }
-
-async function loadSent(){
-  const box=$("nfSent"); if(!box) return;
-  try{
-    const d=await napi("list");
-    const rows=(d.announcements||[]);
-    if(!rows.length){ box.innerHTML='<span class="muted">Nothing sent yet.</span>'; return; }
-    box.innerHTML=rows.slice(0,12).map(a=>{
-      const col=NTC[a.type]||"#999"; const recalled=!!a.recalled_at;
-      const scope = a.target==="all" ? "All" : ((a.company_ids||[]).length+" co.");
-      const when = new Date(a.created_at).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
-      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #eee'+(recalled?';opacity:.5':'')+'">'
-        +'<span style="font-family:JetBrains Mono,monospace;font-size:9px;font-weight:700;padding:2px 6px;border-radius:999px;color:'+col+';background:rgba(0,0,0,.04)">'+a.type+'</span>'
-        +'<span style="flex:1;min-width:0;font-size:12.5px;color:#222;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+nEsc(a.title)+'</span>'
-        +'<span class="muted" style="font-size:10.5px">'+scope+' \u00b7 '+when+'</span>'
-        +(recalled?'<span class="muted" style="font-size:10.5px">recalled</span>'
-          :'<button data-recall="'+a.id+'" style="border:0;background:transparent;color:#B23B3B;font-size:11px;font-weight:700;cursor:pointer">Recall</button>')
-        +'</div>';
-    }).join("");
-    box.querySelectorAll('[data-recall]').forEach(b=>b.addEventListener('click',async()=>{
-      if(!confirm("Recall this notification? It will disappear for everyone.")) return;
-      try{ await napi("recall",{id:b.dataset.recall}); toast("Recalled"); loadSent(); }catch(e){ toast(e.message,true); }
-    }));
-  }catch(e){ box.innerHTML='<span class="muted">Could not load: '+nEsc(e.message)+'</span>'; }
-}
-
 function render(){ if(currentTab==="health"){ renderHealth(); return; } if(currentTab==="notifications"){ renderNotifications(); return; } if(!DATA) return; ({overview:renderOverview,companies:renderCompanies,costs:renderCosts,notifications:renderNotifications,users:renderUsers,signups:renderSignups,audit:renderAudit}[currentTab])(); }
 function planBadge(p){ p=esc(p||"trial"); return '<span class="badge b-'+p+'">'+p+'</span>'; }
 const PLAN_LABELS_ADM={trial:"Trial",sole:"Sole Trader",team:"Team",business:"Business",enterprise:"Enterprise",suspended:"Suspended",cancelled:"Cancelled"};
