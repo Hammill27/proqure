@@ -145,6 +145,11 @@ export default async function handler(req, res) {
     if (approxBytes > 6_000_000) { // ~6 MB of prompt+images
       return res.status(413).json({ error: "Request too large." });
     }
+    // Bound per-request output cost: cap completion tokens server-side. Honours a
+    // client hint but clamps it hard, so a single call can't run away even while the
+    // company is under its monthly budget. ProQure's AI flows are short structured
+    // outputs, so this ceiling is generous.
+    const maxTokens = Math.min(Math.max(parseInt(req.body && req.body.max_tokens, 10) || 4000, 1), 8000);
 
     // Caller verification (closes the open-proxy hole): a valid signed-in session
     // is required, and the company is resolved SERVER-SIDE from membership.
@@ -191,16 +196,24 @@ export default async function handler(req, res) {
     const hasImages = Array.isArray(messages) && messages.some(m =>
       Array.isArray(m && m.content) && m.content.some(p => p && p.type === "image_url"));
     const dropRetired = (arr) => arr.filter(m => typeof m === "string" && !RETIRED.some(re => re.test(m)));
+    // Allow-list: a caller may only select from models we actually use. This stops a
+    // crafted request pinning an arbitrary (e.g. premium) slug to amplify cost — the
+    // monthly budget and max_tokens bound the blast radius, this removes the vector.
+    // Every model the app sends is in this set, so legitimate requests are unaffected.
+    const ALLOWED = new Set([...webModels, ...visionModels, ...standardModels]);
+    const cleanModels = (arr) => dropRetired(Array.isArray(arr) ? arr : []).filter(m => ALLOWED.has(m));
     let modelList;
     if (web) {
-      modelList = (Array.isArray(models) && models.length ? models : webModels);
+      const c = cleanModels(models);
+      modelList = c.length ? c : webModels;
     } else if (hasImages) {
-      // caller's valid slugs first, then the current vision set; dead slugs removed.
-      const merged = dropRetired([...(Array.isArray(models) ? models : []), ...visionModels]);
+      // caller's valid slugs first, then the current vision set; dead/unknown removed.
+      const merged = [...cleanModels(models), ...visionModels];
       modelList = [...new Set(merged)];
       if (!modelList.length) modelList = visionModels;
     } else {
-      modelList = (Array.isArray(models) && models.length ? models : standardModels);
+      const c = cleanModels(models);
+      modelList = c.length ? c : standardModels;
     }
 
     // OpenRouter web plugin (Exa-backed). Default 4 results keeps cost low.
@@ -215,6 +228,7 @@ export default async function handler(req, res) {
           model,
           messages,
           temperature: typeof temperature === "number" ? temperature : 0.1,
+          max_tokens: maxTokens,
         };
         if (plugins) body.plugins = plugins;
         // Optional end-user/company tag for OpenRouter's own reporting.
