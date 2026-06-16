@@ -24,7 +24,7 @@ const SB_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const sbAnon = (SB_URL && SB_ANON) ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 const sbAdmin = (SB_URL && SB_SERVICE) ? createClient(SB_URL, SB_SERVICE, { auth: { persistSession: false } }) : null;
 // Only these envelope addresses may ever be used in "from".
-const ALLOWED_FROM = ["quotes@proqure.co.uk", "orders@proqure.co.uk"];
+const ALLOWED_FROM = ["quotes@proqure.co.uk", "orders@proqure.co.uk", "support@proqure.co.uk"];
 
 async function verifyCaller(req) {
   if (!sbAnon) return { mode: "open" };
