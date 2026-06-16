@@ -416,7 +416,7 @@ async function sendSupportEmail(to, subject, html) {
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-      body: JSON.stringify({ from: "ProQure Support <quotes@proqure.co.uk>", to: [to], subject, html }),
+      body: JSON.stringify({ from: "ProQure Support <support@proqure.co.uk>", to: [to], subject, html }),
     });
     return r.ok;
   } catch (e) { return false; }
