@@ -2960,7 +2960,7 @@ function ProQureApp({ session, companyId }) {
   const evUid = session?.user?.id || null;
   const track = useCallback((t, data) => {
     if (!cloudEnabled || !cloudUserId || !evUid) return;
-    try { evtBuf.current.push({ t, ...(data || {}), u: myEmail || null, r: myRole || null, ts: new Date().toISOString() }); } catch (e) {}
+    try { evtBuf.current.push({ t, ...(data || {}), r: myRole || null, ts: new Date().toISOString() }); } catch (e) {}
   }, [cloudEnabled, cloudUserId, evUid, myEmail, myRole]);
   const flushEvents = useCallback(async () => {
     if (!cloudEnabled || !supabase || !cloudUserId || !evUid || !evtBuf.current.length) return;
@@ -2969,8 +2969,10 @@ function ProQureApp({ session, companyId }) {
     try {
       const { data: ex } = await supabase.from("proqure_data").select("value").eq("user_id", cloudUserId).eq("store_key", key).maybeSingle();
       const arr = Array.isArray(ex && ex.value) ? ex.value : [];
+      const cutoff = Date.now() - 90 * 864e5; // 90-day retention
+      const kept = arr.concat(batch).filter(e => e && e.ts && Date.parse(e.ts) >= cutoff).slice(-400);
       await supabase.from("proqure_data").upsert(
-        { user_id: cloudUserId, store_key: key, value: arr.concat(batch).slice(-400), updated_at: new Date().toISOString() },
+        { user_id: cloudUserId, store_key: key, value: kept, updated_at: new Date().toISOString() },
         { onConflict: "user_id,store_key" });
     } catch (e) { /* drop batch on failure to avoid unbounded memory growth */ }
   }, [cloudEnabled, cloudUserId, evUid]);
@@ -2980,7 +2982,7 @@ function ProQureApp({ session, companyId }) {
     const beat = setInterval(() => track("active", {}), 300000);
     const flush = setInterval(() => { flushEvents(); }, 20000);
     const onHide = () => { if (document.visibilityState === "hidden") flushEvents(); };
-    const onErr = (e) => { try { track("error", { m: String((e && (e.message || e.reason)) || "error").slice(0, 200) }); } catch (x) {} };
+    const onErr = (e) => { try { const er = (e && e.error) || (e && e.reason); const n = (er && er.name) ? er.name : ((e && e.type === "unhandledrejection") ? "UnhandledRejection" : "Error"); track("error", { n: String(n).slice(0, 40) }); } catch (x) {} };
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("beforeunload", flushEvents);
     window.addEventListener("error", onErr);
