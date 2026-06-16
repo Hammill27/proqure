@@ -604,6 +604,42 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (action === "reset-onboarding") {
+      const companyId = (body.companyId || "").trim();
+      if (!companyId) { res.status(400).json({ error: "companyId required." }); return; }
+      const { data: existing, error: rErr } = await admin
+        .from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", "piq_settings").maybeSingle();
+      if (rErr) { res.status(400).json({ error: rErr.message }); return; }
+      const merged = { ...((existing && existing.value) || {}), onboarded: false };
+      const { error: wErr } = await admin.from("proqure_data").upsert(
+        { user_id: companyId, store_key: "piq_settings", value: merged, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,store_key" }
+      );
+      if (wErr) { res.status(400).json({ error: wErr.message }); return; }
+      await writeAudit(admin, caller, { action: "reset-onboarding", target: companyId });
+      res.status(200).json({ ok: true, message: "Onboarding reset — the company sees setup again on next load." });
+      return;
+    }
+
+    if (action === "reset-trial") {
+      const companyId = (body.companyId || "").trim();
+      if (!companyId) { res.status(400).json({ error: "companyId required." }); return; }
+      const days = Number(body.days) > 0 ? Number(body.days) : 14;
+      const ends = new Date(Date.now() + days * 86400000).toISOString();
+      const { data: existing, error: rErr } = await admin
+        .from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", "piq_settings").maybeSingle();
+      if (rErr) { res.status(400).json({ error: rErr.message }); return; }
+      const merged = { ...((existing && existing.value) || {}), trialEndsAt: ends };
+      const { error: wErr } = await admin.from("proqure_data").upsert(
+        { user_id: companyId, store_key: "piq_settings", value: merged, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,store_key" }
+      );
+      if (wErr) { res.status(400).json({ error: wErr.message }); return; }
+      await writeAudit(admin, caller, { action: "reset-trial", target: companyId, detail: `+${days}d` });
+      res.status(200).json({ ok: true, message: `Trial reset to ${days} days from now.` });
+      return;
+    }
+
     if (action === "verify-email") {
       const email = (body.email || "").trim().toLowerCase();
       if (!email) { res.status(400).json({ error: "Email required." }); return; }
