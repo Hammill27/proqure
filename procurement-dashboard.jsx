@@ -4517,8 +4517,6 @@ ${settings.company||""}`;
   const [notifOpen, setNotifOpen]   = useState(false);
   const [notifView, setNotifView]   = useState("list");
   const [notifTab, setNotifTab]     = useState("all");
-  const notifInit = useRef(false);
-  const notifSeen = useRef(new Set());
 
   const notifInWindow = (a) => {
     const now = Date.now();
@@ -4703,17 +4701,6 @@ ${settings.company||""}`;
     const t = setTimeout(() => { evaluateUsageAlerts(); }, 1500);
     return () => clearTimeout(t);
   }, [notifIdsKey, evaluateUsageAlerts]); // eslint-disable-line
-  // Toast newly-arrived notifications (skip the initial load).
-  useEffect(() => {
-    const ids = notifList.map(n => n.id);
-    if (!notifInit.current) { notifInit.current = true; notifSeen.current = new Set(ids); return; }
-    notifList.forEach(n => {
-      if (!notifSeen.current.has(n.id)) {
-        notifSeen.current.add(n.id);
-        try { showToast(n.title, (n.type === "critical" || n.type === "warning") ? "warn" : "success"); } catch (e) {}
-      }
-    });
-  }, [notifIdsKey]); // eslint-disable-line
 
   const notifTimeAgo = (iso) => {
     const t = new Date(iso).getTime(); const s = (Date.now() - t) / 1000;
