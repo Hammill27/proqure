@@ -21,9 +21,8 @@ const DAY = 86400000;
 
 export default async function handler(req, res) {
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const qsecret = (req.query && req.query.secret) || "";
   if (!CRON_SECRET) return res.status(500).json({ error: "Sweep not configured (set CRON_SECRET)." });
-  if (bearer !== CRON_SECRET && qsecret !== CRON_SECRET) return res.status(401).json({ error: "Unauthorised." });
+  if (bearer !== CRON_SECRET) return res.status(401).json({ error: "Unauthorised." });
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: "Server not configured." });
 
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
