@@ -98,7 +98,7 @@
 
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:16px}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 18px 16px;box-shadow:var(--shadow);transition:transform .2s,border-color .2s;animation:rise .5s both}
-  .kpi:hover{transform:translateY(-3px);border-color:var(--tint-line)}
+  .kpi:hover{transform:translateY(-2px);border-color:var(--tint-line)}
   .kpi .ic{width:38px;height:38px;border-radius:11px;background:var(--tint);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:13px}
   .kpi .ic svg{width:19px;height:19px}
   .kpi .n{font-family:var(--mono);font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
@@ -183,7 +183,7 @@
   .x{background:var(--chip);border:1px solid var(--line-2);color:var(--text);width:34px;height:34px;border-radius:10px;font-size:18px;line-height:1;flex-shrink:0}
   .x:hover{border-color:var(--red);color:var(--red)}
   .dbody{padding:22px 24px}
-  .sec-title{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--soft);margin:22px 0 11px}
+  .sec-title{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--soft);margin:22px 0 11px}
   .sec-title:first-child{margin-top:0}
   .planrow{display:flex;align-items:center;gap:10px}
   .meta{display:grid;grid-template-columns:1fr 1fr;gap:13px 20px}
@@ -247,6 +247,10 @@
   .stat:hover{box-shadow:0 8px 20px rgba(0,0,0,.18)}
   .stat .n{background:linear-gradient(180deg,var(--text),color-mix(in srgb,var(--text) 80%,var(--accent)));-webkit-background-clip:text;background-clip:text}
   .panel{transition:border-color .2s,box-shadow .25s} .panel:hover{box-shadow:0 1px 2px rgba(0,0,0,.28),0 16px 40px rgba(0,0,0,.22)}
+  /* quality floor: visible keyboard focus + respect reduced motion */
+  :focus-visible{outline:2px solid var(--green-glow);outline-offset:2px;border-radius:6px}
+  .navitem:focus-visible,.btn:focus-visible,.dtab:focus-visible,.cmdk-item:focus-visible{outline-offset:1px}
+  @media (prefers-reduced-motion: reduce){ *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important} }
   .chart .b{box-shadow:0 0 18px -2px color-mix(in srgb,var(--green-glow) 55%,transparent)}
   .chart .b::after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,.22),transparent 45%)}
   .planbar i{transition:width .6s cubic-bezier(.16,1,.3,1)}
