@@ -5106,9 +5106,9 @@ ${settings.company||""}`;
 
   // Dashboard: procurement-pipeline donut (where live requests sit right now)
   const pipeline = [
-    { label:"Awaiting quotes", value:stats.pending,  color:"#C77D2E" },
-    { label:"Quotes in",       value:stats.received, color:"#7E6DD6" },
-    { label:"Approved",        value:stats.approved, color:"#1E9E63" },
+    { label:"Awaiting quotes", value:stats.pending,  color:"#C77D2E", status:"pending" },
+    { label:"Quotes in",       value:stats.received, color:"#7E6DD6", status:"received" },
+    { label:"Approved",        value:stats.approved, color:"#1E9E63", status:"approved" },
   ].filter(p=>p.value>0);
   const pipelineTotal = pipeline.reduce((s,p)=>s+p.value,0);
 
@@ -6169,7 +6169,9 @@ Rules:
                     const tradeColors={Plumbing:"#5B5BD6",HVAC:"#1E9E63",Electrical:"#C77D2E",Mechanical:"#7E6DD6",Ventilation:"#2BB873",Gas:"#D14343",Other:"#908F86"};
                     const col=tradeColors[s.trade]||"#5B5BD6";
                     return(
-                      <div key={s.trade}>
+                      <div key={s.trade} onClick={()=>{ setReqFilterTrade(s.trade); setReqFilterStatus("all"); setReqSearch(""); setShowArchived(false); setView("requests"); }} title={`View ${s.trade} requests`} style={{cursor:"pointer",borderRadius:8,padding:"5px 7px",margin:"0 -7px",transition:"background 0.15s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background="var(--bg-subtle2)";}}
+                        onMouseLeave={e=>{e.currentTarget.style.background="transparent";}}>
                         <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                           <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{s.trade}</span>
                           <span style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}} className="num">£{s.total.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
@@ -6229,7 +6231,9 @@ Rules:
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:10,flex:1,minWidth:120}}>
                         {pipeline.map(p=>(
-                          <div key={p.label} style={{display:"flex",alignItems:"center",gap:9}}>
+                          <div key={p.label} onClick={()=>{ setReqFilterStatus(p.status); setReqFilterTrade("all"); setReqSearch(""); setShowArchived(false); setView("requests"); }} title={`View ${p.label.toLowerCase()} requests`} style={{display:"flex",alignItems:"center",gap:9,cursor:"pointer",borderRadius:8,padding:"3px 6px",margin:"0 -6px",transition:"background 0.15s"}}
+                            onMouseEnter={e=>{e.currentTarget.style.background="var(--bg-subtle2)";}}
+                            onMouseLeave={e=>{e.currentTarget.style.background="transparent";}}>
                             <span style={{width:10,height:10,borderRadius:3,background:p.color,flexShrink:0}}/>
                             <span style={{fontSize:12.5,color:"var(--text-secondary)",flex:1}}>{p.label}</span>
                             <span style={{fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:"var(--text-primary)"}}>{p.value}</span>
