@@ -127,6 +127,34 @@ export default async function handler(req, res) {
       res.status(200).json({ announcements: data || [] }); return;
     }
 
+    // ----- per-announcement in-app read stats (admin-only aggregate) -----
+    // Real reads come from notification_state.read_ids. The "eligible" figure is an
+    // estimate from members + target + min_role (in-app visibility), so it is labelled
+    // approximate in the UI rather than presented as an exact denominator.
+    if (action === "stats") {
+      const RANK = { engineer: 1, buyer: 2, manager: 3, owner: 3 };
+      const minRank = (mr) => mr === "manager" ? 3 : mr === "buyer" ? 2 : 1;
+      const [annRes, stateRes, memRes] = await Promise.all([
+        admin.from("announcements").select("id,target,company_ids,min_role").order("created_at", { ascending: false }).limit(50),
+        admin.from("notification_state").select("user_id,read_ids"),
+        admin.from("members").select("user_id,company_id,role"),
+      ]);
+      const anns = annRes.data || [], states = stateRes.data || [], members = (memRes.data || []).filter(m => m && m.user_id);
+      const readers = {};
+      for (const s of states) {
+        const ids = Array.isArray(s.read_ids) ? s.read_ids : [];
+        for (const id of ids) { (readers[id] = readers[id] || new Set()).add(s.user_id); }
+      }
+      const stats = {};
+      for (const a of anns) {
+        const need = minRank(a.min_role);
+        let pool = members.filter(m => (RANK[m.role] || 1) >= need);
+        if (a.target === "companies") { const set = new Set(a.company_ids || []); pool = pool.filter(m => set.has(m.company_id)); }
+        stats[a.id] = { read: readers[a.id] ? readers[a.id].size : 0, eligible: new Set(pool.map(m => m.user_id)).size };
+      }
+      res.status(200).json({ stats }); return;
+    }
+
     // ----- create / send an announcement -----
     if (action === "announce") {
       const type = TYPES.includes(body.type) ? body.type : "info";
