@@ -2945,6 +2945,49 @@ function ProQureApp({ session, companyId }) {
   // Defensive: treat the retired "owner" role (or any unknown role) as manager / engineer sensibly.
   const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
   const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
+
+  // ---- Activity capture (login / page views / last-active / JS errors) --------
+  // Lightweight usage telemetry, distinct from the business activity log
+  // (piq_activity) and email webhook events. One row PER USER ("piq_events:<uid>")
+  // so concurrent users in a tenant never clobber each other. Buffered in memory and
+  // flushed on a timer / when the tab is hidden. Surfaced read-only in the Admin
+  // Centre (account timelines, login history, last-active). Business actions are
+  // NOT re-captured here — they already live in piq_activity, which the admin merges.
+  const evtBuf = useRef([]);
+  const loginLogged = useRef(false);
+  const planRef = useRef("trial");
+  useEffect(() => { planRef.current = (settings && settings.plan) || "trial"; }, [settings]);
+  const evUid = session?.user?.id || null;
+  const track = useCallback((t, data) => {
+    if (!cloudEnabled || !cloudUserId || !evUid) return;
+    try { evtBuf.current.push({ t, ...(data || {}), u: myEmail || null, r: myRole || null, ts: new Date().toISOString() }); } catch (e) {}
+  }, [cloudEnabled, cloudUserId, evUid, myEmail, myRole]);
+  const flushEvents = useCallback(async () => {
+    if (!cloudEnabled || !supabase || !cloudUserId || !evUid || !evtBuf.current.length) return;
+    const batch = evtBuf.current.splice(0, evtBuf.current.length);
+    const key = "piq_events:" + evUid;
+    try {
+      const { data: ex } = await supabase.from("proqure_data").select("value").eq("user_id", cloudUserId).eq("store_key", key).maybeSingle();
+      const arr = Array.isArray(ex && ex.value) ? ex.value : [];
+      await supabase.from("proqure_data").upsert(
+        { user_id: cloudUserId, store_key: key, value: arr.concat(batch).slice(-400), updated_at: new Date().toISOString() },
+        { onConflict: "user_id,store_key" });
+    } catch (e) { /* drop batch on failure to avoid unbounded memory growth */ }
+  }, [cloudEnabled, cloudUserId, evUid]);
+  useEffect(() => {
+    if (!cloudEnabled || !cloudUserId || !evUid || !myMember) return;
+    if (!loginLogged.current) { loginLogged.current = true; track("login", { plan: planRef.current }); }
+    const beat = setInterval(() => track("active", {}), 300000);
+    const flush = setInterval(() => { flushEvents(); }, 20000);
+    const onHide = () => { if (document.visibilityState === "hidden") flushEvents(); };
+    const onErr = (e) => { try { track("error", { m: String((e && (e.message || e.reason)) || "error").slice(0, 200) }); } catch (x) {} };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("beforeunload", flushEvents);
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onErr);
+    return () => { clearInterval(beat); clearInterval(flush); document.removeEventListener("visibilitychange", onHide); window.removeEventListener("beforeunload", flushEvents); window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr); flushEvents(); };
+  }, [cloudEnabled, cloudUserId, evUid, myMember, track, flushEvents]);
+  useEffect(() => { track("page", { v: view }); }, [view, track]);
   // Only true once membership is actually resolved - never during the brief
   // pre-load window where myRole transiently defaults to "engineer".
   const isEngineer = !!myMember && myRole === "engineer";
