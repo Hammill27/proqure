@@ -488,6 +488,44 @@ const pct = (a,b)=> b>0 ? Math.round(a/b*100)+"%" : "\u2014";
 const EVT_LABEL={ 'received':'Reply received','received-unmatched':'Unmatched reply','sent':'Sent','delivered':'Delivered','bounced':'Bounced','complained':'Spam complaint' };
 function coName(id){ const c=DATA&&DATA.companies&&DATA.companies.find(x=>x.companyId===id); return c?c.name:(id==='platform-email'?'(unmatched)':id); }
 function evtRow(e,showCo){ const who=e.from||e.to||''; const extra=(e.matchedBy?' &middot; via '+esc(e.matchedBy):'')+(e.att?' &middot; '+e.att+' attachment'+(e.att===1?'':'s'):''); const clickable=e.company&&e.company!=='platform-email'; const attrs=clickable?' class="row clickable" onclick="openCompanyById(\''+esc(e.company)+'\')"':' class="row"'; return '<div'+attrs+'><div><div class="e">'+esc(EVT_LABEL[e.type]||e.type)+(showCo?' <span class="muted" style="font-weight:500">&middot; '+esc(coName(e.company))+'</span>':'')+'</div><div class="m">'+esc(who)+extra+'</div></div><div class="m" style="text-align:right;white-space:nowrap">'+fmtAgo(e.ts)+'</div></div>'; }
+const ACT_VIEW_LABEL={dashboard:"Dashboard",new:"New request",requests:"All requests",quotes:"Quotes",orders:"Orders",invoices:"Invoices",om:"O&M files",reports:"Reports",costs:"Project costs",measure:"Measure",catalogues:"Catalogues",hire:"Hire",suppliers:"Suppliers",team:"Team",library:"Library",settings:"Settings",help:"Help",contact:"Contact support"};
+const ACT_ICON={login:"\u2192",page:"\u25CB",action:"\u25CF",error:"\u26A0",active:"\u00B7"};
+function cpHtml(n,l){ return '<div class="cpill"><div class="pn">'+n+'</div><div class="pl">'+l+'</div></div>'; }
+function actRowHtml(it){
+  const lab = it.kind==="login"?"Signed in"
+    : it.kind==="page"?("Viewed "+(ACT_VIEW_LABEL[it.view]||it.view||"a page"))
+    : it.kind==="error"?"App error"
+    : it.kind==="action"?(it.label||"Action")
+    : (it.kind||"Event");
+  const who = it.user?('<span style="color:var(--soft);font-weight:400"> \u00b7 '+esc(it.user)+'</span>'):"";
+  const det = it.kind==="error"?(it.msg||""):(it.kind==="action"?(it.detail||""):"");
+  const detHtml = det?('<div style="font-size:11.5px;color:var(--soft);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(det)+'</div>'):"";
+  const col = it.kind==="error"?"var(--red)":it.kind==="login"?"var(--green-glow)":it.kind==="action"?"var(--accent)":"var(--soft)";
+  const when=it.ts?new Date(it.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";
+  return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)">'
+    +'<span style="color:'+col+';font-size:13px;line-height:1.4;flex-shrink:0;width:14px;text-align:center">'+(ACT_ICON[it.kind]||"\u00B7")+'</span>'
+    +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:var(--text);font-weight:600">'+esc(lab)+who+'</div>'+detHtml+'</div>'
+    +'<span style="font-family:var(--mono);font-size:10px;color:var(--soft);flex-shrink:0">'+when+'</span>'
+  +'</div>';
+}
+async function loadActivityInto(companyId){
+  const box=document.getElementById("actTimeline"); const sum=document.getElementById("actSummary");
+  if(!box) return;
+  try{
+    const d=await api("activity",{companyId});
+    const items=(d.items||[]);
+    const visible=items.filter(it=>it.kind!=="active");
+    if(sum){
+      const wk=Date.now()-7*864e5;
+      const logins=items.filter(it=>it.kind==="login"&&Date.parse(it.ts)>=wk).length;
+      const pages=items.filter(it=>it.kind==="page"&&Date.parse(it.ts)>=wk).length;
+      const acts=items.filter(it=>it.kind==="action"&&Date.parse(it.ts)>=wk).length;
+      const la=(d.lastActive&&d.lastActive[companyId])||null;
+      sum.innerHTML=cpHtml(fmtAgo(la),"Last active")+cpHtml(logins,"Logins / 7d")+cpHtml(pages,"Page views / 7d")+cpHtml(acts,"Actions / 7d");
+    }
+    box.innerHTML = visible.length ? visible.slice(0,100).map(actRowHtml).join("") : '<div class="muted" style="padding:8px 0">No activity captured yet. Sign-ins and page visits will appear here as the team uses the app.</div>';
+  }catch(e){ box.innerHTML='<div class="muted" style="padding:8px 0">Could not load: '+esc(e.message)+'</div>'; }
+}
 async function loadEventsInto(elId, companyId, showCo, limit){
   if(!$(elId)) return;
   try{
@@ -1300,6 +1338,7 @@ function switchDtab(id){
   document.querySelectorAll('#drawer .dtab').forEach(t=>t.classList.toggle('on',t.dataset.pane===id));
   document.querySelectorAll('#drawer .dpane').forEach(p=>p.classList.toggle('on',p.dataset.pane===id));
   if(id==='overview'){ const c=window.__drawerCo; if(c) loadEventsInto("coEvFeed", c.companyId, false, 20); }
+  if(id==='activity'){ const c=window.__drawerCo; if(c) loadActivityInto(c.companyId); }
 }
 window.switchDtab=switchDtab;
 function openCompany(c){
@@ -1335,7 +1374,7 @@ function openCompany(c){
   '</div>';
 
   // --- tab bar ---
-  const tabs=[["context","Context"],["overview","Overview"],["usage","Usage"],["billing","Billing & AI"],["email","Email"],["storage","Storage"],["users","Users",c.userCount]];
+  const tabs=[["context","Context"],["overview","Overview"],["activity","Activity"],["usage","Usage"],["billing","Billing & AI"],["email","Email"],["storage","Storage"],["users","Users",c.userCount]];
   const tabBar='<div class="dtabs">'+tabs.map((t,i)=>'<button class="dtab'+(i===0?' on':'')+'" data-pane="'+t[0]+'" onclick="switchDtab(\''+t[0]+'\')">'+t[1]+(t[2]!=null?'<span class="tc">'+t[2]+'</span>':'')+'</button>').join("")+'</div>';
 
   // --- PANE: Overview ---
@@ -1409,10 +1448,17 @@ function openCompany(c){
     '<div class="sec-title">Recent activity</div><div class="countpills">'+cp(fmtAgo(c.lastActive),"Last active")+cp(c.counts.orders||0,"Orders")+cp(c.counts.requests||0,"Requests")+cp(c.counts.quotes||0,"Quotes")+cp(c.counts.hires||0,"Hires")+'</div>'+
   '</div>';
 
+  const paneActivity='<div class="dpane" data-pane="activity">'+
+    '<div class="sec-title">Account timeline</div>'+
+    '<div class="muted" style="font-size:11px;margin:-4px 0 12px">Sign-ins, page visits and actions for this company. Login &amp; page history is captured going forward; existing actions show from day one.</div>'+
+    '<div id="actSummary" class="countpills" style="margin-bottom:14px"></div>'+
+    '<div id="actTimeline"><div class="muted" style="padding:8px 0">Loading\u2026</div></div>'+
+  '</div>';
+
   $("drawer").innerHTML=
     '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10.5px;margin-left:6px" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(c.companyId)+'\').then(()=>toast(\'Company ID copied.\'))">Copy ID</button></div><div class="dh-badges">'+planBadge(c.plan)+statusBadge+setupBadge+'</div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
     hero+tabBar+
-    '<div class="dbody">'+paneContext+paneOverview+paneUsage+paneBilling+paneEmail+paneStorage+paneUsers+'</div>';
+    '<div class="dbody">'+paneContext+paneOverview+paneActivity+paneUsage+paneBilling+paneEmail+paneStorage+paneUsers+'</div>';
   $("scrim").classList.add("open"); $("drawer").classList.add("open");
   loadEventsInto("coEvFeed", c.companyId, false, 20);
 }
