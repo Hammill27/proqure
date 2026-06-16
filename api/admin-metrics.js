@@ -566,6 +566,27 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (action === "activity") {
+      // Unified account timeline: usage telemetry (piq_events:<uid>) + the business
+      // activity log (piq_activity). Per-company when companyId is supplied, else
+      // platform-wide. Also returns a per-company last-active map (max ts seen).
+      const companyId = (body.companyId || "").trim();
+      const items = [];
+      let q1 = admin.from("proqure_data").select("user_id,value").like("store_key", "piq_events:%");
+      if (companyId) q1 = q1.eq("user_id", companyId);
+      const { data: ev } = await q1;
+      for (const r of (ev || [])) { if (Array.isArray(r.value)) for (const e of r.value) items.push({ companyId: r.user_id, ts: e.ts, kind: e.t, user: e.u || null, role: e.r || null, view: e.v || null, msg: e.m || null, plan: e.plan || null }); }
+      let q2 = admin.from("proqure_data").select("user_id,value").eq("store_key", "piq_activity");
+      if (companyId) q2 = q2.eq("user_id", companyId);
+      const { data: ac } = await q2;
+      for (const r of (ac || [])) { if (Array.isArray(r.value)) for (const a of r.value) items.push({ companyId: r.user_id, ts: a.ts, kind: "action", label: a.action || null, detail: a.detail || null, user: a.user || null }); }
+      items.sort((x, y) => Date.parse(y.ts || 0) - Date.parse(x.ts || 0));
+      const lastActive = {};
+      for (const it of items) { const c = it.companyId; if (it.ts && (!lastActive[c] || it.ts > lastActive[c])) lastActive[c] = it.ts; }
+      res.status(200).json({ ok: true, items: items.slice(0, companyId ? 400 : 1200), lastActive });
+      return;
+    }
+
     if (action === "resend-invite") {
       const email = (body.email || "").trim().toLowerCase();
       if (!email) { res.status(400).json({ error: "Email required." }); return; }
