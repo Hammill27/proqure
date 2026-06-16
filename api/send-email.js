@@ -147,10 +147,12 @@ export default async function handler(req, res) {
     res.setHeader("Access-Control-Allow-Origin", "*");
 
     if (!response.ok) {
+      console.error("send-email: Resend rejected", { status: response.status, from: fromAddr, to: toList.length, error: data && data.message });
       return res.status(response.status).json({ error: data.message || "Resend error" });
     }
     return res.status(200).json({ id: data.id, success: true });
   } catch (err) {
+    console.error("send-email: exception", err && err.message);
     res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(500).json({ error: err.message });
   }
