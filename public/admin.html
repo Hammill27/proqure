@@ -1516,6 +1516,63 @@ const SUP_PRCOL={ Urgent:"var(--red)", High:"var(--amber)", Normal:"var(--soft)"
 const TA_STYLE="flex:1;height:54px;font-size:13px;padding:9px 11px;background:var(--card-2);border:1px solid var(--line-2);border-radius:10px;color:var(--text);font-family:inherit;outline:none;resize:vertical";
 let SUP_FILTER={ status:"all", q:"", category:"all", priority:"all", sort:"new" };
 let SUP_OPEN=null; // Set of expanded "cid|id" keys; null until first paint seeds it
+let SUP_ANALYTICS_OPEN=false;
+/* SLA targets in hours, per priority (response = time to first staff reply; resolution = time to resolved).
+   Sensible defaults — can be made configurable later. */
+const SUP_SLA={ Urgent:{resp:1,res:8}, High:{resp:4,res:24}, Normal:{resp:8,res:72}, Low:{resp:24,res:120} };
+function supCreatedTs(r){ return new Date(r.ts).getTime()||0; }
+function supFirstReplyTs(r){ const t=(Array.isArray(r.replies)?r.replies:[]).filter(x=>x&&x.dir!=="in"&&x.ts).map(x=>new Date(x.ts).getTime()).filter(Boolean); return t.length?Math.min.apply(null,t):0; }
+function supResolvedTs(r){ const t=(Array.isArray(r.log)?r.log:[]).filter(l=>l&&l.type==="status"&&l.to==="resolved"&&l.ts).map(l=>new Date(l.ts).getTime()).filter(Boolean); if(t.length)return Math.max.apply(null,t); if(r.status==="resolved"&&r.updatedAt)return new Date(r.updatedAt).getTime()||0; return 0; }
+function fmtDur(ms){ if(!isFinite(ms)||ms<0)ms=0; const m=Math.round(ms/60000); if(m<60)return m+"m"; const h=Math.floor(m/60); if(h<48)return h+"h"+(m%60?" "+(m%60)+"m":""); const d=Math.floor(h/24); return d+"d"+(h%24?" "+(h%24)+"h":""); }
+function supSla(r){
+  const sla=SUP_SLA[r.priority]||SUP_SLA.Normal; const created=supCreatedTs(r); const now=Date.now();
+  const fr=supFirstReplyTs(r); const res=supResolvedTs(r); let resp, resn;
+  if(fr){ const ok=(fr-created)<=sla.resp*3600000; resp={state:ok?"ok":"breach", label:"Responded in "+fmtDur(fr-created)}; }
+  else if(r.status==="resolved"){ resp={state:"ok", label:"\u2014"}; }
+  else { const due=created+sla.resp*3600000, over=now>due; resp={state:over?"breach":"due", label:over?"Response overdue "+fmtDur(now-due):"Response due in "+fmtDur(due-now)}; }
+  if(res){ const ok=(res-created)<=sla.res*3600000; resn={state:ok?"ok":"breach", label:"Resolved in "+fmtDur(res-created)}; }
+  else { const due=created+sla.res*3600000, over=now>due; resn={state:over?"breach":"due", label:over?"Resolution overdue "+fmtDur(now-due):"Resolve by "+fmtDur(due-now)}; }
+  return { resp, resn };
+}
+function supSlaBadge(r){
+  if(r.status==="resolved") return "";
+  const s=supSla(r); const x=(s.resp.state!=="ok")?s.resp:s.resn;
+  if(x.state==="ok") return "";
+  const col=x.state==="breach"?"var(--red)":"var(--amber)";
+  return '<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+col+';background:var(--chip)">'+esc(x.label)+'</span>';
+}
+function supAvg(a){ return a.length?a.reduce((x,y)=>x+y,0)/a.length:0; }
+function supAnalyticsHtml(){
+  const rows=SUPPORT||[]; const respTimes=[], resTimes=[]; let respMet=0, respTotal=0;
+  rows.forEach(r=>{ const c=supCreatedTs(r), fr=supFirstReplyTs(r), rs=supResolvedTs(r), sla=SUP_SLA[r.priority]||SUP_SLA.Normal;
+    if(fr){ respTimes.push(fr-c); respTotal++; if((fr-c)<=sla.resp*3600000) respMet++; }
+    if(rs){ resTimes.push(rs-c); } });
+  const open=rows.filter(r=>r.status!=="resolved").length;
+  const overdue=rows.filter(r=>{ if(r.status==="resolved")return false; const s=supSla(r); return s.resp.state==="breach"||s.resn.state==="breach"; }).length;
+  const stat=(l,v,col)=>'<div style="flex:1;min-width:110px;background:var(--card-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px"><div class="mono" style="font-size:19px;font-weight:700;color:'+(col||"var(--text)")+'">'+v+'</div><div style="font-size:11px;color:var(--sub);margin-top:2px">'+l+'</div></div>';
+  const statRow='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'
+    +stat("Avg first response", respTimes.length?fmtDur(supAvg(respTimes)):"\u2014")
+    +stat("Avg resolution", resTimes.length?fmtDur(supAvg(resTimes)):"\u2014")
+    +stat("Response SLA met", respTotal?Math.round(respMet/respTotal*100)+"%":"\u2014","var(--green-glow)")
+    +stat("Open", open, open?"var(--amber)":"var(--soft)")
+    +stat("Breaching SLA", overdue, overdue?"var(--red)":"var(--soft)")+'</div>';
+  const days=14, buckets=new Array(days).fill(0); const start=new Date(); start.setHours(0,0,0,0);
+  rows.forEach(r=>{ const t=supCreatedTs(r); if(!t)return; const dd=new Date(t); dd.setHours(0,0,0,0); const idx=Math.round((start.getTime()-dd.getTime())/86400000); if(idx>=0&&idx<days) buckets[days-1-idx]++; });
+  const max=Math.max.apply(null,[1].concat(buckets));
+  const bars='<div class="hbx-spark" style="height:54px">'+buckets.map(v=>'<div class="sb" title="'+v+'" style="height:'+Math.round(v/max*100)+'%;background:'+(v?"var(--accent)":"var(--line-2)")+'"></div>').join("")+'</div>';
+  const volume='<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--soft);margin-bottom:6px">Requests \u00b7 last '+days+' days ('+buckets.reduce((a,b)=>a+b,0)+')</div>'+bars+'</div>';
+  const cats={}; rows.forEach(r=>{ const c=r.category||"Enquiry"; cats[c]=(cats[c]||0)+1; });
+  const catArr=Object.keys(cats).map(k=>({k:k,n:cats[k]})).sort((a,b)=>b.n-a.n);
+  const cmax=Math.max.apply(null,[1].concat(catArr.map(c=>c.n)));
+  const catBars=catArr.map(c=>'<div style="display:flex;align-items:center;gap:9px;margin-bottom:5px"><div style="width:130px;font-size:11.5px;color:var(--sub);flex-shrink:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.k)+'</div><div style="flex:1;background:var(--line);border-radius:4px;height:14px;overflow:hidden"><div style="height:100%;width:'+Math.round(c.n/cmax*100)+'%;background:var(--accent)"></div></div><div class="mono" style="font-size:11px;color:var(--soft);width:22px;text-align:right">'+c.n+'</div></div>').join("")||'<div class="muted" style="font-size:12px">No requests yet.</div>';
+  return statRow+volume+'<div><div style="font-size:11px;color:var(--soft);margin-bottom:6px">By category</div>'+catBars+'</div>';
+}
+function supAnalyticsPanelHtml(){
+  return '<div class="panel" style="padding:14px 16px;margin-bottom:14px">'
+    +'<div id="supAnaToggle" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="display:inline-block;color:var(--soft);transform:rotate('+(SUP_ANALYTICS_OPEN?"90":"0")+'deg);font-size:15px;line-height:1">\u203A</span><h2 style="margin:0;font-size:14px">Support analytics</h2><span class="hint">response &amp; resolution SLAs</span></div>'
+    +(SUP_ANALYTICS_OPEN?'<div style="margin-top:14px">'+supAnalyticsHtml()+'</div>':'')
+  +'</div>';
+}
 function supMetricsHtml(){
   const rows=SUPPORT||[];
   const nw=rows.filter(r=>r.status==="new").length, op=rows.filter(r=>r.status==="open").length, oh=rows.filter(r=>r.status==="on-hold").length, rs=rows.filter(r=>r.status==="resolved").length;
@@ -1578,6 +1635,7 @@ function supRowHtml(r){
     +'<span style="font-size:12.5px;font-weight:700">'+esc(r.category||"Enquiry")+'</span>'
     +(r.ref?'<span class="mono" style="font-size:10px;color:var(--soft)">'+esc(r.ref)+'</span>':'')
     +(nReplies?'<span class="mono" style="font-size:9px;color:var(--green-glow)">\u21B3 '+nReplies+'</span>':'')
+    +supSlaBadge(r)
     +(!open?'<span style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px">'+esc(snippet)+(r.message&&r.message.length>90?'\u2026':'')+'</span>':'')
     +'<span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--soft)">'+esc(supName(r.companyId))+' \u00b7 '+when+'</span>'
     +'</div>';
@@ -1590,6 +1648,7 @@ function supRowHtml(r){
     +'<div style="font-size:13.5px;line-height:1.55;color:var(--text);white-space:pre-wrap;margin:12px 0 10px">'+esc(r.message||"")+'</div>'
     +'<div class="minirow"><span class="mk">From</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(r.name||"-")+' \u00b7 '+esc(r.email||r.account||"-")+'</span></div>'
     +'<div class="minirow"><span class="mk">Company</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(supName(r.companyId))+'</span></div>'
+    +'<div class="minirow"><span class="mk">SLA</span><span class="mv" style="font-family:inherit;font-weight:500">'+(function(){var s=supSla(r);var pill=function(x){var col=x.state==="breach"?"var(--red)":(x.state==="due"?"var(--amber)":"var(--green-glow)");return '<span style="color:'+col+'">'+esc(x.label)+'</span>';};return pill(s.resp)+' <span style="color:var(--soft)">\u00b7</span> '+pill(s.resn);})()+'</span></div>'
     +'<div style="font-size:10.5px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:14px">Activity</div>'
     +supTimelineHtml(r)
     +'<div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end;flex-wrap:wrap">'
@@ -1601,7 +1660,8 @@ function supRowHtml(r){
 }
 function paintSupportControls(){
   const m=$("supMetrics"); if(!m) return;
-  m.innerHTML=supMetricsHtml()+supControlsHtml();
+  m.innerHTML=supMetricsHtml()+supAnalyticsPanelHtml()+supControlsHtml();
+  const at=$("supAnaToggle"); if(at) at.addEventListener('click',()=>{ SUP_ANALYTICS_OPEN=!SUP_ANALYTICS_OPEN; paintSupportControls(); });
   m.querySelectorAll('[data-filter]').forEach(k=>k.addEventListener('click',()=>{ const f=k.dataset.filter; SUP_FILTER.status=(SUP_FILTER.status===f?"all":f); paintSupport(); }));
   const s=$("supSearch"); if(s) s.addEventListener('input',()=>{ SUP_FILTER.q=s.value; paintSupportList(); });
   const c=$("supCat"); if(c) c.addEventListener('change',()=>{ SUP_FILTER.category=c.value; paintSupport(); });
