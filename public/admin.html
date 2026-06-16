@@ -22,6 +22,7 @@
     --text:#F3F3F1; --sub:rgba(255,255,255,.56); --soft:rgba(255,255,255,.36);
     --tint:rgba(61,214,140,.13); --tint-line:rgba(61,214,140,.28); --accent:var(--green-glow);
     --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 34px rgba(0,0,0,.34); --chip:rgba(255,255,255,.05);
+    --orb-green:rgba(61,214,140,.09); --orb-blue:rgba(91,141,239,.06); --orb-soft:rgba(61,214,140,.05); --mark-op:.06; --mark:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'><rect x='3' y='3' width='3' height='14' rx='1.5' fill='%233DD68C'/><rect x='6' y='3' width='8' height='3' rx='1.5' fill='%233DD68C'/><rect x='14' y='3' width='3' height='8' rx='1.5' fill='%233DD68C'/><rect x='6' y='10' width='8' height='3' rx='1.5' fill='%233DD68C'/><circle cx='16.5' cy='15.5' r='2' fill='%233DD68C'/></svg>");
   }
   html[data-theme="light"]{
     --bg:#F4F5F2; --bg-grad:radial-gradient(900px 500px at 80% -10%,rgba(21,130,79,.07),transparent 60%);
@@ -30,9 +31,14 @@
     --text:#15150F; --sub:#5F6058; --soft:#9A9B90;
     --tint:rgba(21,130,79,.10); --tint-line:rgba(21,130,79,.22); --accent:var(--green-deep);
     --shadow:0 1px 2px rgba(20,24,20,.04),0 14px 34px rgba(20,24,20,.07); --chip:rgba(20,24,20,.04);
+    --orb-green:rgba(21,130,79,.10); --orb-blue:rgba(91,141,239,.05); --orb-soft:rgba(21,130,79,.06); --mark-op:.04; --mark:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'><rect x='3' y='3' width='3' height='14' rx='1.5' fill='%2315824F'/><rect x='6' y='3' width='8' height='3' rx='1.5' fill='%2315824F'/><rect x='14' y='3' width='3' height='8' rx='1.5' fill='%2315824F'/><rect x='6' y='10' width='8' height='3' rx='1.5' fill='%2315824F'/><circle cx='16.5' cy='15.5' r='2' fill='%2315824F'/></svg>");
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:var(--font);background:var(--bg);background-image:var(--bg-grad);background-attachment:fixed;color:var(--text);-webkit-font-smoothing:antialiased;line-height:1.5;transition:background .3s,color .3s}
+  /* ProQure ambient background — soft orbs + faint brand mark, theme-aware, behind all content */
+  body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(620px 620px at 88% -10%,var(--orb-green),transparent 70%),radial-gradient(540px 540px at -8% 110%,var(--orb-blue),transparent 70%),radial-gradient(460px 460px at 60% 46%,var(--orb-soft),transparent 70%)}
+  body::after{content:"";position:fixed;right:-90px;bottom:-120px;width:560px;height:560px;z-index:-1;pointer-events:none;opacity:var(--mark-op);background:var(--mark) no-repeat center/contain}
+  @media print{body::before,body::after{display:none}}
   .mono{font-family:var(--mono)}
   button{font-family:inherit;cursor:pointer;color:inherit}
   ::selection{background:var(--tint)}
@@ -216,7 +222,8 @@
   .hero .hcell .hs{font-size:10.5px;color:var(--sub);margin-top:3px}
   .hero .hcell.alert{border-color:rgba(229,100,92,.4)} .hero .hcell.alert .hv{color:var(--red)}
   .hero .hcell.good .hv{color:var(--accent)}
-  .dtabs{display:flex;gap:3px;padding:0 24px;border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:73px;background:var(--bg);z-index:1}
+  .dtabs{display:flex;gap:3px;padding:0 24px;border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;position:sticky;top:73px;background:var(--bg);z-index:1}
+  .dtabs::-webkit-scrollbar{height:0;width:0}
   .dtab{flex-shrink:0;padding:11px 13px;font-size:12.5px;font-weight:600;color:var(--soft);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s}
   .dtab:hover{color:var(--sub)}
   .dtab.on{color:var(--accent);border-bottom-color:var(--accent)}
