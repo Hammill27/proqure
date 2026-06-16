@@ -1303,12 +1303,12 @@ function openCompany(c){
   '</div>';
 
   // --- tab bar ---
-  const tabs=[["overview","Overview"],["usage","Usage"],["billing","Billing & AI"],["email","Email"],["storage","Storage"],["users","Users",c.userCount]];
+  const tabs=[["context","Context"],["overview","Overview"],["usage","Usage"],["billing","Billing & AI"],["email","Email"],["storage","Storage"],["users","Users",c.userCount]];
   const tabBar='<div class="dtabs">'+tabs.map((t,i)=>'<button class="dtab'+(i===0?' on':'')+'" data-pane="'+t[0]+'" onclick="switchDtab(\''+t[0]+'\')">'+t[1]+(t[2]!=null?'<span class="tc">'+t[2]+'</span>':'')+'</button>').join("")+'</div>';
 
   // --- PANE: Overview ---
   const _ti=trialInfo(c); const trialStr=_ti?(_ti.days==null?"On trial":((_ti.days<0?("ended "+(-_ti.days)+"d ago"):(_ti.days+" days left"))+(_ti.est?" (est.)":""))):null;
-  const paneOverview='<div class="dpane on" data-pane="overview">'+
+  const paneOverview='<div class="dpane" data-pane="overview">'+
     '<div class="sec-title">Set plan</div><div class="planrow"><select id="planSel">'+["trial","sole","team","business","enterprise","suspended","cancelled"].map(p=>'<option value="'+p+'"'+(c.plan===p?" selected":"")+'>'+p+'</option>').join("")+'</select><button class="btn btn-primary btn-sm" onclick="setPlan(\''+esc(c.companyId)+'\')">Update</button>'+'<button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="notifyCompany(\''+esc(c.companyId)+'\')">Notify\u2026</button>'+(c.stripeCustomerId?'<a class="btn btn-ghost btn-sm" href="'+STRIPE_DASH+'/customers/'+esc(c.stripeCustomerId)+'" target="_blank" rel="noopener" style="text-decoration:none;margin-left:auto">Stripe \u2197</a>':'')+'</div>'+
     ((c.aiBudgetPct||0)>=100?'<div class="acc" style="border-color:rgba(229,100,92,.4);margin-top:14px"><div style="padding:12px 15px;font-size:12px;color:var(--red);font-weight:600">AI is at the monthly cap \u2014 paused for this company until the 1st (or a plan change).</div></div>':'')+
     '<div class="sec-title">Company</div>'+
@@ -1358,10 +1358,28 @@ function openCompany(c){
     '<div class="sec-title">Users ('+c.userCount+')</div>'+(users||'<div class="muted" style="padding:8px 0">No users.</div>')+
   '</div>';
 
+  // --- PANE: Context (read-only snapshot — no controls) ---
+  const _tic=trialInfo(c);
+  const trialStrC=_tic?(_tic.days==null?"On trial":((_tic.days<0?("ended "+(-_tic.days)+"d ago"):(_tic.days+" days left"))+(_tic.est?" (est.)":""))):"\u2014";
+  const obSteps=[["Profile completed",!!c.onboarded],["Suppliers added",(c.counts.suppliers||0)>0],["First request raised",(c.counts.requests||0)>0],["First order placed",(c.counts.orders||0)>0],["Team member invited",(c.userCount||0)>1]];
+  const obDone=obSteps.filter(x=>x[1]).length;
+  const checkRow=(label,done)=>'<div class="minirow"><span class="mk">'+(done?'<span style="color:var(--green)">\u2713</span>':'<span style="color:var(--soft)">\u25CB</span>')+' '+label+'</span><span class="mv" style="color:'+(done?'var(--green)':'var(--soft)')+'">'+(done?'done':'pending')+'</span></div>';
+  const usersRO=c.users.map(u=>'<div class="minirow"><span class="mk" style="overflow:hidden;text-overflow:ellipsis">'+esc(u.email)+'</span><span class="mv">'+(u.isOwner?'owner':esc(u.role||"engineer"))+' \u00b7 '+(u.active?'active':'invited')+(u.confirmed?'':' \u00b7 unconfirmed')+' \u00b7 in '+fmtAgo(u.lastSignIn)+'</span></div>').join("");
+  const Lc=c.allowanceLimits||{};
+  const paneContext='<div class="dpane on" data-pane="context">'+
+    '<div class="muted" style="font-size:11px;margin:0 0 14px">Read-only snapshot of what this account is experiencing right now. Nothing on this tab changes the tenant\u2019s data \u2014 use the other tabs for actions.</div>'+
+    '<div class="sec-title">Identity</div><div class="acc-body" style="padding:0">'+mrow("Company",c.name)+mrow("Primary trade",c.trade)+mrow("Team size",c.teamSize)+mrow("Created",fmtDate(c.createdAt))+mrow("Reply-to",c.fromEmail)+mrow("Address",c.address)+mrow("VAT no.",c.vat)+mrow("Company reg.",c.companyReg)+'</div>'+
+    '<div class="sec-title">Subscription state</div><div class="acc-body" style="padding:0">'+mrow("Plan",PLAN_LABEL(c.plan))+mrow("Status",c.subscriptionStatus||"trial")+mrow("MRR","\u00A3"+(c.mrr||0))+mrow("Trial",trialStrC)+mrow("Stripe customer",c.stripeCustomerId||"\u2014")+'</div>'+
+    '<div class="sec-title">Onboarding progress <span style="font-weight:500;text-transform:none;letter-spacing:0">('+obDone+'/'+obSteps.length+')</span></div><div class="acc-body" style="padding:0">'+obSteps.map(x=>checkRow(x[0],x[1])).join("")+'</div>'+
+    '<div class="sec-title">Enabled features <span style="font-weight:500;text-transform:none;letter-spacing:0">(what this plan grants)</span></div><div class="countpills">'+cp("\u00A3"+(c.aiBudgetGbp||0),"AI budget / mo")+cp(Lc.measureWeb||0,"Measure web")+cp(Lc.omWeb||0,"O&amp;M web")+cp(Lc.catalogueWeb||0,"Catalogue web")+'</div>'+
+    '<div class="sec-title">Permissions &amp; team ('+c.userCount+')</div><div class="acc-body" style="padding:0">'+(usersRO||'<div class="muted" style="padding:8px 0">No users.</div>')+'</div>'+
+    '<div class="sec-title">Recent activity</div><div class="countpills">'+cp(fmtAgo(c.lastActive),"Last active")+cp(c.counts.orders||0,"Orders")+cp(c.counts.requests||0,"Requests")+cp(c.counts.quotes||0,"Quotes")+cp(c.counts.hires||0,"Hires")+'</div>'+
+  '</div>';
+
   $("drawer").innerHTML=
     '<div class="dh"><div><h3>'+esc(c.name)+'</h3><div class="sub">'+esc(c.companyId)+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10.5px;margin-left:6px" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(c.companyId)+'\').then(()=>toast(\'Company ID copied.\'))">Copy ID</button></div><div class="dh-badges">'+planBadge(c.plan)+statusBadge+setupBadge+'</div></div><button class="x" onclick="closeDrawer()">&times;</button></div>'+
     hero+tabBar+
-    '<div class="dbody">'+paneOverview+paneUsage+paneBilling+paneEmail+paneStorage+paneUsers+'</div>';
+    '<div class="dbody">'+paneContext+paneOverview+paneUsage+paneBilling+paneEmail+paneStorage+paneUsers+'</div>';
   $("scrim").classList.add("open"); $("drawer").classList.add("open");
   loadEventsInto("coEvFeed", c.companyId, false, 20);
 }
