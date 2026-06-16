@@ -3168,6 +3168,10 @@ function ProQureApp({ session, companyId }) {
   const [contactForm, setContactForm] = useState({name:"",email:"",category:"Bug report",priority:"Normal",description:""});
   const [contactRef, setContactRef] = useState("");
   const [contactSent, setContactSent] = useState(false);
+  const [ackEmailed, setAckEmailed] = useState(false);
+  // When navigating away from the support page, clear the "Request logged"
+  // confirmation so returning to it shows a fresh form, not a stale receipt.
+  useEffect(()=>{ if(view!=="contact"){ setContactSent(false); setAckEmailed(false); } },[view]);
   const [contactBusy, setContactBusy] = useState(false);
 
   // Keyboard shortcuts
@@ -8900,7 +8904,7 @@ Rules:
               <Card style={{textAlign:"center",padding:"48px 40px"}}>
                 <div style={{width:60,height:60,borderRadius:"50%",background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Icon name="check_circle" size={30} color="var(--green-dark)"/></div>
                 <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request logged{contactRef?` (${contactRef})`:""}</div>
-                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>We've logged your request and emailed a confirmation to {(session&&session.user&&session.user.email)||"your account"}. We'll email you when there's an update.</div>
+                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>{ackEmailed?<>We've logged your request and emailed a confirmation to {(session&&session.user&&session.user.email)||"your account"}. We'll email you when there's an update.</>:<>Your request is logged. We'll email {(session&&session.user&&session.user.email)||"your account"} as soon as there's an update.</>}</div>
                 <div style={{display:"flex",gap:10,justifyContent:"center"}}>
                   <button onClick={()=>setContactSent(false)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Send another</button>
                   <button onClick={()=>setView("dashboard")} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Back to dashboard</button>
@@ -8908,10 +8912,9 @@ Rules:
               </Card>
             ):(
               <Card>
-                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Submit a support request</div>
-                <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:14,padding:"10px 14px",background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.45}}>
-                  <Icon name="check_circle" size={15} color="var(--green-dark)"/>
-                  <span>We'll reply to <strong style={{color:"var(--text-primary)"}}>{(session&&session.user&&session.user.email)||"your account email"}</strong> and in-app — no need to type your details.</span>
+                <div style={{marginBottom:22}}>
+                  <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:5}}>Submit a support request</div>
+                  <div style={{fontSize:12.5,color:"var(--text-tertiary)",lineHeight:1.5}}>We'll reply to <strong style={{color:"var(--text-secondary)",fontWeight:600}}>{(session&&session.user&&session.user.email)||"your account email"}</strong> and in-app — no need to enter your details.</div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
                   <div>
@@ -8949,8 +8952,10 @@ Rules:
                       arr.unshift(ticket);
                       const { error:wErr } = await supabase.from("proqure_data").upsert({ user_id:cloudUserId, store_key:"piq_feedback", value:arr.slice(0,200), updated_at:new Date().toISOString() },{ onConflict:"user_id,store_key" });
                       if(wErr) throw wErr;
-                      if(myMail){ try{ await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())}, body:JSON.stringify({ from:"ProQure Support <support@proqure.co.uk>", to:[myMail], reply_to: captureSupportAddress(rtok)||undefined, subject:`We've received your request [${ref}]`, html:supportAckEmailHtml({ ref, name:myName, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim() }), company_id:cloudUserId })}); }catch(e){} }
+                      let ackOk=false;
+                      if(myMail){ try{ const r=await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())}, body:JSON.stringify({ from:"ProQure Support <support@proqure.co.uk>", to:[myMail], reply_to: captureSupportAddress(rtok)||undefined, subject:`We've received your request [${ref}]`, html:supportAckEmailHtml({ ref, name:myName, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim() }), company_id:cloudUserId })}); ackOk=r.ok; if(!r.ok){ const d=await r.json().catch(()=>({})); console.error("Support ack email failed", r.status, d&&d.error); } }catch(e){ console.error("Support ack email error", e&&e.message); } }
                       setContactRef(ref);
+                      setAckEmailed(ackOk);
                       setContactSent(true);
                       setContactForm(p=>({...p,description:""}));
                     } catch(e) {
