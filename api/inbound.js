@@ -139,6 +139,19 @@ function extractToken(toField) {
   return null;
 }
 
+// Support-ticket reply token: customers reply to s-<token>@<capture-domain>.
+function extractSupportToken(toField) {
+  const list = Array.isArray(toField) ? toField : [toField];
+  for (const entry of list) {
+    let addr = "";
+    if (entry && typeof entry === "object") addr = entry.address || entry.email || entry.to || "";
+    else addr = entry || "";
+    const m = String(addr).toLowerCase().match(/s-([a-z0-9]+)@/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 // Pull the bare email address out of a "Name <addr@x>" string.
 function extractEmail(str) {
   const m = String(str || "").toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
@@ -297,6 +310,43 @@ export default async function handler(req, res) {
     const fromEmail = extractEmail(fromAddr);
     const subject = (email && email.subject) || data.subject || "";
     console.log("api/inbound: emailId", emailId, "| token", token, "| from", fromEmail, "| bodyLen", (replyText || "").length);
+
+    // --- Support-ticket replies (s-<token>@<capture-domain>) ---------------------
+    // A customer replying to one of our support emails lands here. Match the token to
+    // the ticket and append their message to the thread so it shows in the admin
+    // Support tab and flips the ticket back to "open".
+    const supTok = extractSupportToken((email && email.to) || data.to);
+    if (supTok) {
+      try {
+        const { data: fbRows, error: fbErr } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_feedback");
+        if (fbErr) { console.error("api/inbound: feedback load error", fbErr.message); return res.status(200).json({ ok: true }); }
+        let hit = null;
+        for (const row of (fbRows || [])) {
+          const list = Array.isArray(row.value) ? row.value : [];
+          const ix = list.findIndex((t) => t && t.replyToken === supTok);
+          if (ix !== -1) { hit = { userId: row.user_id, list, ix }; break; }
+        }
+        if (!hit) { console.warn("api/inbound: support reply not matched - token", supTok, "from", fromEmail); return res.status(200).json({ ok: true, note: "support not matched" }); }
+        // Re-read fresh immediately before writing so a concurrent admin reply isn't lost.
+        let wList = hit.list, wIx = hit.ix;
+        try {
+          const { data: fresh } = await supabase.from("proqure_data").select("value").eq("user_id", hit.userId).eq("store_key", "piq_feedback").maybeSingle();
+          const fl = Array.isArray(fresh && fresh.value) ? fresh.value : null;
+          if (fl) { const fi = fl.findIndex((t) => t && t.replyToken === supTok); if (fi !== -1) { wList = fl; wIx = fi; } }
+        } catch (e) { /* fall back to scanned copy */ }
+        const t = wList[wIx];
+        if (!Array.isArray(t.replies)) t.replies = t.reply ? [t.reply] : [];
+        delete t.reply;
+        t.replies = [...t.replies, { ts: new Date().toISOString(), by: fromEmail || "customer", dir: "in", message: replyText || "(no readable text in reply)" }];
+        t.status = "open";
+        t.updatedAt = new Date().toISOString();
+        wList[wIx] = t;
+        const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: hit.userId, store_key: "piq_feedback", value: wList, updated_at: t.updatedAt }, { onConflict: "user_id,store_key" });
+        if (upErr) { console.error("api/inbound: support save error", upErr.message); return res.status(200).json({ ok: true }); }
+        console.log("api/inbound: SUPPORT reply filed | ticket", t.ref || t.id, "| from", fromEmail);
+      } catch (e) { console.error("api/inbound: support handler error", e && e.message); }
+      return res.status(200).json({ ok: true, support: true });
+    }
 
     const { data: rows, error } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_requests");
     if (error) { console.error("api/inbound: load error", error.message); return res.status(200).json({ ok: true }); }
