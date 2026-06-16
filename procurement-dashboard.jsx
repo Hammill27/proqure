@@ -97,6 +97,16 @@ const NOTIF_POLICY = {
   system:{label:"System alerts",group:"Activity",inApp:3,email:{roles:3,cadence:"immediate",mandatory:false}},
 };
 const notifPolicyFor = (c) => NOTIF_POLICY[c] || { inApp:1, email:{roles:1,cadence:"off",mandatory:false}, label:"Notifications", group:"Activity" };
+
+// Mirror of feature-flags.js (server) — keep in sync. Per-plan defaults + per-tenant
+// overrides (settings.featureFlags = { key:"on"|"off" }; "default"/absent = plan default).
+// featureOn() resolves an override first, else the plan default. Add a feature = one entry.
+const FEATURE_DEFS = {
+  catalogues:{plans:true}, om_generator:{plans:true}, measure:{plans:true}, hire:{plans:true}, quick_po:{plans:true},
+  ai:{plans:true}, integrations:{plans:{business:true,enterprise:true}}, advanced_reporting:{plans:true}, export:{plans:true},
+};
+function featurePlanDefault(key, plan){ const f=FEATURE_DEFS[key]; if(!f) return false; if(f.plans===true) return true; return !!(f.plans && typeof f.plans==="object" && f.plans[plan]); }
+function featureOn(key, plan, overrides){ const ov=overrides && overrides[key]; if(ov==="on"||ov===true) return true; if(ov==="off"||ov===false) return false; return featurePlanDefault(key, plan); }
 const notifCanSee = (cat, role, minRole) => notifRank(role) >= Math.max(notifPolicyFor(cat).inApp, minRole ? notifRank(minRole) : 0);
 const billingPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", business: "Business", enterprise: "Enterprise" };
@@ -5249,6 +5259,10 @@ ${settings.company||""}`;
     finally { setCatOnlineBusy(false); }
   };
 
+  const featurePlan = (settings && settings.plan) || "trial";
+  const tenantFlags = (settings && settings.featureFlags) || {};
+  const featureAccess = {}; for (const __fk in FEATURE_DEFS) featureAccess[__fk] = featureOn(__fk, featurePlan, tenantFlags);
+  const featureAccessKey = Object.keys(FEATURE_DEFS).map(k=>featureAccess[k]?"1":"0").join("");
   const navItems = [
           {id:"dashboard",label:"Dashboard",      d:"M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"},
           {id:"new",      label:"New request",    d:"M12 5v14M5 12h14"},
@@ -5256,12 +5270,12 @@ ${settings.company||""}`;
           {id:"quotes",   label:"Quotes",         min:2, d:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"},
           {id:"orders",   label:"Orders",         d:"M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 16H8M12 12H8"},
           {id:"invoices", label:"Invoices",       min:2, d:"M6 2h9l3 3v15a1 1 0 01-1.5.87L14 19l-2.5 1.5L9 19l-2.5 1.5L4 19V3a1 1 0 011-1zM9 8h6M9 12h6M9 16h3"},
-          {id:"om",       label:"O&M files",      min:2, d:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M8 13h8M8 17h5"},
-          {id:"reports",  label:"Reports",        min:2, d:"M3 3v18h18M7 16V9M12 16V5M17 16v-7"},
+          {id:"om",       label:"O&M files",      min:2, feature:"om_generator", d:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M8 13h8M8 17h5"},
+          {id:"reports",  label:"Reports",        min:2, feature:"advanced_reporting", d:"M3 3v18h18M7 16V9M12 16V5M17 16v-7"},
           {id:"costs",    label:"Project costs",  min:2, d:"M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"},
-          {id:"measure",  label:"Measure",        d:"M3 7l4-4 14 14-4 4zM7 7l2 2M11 11l2 2M15 15l2 2"},
-          {id:"catalogues",label:"Catalogues",     d:"M4 5a1 1 0 011-1h5v16H5a1 1 0 01-1-1zM14 4h5a1 1 0 011 1v13a1 1 0 01-1 1h-5z"},
-          {id:"hire",     label:"Hire",           d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
+          {id:"measure",  label:"Measure", feature:"measure", d:"M3 7l4-4 14 14-4 4zM7 7l2 2M11 11l2 2M15 15l2 2"},
+          {id:"catalogues",label:"Catalogues", feature:"catalogues", d:"M4 5a1 1 0 011-1h5v16H5a1 1 0 01-1-1zM14 4h5a1 1 0 011 1v13a1 1 0 01-1 1h-5z"},
+          {id:"hire",     label:"Hire", feature:"hire", d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
           {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
           {id:"library",  label:"Library",        min:2, d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
@@ -5273,8 +5287,17 @@ ${settings.company||""}`;
   const handleNav = (id) => {
     const need = VIEW_MIN_ROLE[id];
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
+    const ni = navItems.find(i=>i.id===id);
+    if (ni && ni.feature && !featureAccess[ni.feature]) { showToast("That feature isn't enabled for your account.","warn"); return; }
     setView(id); setMoreMenuOpen(false); if(id==="new")resetNewRequest();
   };
+  // Feature backstop: if the current view's feature gets disabled (e.g. an admin
+  // override), bounce to the dashboard. Separate from the role backstop above so it
+  // can safely reference featureAccess (declared just above navItems).
+  useEffect(() => {
+    const ni = navItems.find(i=>i.id===view);
+    if (ni && ni.feature && featureAccess[ni.feature] === false) setView("dashboard");
+  }, [view, featureAccessKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const pendingOrders = visibleOrders.filter(o=>o.status==="pending-send").length;
 
   // Overdue requests (for dashboard banner)
@@ -5827,7 +5850,7 @@ Rules:
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"12px 12px"}}>
             <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
-            {navItems.filter(item=>!item.min||roleRank(myRole)>=item.min).map(item=>(
+            {navItems.filter(item=>(!item.min||roleRank(myRole)>=item.min)&&(!item.feature||featureAccess[item.feature])).map(item=>(
               <button key={item.id} onClick={()=>handleNav(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"0 8px 8px 0",border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-active)":"3px solid transparent",transition:"all 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
                 {item.label}
@@ -9146,19 +9169,19 @@ Rules:
                   {[
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
                     {id:"invoices", label:"Invoices",       sub:"Match supplier invoices to POs",   icon:"receipt", min:2},
-                    {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck"},
-                    {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2},
-                    {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2},
+                    {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck", feature:"hire"},
+                    {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2, feature:"om_generator"},
+                    {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2, feature:"advanced_reporting"},
                     {id:"costs",    label:"Project costs",   sub:"Cost tracking per project",        icon:"coins", min:2},
-                    {id:"measure",  label:"Measure",         sub:"Work out quantities to order",      icon:"ruler"},
-                    {id:"catalogues",label:"Supplier catalogues",sub:"Search products & datasheets",     icon:"catalogue"},
+                    {id:"measure",  label:"Measure",         sub:"Work out quantities to order",      icon:"ruler", feature:"measure"},
+                    {id:"catalogues",label:"Supplier catalogues",sub:"Search products & datasheets",     icon:"catalogue", feature:"catalogues"},
                     {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building", min:2},
                     {id:"team",     label:"Team",            sub:"People and roles",                icon:"building", min:3},
                     {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
                     {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
                     {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"mail"},
                     {id:"settings", label:"Settings",         sub:"Company details and account",      icon:"settings", min:3},
-                  ].filter(item=>!item.min||roleRank(myRole)>=item.min).map(item=>(
+                  ].filter(item=>(!item.min||roleRank(myRole)>=item.min)&&(!item.feature||featureAccess[item.feature])).map(item=>(
                     <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
                       <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)"}}><Icon name={item.icon} size={18}/></div>
                       <div style={{flex:1}}>
