@@ -1523,7 +1523,13 @@ function supRowHtml(r){
   const when=new Date(r.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
   const key=esc(r.companyId)+'|'+esc(r.id);
   const replies=Array.isArray(r.replies)?r.replies:(r.reply?[r.reply]:[]);
-  const thread=replies.length? '<div style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px">'+replies.map(rp=>'<div class="minirow" style="align-items:flex-start"><span class="mk" style="color:var(--green-glow);flex-shrink:0">\u21B3 '+esc(String(rp.by||"Support").split("@")[0])+'</span><span class="mv" style="font-family:inherit;font-weight:500;text-align:right;max-width:70%;white-space:pre-wrap">'+esc(rp.message||"")+'</span></div>').join("")+'</div>' : '';
+  const thread=replies.length? '<div style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px">'+replies.map(function(rp){
+    var inbound=rp.dir==="in";
+    var who=inbound?esc(rp.by||"customer"):esc(String(rp.by||"Support").split("@")[0]);
+    var col=inbound?"var(--amber)":"var(--green-glow)";
+    var label=(inbound?"\u21B0 ":"\u21B3 ")+who+(inbound?" (customer)":"");
+    return '<div class="minirow" style="align-items:flex-start"><span class="mk" style="color:'+col+';flex-shrink:0">'+label+'</span><span class="mv" style="font-family:inherit;font-weight:500;text-align:right;max-width:70%;white-space:pre-wrap">'+esc(rp.message||"")+'</span></div>';
+  }).join("")+'</div>' : '';
   const statusBtns = (r.status==="resolved"
     ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Reopen</button>'
     : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|resolved">Resolve</button>'
