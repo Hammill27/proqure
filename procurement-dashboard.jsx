@@ -4777,13 +4777,13 @@ ${settings.company||""}`;
     const groups = ["Announcements","Subscription & Usage","Activity"];
     return (
       <>
-        {notifOpen && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, zIndex:998 }} />}
-        <div style={{ position:"fixed", top:isMobile?64:16, right:16, width:380, maxWidth:"calc(100vw - 32px)", background:"var(--bg-card-solid)", border:"1px solid var(--border)", borderRadius:14, boxShadow:"var(--shadow-lg)", zIndex:999, overflow:"hidden" }}>
+        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
+        <div style={{ position:"fixed", top:0, right:0, height:"100dvh", width:isMobile?"min(380px,100vw)":380, background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)", zIndex:999, display:"flex", flexDirection:"column", transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)", pointerEvents:notifOpen?"auto":"none" }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
             <button onClick={() => setNotifView("list")} aria-label="Back" style={{ border:"none", background:"transparent", cursor:"pointer", color:"var(--text-secondary)", fontSize:18, lineHeight:1, padding:0 }}>&larr;</button>
             <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Email preferences</span>
           </div>
-          <div style={{ maxHeight:440, overflowY:"auto", padding:"0 0 8px" }}>
+          <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:"0 0 8px" }}>
             <div style={{ padding:"12px 16px 2px", fontSize:12, color:"var(--text-secondary)", lineHeight:1.5 }}>Choose which notifications also reach you by email. In-app notifications always appear in the centre.</div>
             {groups.map(g => {
               const inG = cats.filter(c => NOTIF_POLICY[c].group === g);
@@ -4823,15 +4823,17 @@ ${settings.company||""}`;
     if (notifView === "prefs") return renderNotifPrefsPanel();
     return (
       <>
-        {notifOpen && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, zIndex:998 }} />}
-        <div style={{ position:"fixed", top:isMobile?64:16, right:16, width:380, maxWidth:"calc(100vw - 32px)",
-          background:"var(--bg-card-solid)", border:"1px solid var(--border)", borderRadius:14, boxShadow:"var(--shadow-lg)",
-          zIndex:999, overflow:"hidden", transformOrigin:"top right", transition:"opacity .15s, transform .15s",
-          opacity:notifOpen?1:0, transform:notifOpen?"none":"translateY(-6px) scale(0.98)", pointerEvents:notifOpen?"auto":"none" }}>
+        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
+        <div style={{ position:"fixed", top:0, right:0, height:"100dvh", width:isMobile?"min(380px,100vw)":380,
+          background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)",
+          zIndex:999, display:"flex", flexDirection:"column",
+          transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)",
+          pointerEvents:notifOpen?"auto":"none" }}>
           <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
             <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Notifications</span>
             <button onClick={markAllNotifRead} style={{ marginLeft:"auto", border:"none", background:"transparent", color:"var(--green-dark)", fontWeight:700, fontSize:12.5, cursor:"pointer" }}>Mark all as read</button>
             <button onClick={() => setNotifView("prefs")} aria-label="Email preferences" title="Email preferences" style={{ border:"none", background:"transparent", color:"var(--text-tertiary)", cursor:"pointer", padding:2, display:"flex" }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 14.6a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9 4.6h.1A1.6 1.6 0 0 0 10 3V2a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V8a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg></button>
+            <button onClick={() => setNotifOpen(false)} aria-label="Close" title="Close" style={{ border:"none", background:"transparent", color:"var(--text-tertiary)", cursor:"pointer", fontSize:20, lineHeight:1, padding:"0 2px" }}>&times;</button>
           </div>
           <div style={{ display:"flex", gap:4, padding:"8px 12px", borderBottom:"1px solid var(--border)" }}>
             {[["all","All"],["unread","Unread"],["subusage","Subscription & Usage"]].map(([id,label]) => (
@@ -4840,7 +4842,7 @@ ${settings.company||""}`;
                 borderRadius:999, cursor:"pointer", whiteSpace:"nowrap" }}>{label}{id==="unread" && notifUnread>0 ? ` (${notifUnread})` : ""}</button>
             ))}
           </div>
-          <div style={{ maxHeight:420, overflowY:"auto" }}>
+          <div style={{ flex:1, minHeight:0, overflowY:"auto" }}>
             {rows.length === 0
               ? <div style={{ padding:"40px 20px", textAlign:"center", color:"var(--text-tertiary)", fontSize:13 }}>You&rsquo;re all caught up.</div>
               : rows.map(n => {
@@ -5897,7 +5899,7 @@ Rules:
       )}
 
       {/* Main content */}
-      <div style={{marginLeft:isMobile?0:240,padding:isMobile?"76px 16px 88px":"32px 40px",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1}} className="main-content">
+      <div style={{marginLeft:isMobile?0:240,marginRight:(!isMobile&&notifOpen)?380:0,padding:isMobile?"76px 16px 88px":"32px 40px",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1,transition:"margin-right .28s cubic-bezier(0.16,1,0.3,1)"}} className="main-content">
         {renderNotifPanel()}
         {renderNotifBanners()}
 
