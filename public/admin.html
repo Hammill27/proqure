@@ -1514,40 +1514,84 @@ function supName(id){ const c=DATA&&DATA.companies&&DATA.companies.find(x=>x.com
 const SUP_STCOL={ new:"var(--amber)", open:"var(--green-glow)", "on-hold":"var(--sub)", resolved:"var(--soft)" };
 const SUP_PRCOL={ Urgent:"var(--red)", High:"var(--amber)", Normal:"var(--soft)", Low:"var(--soft)" };
 const TA_STYLE="flex:1;height:54px;font-size:13px;padding:9px 11px;background:var(--card-2);border:1px solid var(--line-2);border-radius:10px;color:var(--text);font-family:inherit;outline:none;resize:vertical";
+let SUP_FILTER={ status:"all", q:"", category:"all", priority:"all", sort:"new" };
+let SUP_OPEN=null; // Set of expanded "cid|id" keys; null until first paint seeds it
 function supMetricsHtml(){
-  const rows=SUPPORT||[]; const nw=rows.filter(r=>r.status==="new").length; const op=rows.filter(r=>r.status==="open").length; const oh=rows.filter(r=>r.status==="on-hold").length; const rs=rows.filter(r=>r.status==="resolved").length;
-  return '<div class="kpis">'+nkpi("chat",nw,"New","awaiting triage")+nkpi("bell",op,"Open","in progress")+nkpi("health",oh,"On hold","paused")+nkpi("shield",rs,"Resolved","closed")+'</div>';
+  const rows=SUPPORT||[];
+  const nw=rows.filter(r=>r.status==="new").length, op=rows.filter(r=>r.status==="open").length, oh=rows.filter(r=>r.status==="on-hold").length, rs=rows.filter(r=>r.status==="resolved").length;
+  function k(icon,n,l,x,key){ const active=SUP_FILTER.status===key; return '<div class="kpi clickable" data-filter="'+key+'"'+(active?' style="border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset"':'')+'>'+ic(icon)+'<div class="n">'+n+'</div><div class="l">'+l+'</div><div class="x">'+x+'</div></div>'; }
+  return '<div class="kpis">'+k("chat",nw,"New","awaiting triage","new")+k("bell",op,"Open","in progress","open")+k("health",oh,"On hold","paused","on-hold")+k("shield",rs,"Resolved","closed","resolved")+'</div>';
+}
+function supCats(){ const s=new Set(); (SUPPORT||[]).forEach(r=>{ if(r.category) s.add(r.category); }); return Array.from(s); }
+function supControlsHtml(){
+  const sel="background:var(--card-2);border:1px solid var(--line-2);border-radius:9px;color:var(--text);font-family:inherit;font-size:12.5px;padding:7px 10px;outline:none";
+  const catOpts=['<option value="all">All categories</option>'].concat(supCats().map(c=>'<option value="'+esc(c)+'"'+(SUP_FILTER.category===c?' selected':'')+'>'+esc(c)+'</option>')).join("");
+  const prOpts=['<option value="all">All priorities</option>'].concat(["Urgent","High","Normal","Low"].map(p=>'<option value="'+p+'"'+(SUP_FILTER.priority===p?' selected':'')+'>'+p+'</option>')).join("");
+  const filtered=SUP_FILTER.status!=="all"||SUP_FILTER.q||SUP_FILTER.category!=="all"||SUP_FILTER.priority!=="all";
+  return '<div class="panel" style="padding:11px 14px;margin-bottom:14px;display:flex;gap:9px;flex-wrap:wrap;align-items:center">'
+    +'<input id="supSearch" placeholder="Search ref, message, person, company\u2026" value="'+esc(SUP_FILTER.q)+'" style="flex:1;min-width:200px;'+sel+'">'
+    +'<select id="supCat" style="'+sel+'">'+catOpts+'</select>'
+    +'<select id="supPri" style="'+sel+'">'+prOpts+'</select>'
+    +'<select id="supSort" style="'+sel+'"><option value="new"'+(SUP_FILTER.sort==="new"?" selected":"")+'>Newest first</option><option value="old"'+(SUP_FILTER.sort==="old"?" selected":"")+'>Oldest first</option></select>'
+    +(filtered?'<button class="btn btn-ghost btn-sm" id="supClear">Clear</button>':'')
+    +'</div>';
+}
+function supFiltered(){
+  let rows=(SUPPORT||[]).slice();
+  if(SUP_FILTER.status!=="all") rows=rows.filter(r=>(r.status||"new")===SUP_FILTER.status);
+  if(SUP_FILTER.category!=="all") rows=rows.filter(r=>r.category===SUP_FILTER.category);
+  if(SUP_FILTER.priority!=="all") rows=rows.filter(r=>(r.priority||"Normal")===SUP_FILTER.priority);
+  const q=SUP_FILTER.q.trim().toLowerCase();
+  if(q) rows=rows.filter(r=>[r.ref,r.message,r.name,r.email,r.account,r.category,supName(r.companyId)].some(v=>String(v||"").toLowerCase().includes(q)));
+  rows.sort((a,b)=>{ const ta=new Date(a.ts).getTime()||0, tb=new Date(b.ts).getTime()||0; return SUP_FILTER.sort==="old"?ta-tb:tb-ta; });
+  return rows;
+}
+function supTimelineHtml(r){
+  const ev=[];
+  ev.push({ ts:r.ts, kind:"created", by:r.name||r.email||"customer" });
+  (Array.isArray(r.replies)?r.replies:[]).forEach(rp=>ev.push({ ts:rp.ts, kind:rp.dir==="in"?"in":"out", by:rp.dir==="in"?(rp.by||"customer"):String(rp.by||"Support").split("@")[0], message:rp.message||"" }));
+  (Array.isArray(r.log)?r.log:[]).forEach(l=>ev.push({ ts:l.ts, kind:"status", by:String(l.by||"").split("@")[0], to:l.to }));
+  ev.sort((a,b)=>(new Date(a.ts).getTime()||0)-(new Date(b.ts).getTime()||0));
+  const dot=c=>'<span style="width:9px;height:9px;border-radius:50%;background:'+c+';flex-shrink:0;margin-top:3px"></span>';
+  const fmt=ts=>ts?new Date(ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";
+  const rowsHtml=ev.map(function(e){
+    var c,head,body="";
+    if(e.kind==="created"){ c="var(--soft)"; head='<b>Request logged</b> by '+esc(e.by); }
+    else if(e.kind==="status"){ c=SUP_STCOL[e.to]||"var(--soft)"; head='Status \u2192 <b>'+esc(e.to)+'</b>'+(e.by?' by '+esc(e.by):''); }
+    else if(e.kind==="in"){ c="var(--amber)"; head='<b>'+esc(e.by)+'</b> (customer) replied'; body='<div style="white-space:pre-wrap;color:var(--text);margin-top:3px">'+esc(e.message)+'</div>'; }
+    else { c="var(--green-glow)"; head='<b>'+esc(e.by)+'</b> replied'; body='<div style="white-space:pre-wrap;color:var(--text);margin-top:3px">'+esc(e.message)+'</div>'; }
+    return '<div style="display:flex;gap:10px;padding:6px 0">'+dot(c)+'<div style="flex:1;min-width:0"><div style="font-size:12px;color:var(--sub)">'+head+' <span style="color:var(--soft);font-family:var(--mono);font-size:10.5px">\u00b7 '+fmt(e.ts)+'</span></div>'+body+'</div></div>';
+  }).join("");
+  return '<div style="border-left:2px solid var(--line);margin:8px 0 2px;padding-left:14px">'+rowsHtml+'</div>';
 }
 function supRowHtml(r){
   const stc=SUP_STCOL[r.status]||"var(--soft)"; const prc=SUP_PRCOL[r.priority]||"var(--soft)";
   const when=new Date(r.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
-  const key=esc(r.companyId)+'|'+esc(r.id);
-  const replies=Array.isArray(r.replies)?r.replies:(r.reply?[r.reply]:[]);
-  const thread=replies.length? '<div style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px">'+replies.map(function(rp){
-    var inbound=rp.dir==="in";
-    var who=inbound?esc(rp.by||"customer"):esc(String(rp.by||"Support").split("@")[0]);
-    var col=inbound?"var(--amber)":"var(--green-glow)";
-    var label=(inbound?"\u21B0 ":"\u21B3 ")+who+(inbound?" (customer)":"");
-    return '<div class="minirow" style="align-items:flex-start"><span class="mk" style="color:'+col+';flex-shrink:0">'+label+'</span><span class="mv" style="font-family:inherit;font-weight:500;text-align:right;max-width:70%;white-space:pre-wrap">'+esc(rp.message||"")+'</span></div>';
-  }).join("")+'</div>' : '';
-  const statusBtns = (r.status==="resolved"
+  const rawkey=r.companyId+'|'+r.id; const key=esc(rawkey);
+  const open=SUP_OPEN&&SUP_OPEN.has(rawkey);
+  const chip=(txt,col)=>'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+col+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(txt)+'</span>';
+  const snippet=String(r.message||"").replace(/\s+/g," ").trim().slice(0,90);
+  const nReplies=(Array.isArray(r.replies)?r.replies:[]).length;
+  const header='<div data-toggle="'+key+'" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer">'
+    +'<span style="display:inline-block;color:var(--soft);transform:rotate('+(open?'90':'0')+'deg);flex-shrink:0;font-size:15px;line-height:1">\u203A</span>'
+    +chip(r.status||"new",stc)+chip(r.priority||"Normal",prc)
+    +'<span style="font-size:12.5px;font-weight:700">'+esc(r.category||"Enquiry")+'</span>'
+    +(r.ref?'<span class="mono" style="font-size:10px;color:var(--soft)">'+esc(r.ref)+'</span>':'')
+    +(nReplies?'<span class="mono" style="font-size:9px;color:var(--green-glow)">\u21B3 '+nReplies+'</span>':'')
+    +(!open?'<span style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px">'+esc(snippet)+(r.message&&r.message.length>90?'\u2026':'')+'</span>':'')
+    +'<span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--soft)">'+esc(supName(r.companyId))+' \u00b7 '+when+'</span>'
+    +'</div>';
+  if(!open) return '<div class="panel" style="margin-bottom:10px;padding:13px 16px">'+header+'</div>';
+  const statusBtns=(r.status==="resolved"
     ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Reopen</button>'
     : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|resolved">Resolve</button>'
-       + (r.status!=="on-hold"
-            ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|on-hold">On hold</button>'
-            : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Take off hold</button>'));
-  return '<div class="panel" style="margin-bottom:12px;padding:16px 18px">'
-    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px">'
-      +'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+stc+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(r.status||"new")+'</span>'
-      +'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+prc+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(r.priority||"Normal")+'</span>'
-      +'<span style="font-size:12.5px;font-weight:700">'+esc(r.category||"Enquiry")+'</span>'
-      +(r.ref?'<span class="mono" style="font-size:10px;color:var(--soft)">'+esc(r.ref)+'</span>':'')
-      +'<span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--soft)">'+when+'</span>'
-    +'</div>'
-    +'<div style="font-size:13.5px;line-height:1.55;color:var(--text);white-space:pre-wrap;margin-bottom:10px">'+esc(r.message||"")+'</div>'
-    +'<div class="minirow" style="border-top:1px solid var(--line)"><span class="mk">From</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(r.name||"-")+' \u00b7 '+esc(r.email||r.account||"-")+'</span></div>'
+       + (r.status!=="on-hold" ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|on-hold">On hold</button>' : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Take off hold</button>'));
+  return '<div class="panel" style="margin-bottom:12px;padding:14px 18px 16px">'+header
+    +'<div style="font-size:13.5px;line-height:1.55;color:var(--text);white-space:pre-wrap;margin:12px 0 10px">'+esc(r.message||"")+'</div>'
+    +'<div class="minirow"><span class="mk">From</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(r.name||"-")+' \u00b7 '+esc(r.email||r.account||"-")+'</span></div>'
     +'<div class="minirow"><span class="mk">Company</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(supName(r.companyId))+'</span></div>'
-    +thread
+    +'<div style="font-size:10.5px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:14px">Activity</div>'
+    +supTimelineHtml(r)
     +'<div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end;flex-wrap:wrap">'
       +'<textarea data-reply="'+key+'" placeholder="Reply \u2014 emailed to the customer and shown in-app\u2026" style="'+TA_STYLE+'"></textarea>'
       +'<button class="btn btn-primary btn-sm" data-send="'+key+'">Send reply</button>'
@@ -1555,11 +1599,23 @@ function supRowHtml(r){
     +'</div>'
   +'</div>';
 }
-function paintSupport(){
-  const m=$("supMetrics"); if(m) m.innerHTML=supMetricsHtml();
+function paintSupportControls(){
+  const m=$("supMetrics"); if(!m) return;
+  m.innerHTML=supMetricsHtml()+supControlsHtml();
+  m.querySelectorAll('[data-filter]').forEach(k=>k.addEventListener('click',()=>{ const f=k.dataset.filter; SUP_FILTER.status=(SUP_FILTER.status===f?"all":f); paintSupport(); }));
+  const s=$("supSearch"); if(s) s.addEventListener('input',()=>{ SUP_FILTER.q=s.value; paintSupportList(); });
+  const c=$("supCat"); if(c) c.addEventListener('change',()=>{ SUP_FILTER.category=c.value; paintSupport(); });
+  const p=$("supPri"); if(p) p.addEventListener('change',()=>{ SUP_FILTER.priority=p.value; paintSupport(); });
+  const so=$("supSort"); if(so) so.addEventListener('change',()=>{ SUP_FILTER.sort=so.value; paintSupportList(); });
+  const cl=$("supClear"); if(cl) cl.addEventListener('click',()=>{ SUP_FILTER={ status:"all", q:"", category:"all", priority:"all", sort:SUP_FILTER.sort }; paintSupport(); });
+}
+function paintSupportList(){
   const box=$("supList"); if(!box) return;
-  const rows=SUPPORT||[];
-  box.innerHTML = rows.length ? rows.map(supRowHtml).join("") : '<div class="muted" style="padding:28px 0;text-align:center">No feedback yet \u2014 submissions from the app will appear here.</div>';
+  if(!SUP_OPEN){ SUP_OPEN=new Set(); (SUPPORT||[]).forEach(r=>{ if((r.status||"new")==="new") SUP_OPEN.add(r.companyId+'|'+r.id); }); }
+  const rows=supFiltered(); const total=(SUPPORT||[]).length;
+  box.innerHTML = rows.length ? rows.map(supRowHtml).join("")
+    : '<div class="muted" style="padding:28px 0;text-align:center">'+(total?'No requests match these filters.':'No feedback yet \u2014 submissions from the app will appear here.')+'</div>';
+  box.querySelectorAll('[data-toggle]').forEach(h=>h.addEventListener('click',()=>{ const raw=h.dataset.toggle; if(SUP_OPEN.has(raw)) SUP_OPEN.delete(raw); else SUP_OPEN.add(raw); paintSupportList(); }));
   box.querySelectorAll('[data-send]').forEach(b=>b.addEventListener('click',async()=>{
     const [cid,id]=b.dataset.send.split("|"); const ta=box.querySelector('[data-reply="'+b.dataset.send+'"]'); const msg=((ta&&ta.value)||"").trim();
     if(!msg){ toast("Type a reply first",true); return; }
@@ -1570,6 +1626,7 @@ function paintSupport(){
     try{ await api("feedback-action",{companyId:cid,id:id,status:st}); toast("Updated."); await loadSupport(); }catch(e){ toast(e.message,true); }
   }));
 }
+function paintSupport(){ paintSupportControls(); paintSupportList(); }
 async function loadSupport(){ try{ const d=await api("feedback"); SUPPORT=d.items||[]; }catch(e){ SUPPORT=SUPPORT||[]; const box=$("supList"); if(box) box.innerHTML='<div class="muted" style="padding:16px 0">Could not load: '+esc(e.message)+'</div>'; }
   paintSupport(); }
 function renderSupport(){
