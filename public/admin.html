@@ -1511,35 +1511,41 @@ window.doAction=doAction; window.doActionConfirm=doActionConfirm; window.setPlan
 /* ===================== Support inbox (Phase 2) ===================== */
 let SUPPORT=null;
 function supName(id){ const c=DATA&&DATA.companies&&DATA.companies.find(x=>x.companyId===id); return c?c.name:id; }
-const SUP_STCOL={ new:"var(--amber)", open:"var(--green-glow)", resolved:"var(--soft)" };
+const SUP_STCOL={ new:"var(--amber)", open:"var(--green-glow)", "on-hold":"var(--sub)", resolved:"var(--soft)" };
 const SUP_PRCOL={ Urgent:"var(--red)", High:"var(--amber)", Normal:"var(--soft)", Low:"var(--soft)" };
 const TA_STYLE="flex:1;height:54px;font-size:13px;padding:9px 11px;background:var(--card-2);border:1px solid var(--line-2);border-radius:10px;color:var(--text);font-family:inherit;outline:none;resize:vertical";
 function supMetricsHtml(){
-  const rows=SUPPORT||[]; const nw=rows.filter(r=>r.status==="new").length; const op=rows.filter(r=>r.status==="open").length; const rs=rows.filter(r=>r.status==="resolved").length;
-  return '<div class="kpis">'+nkpi("chat",nw,"New","awaiting triage")+nkpi("bell",op,"Open","in progress")+nkpi("shield",rs,"Resolved","closed")+nkpi("users",rows.length,"Total","all time")+'</div>';
+  const rows=SUPPORT||[]; const nw=rows.filter(r=>r.status==="new").length; const op=rows.filter(r=>r.status==="open").length; const oh=rows.filter(r=>r.status==="on-hold").length; const rs=rows.filter(r=>r.status==="resolved").length;
+  return '<div class="kpis">'+nkpi("chat",nw,"New","awaiting triage")+nkpi("bell",op,"Open","in progress")+nkpi("health",oh,"On hold","paused")+nkpi("shield",rs,"Resolved","closed")+'</div>';
 }
 function supRowHtml(r){
   const stc=SUP_STCOL[r.status]||"var(--soft)"; const prc=SUP_PRCOL[r.priority]||"var(--soft)";
   const when=new Date(r.ts).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
   const key=esc(r.companyId)+'|'+esc(r.id);
-  const replied=r.reply?'<div class="minirow"><span class="mk" style="color:var(--green-glow)">\u21B3 Replied</span><span class="mv" style="font-family:inherit;font-weight:500;text-align:right;max-width:62%">'+esc(r.reply.message)+'</span></div>':'';
+  const replies=Array.isArray(r.replies)?r.replies:(r.reply?[r.reply]:[]);
+  const thread=replies.length? '<div style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px">'+replies.map(rp=>'<div class="minirow" style="align-items:flex-start"><span class="mk" style="color:var(--green-glow);flex-shrink:0">\u21B3 '+esc(String(rp.by||"Support").split("@")[0])+'</span><span class="mv" style="font-family:inherit;font-weight:500;text-align:right;max-width:70%;white-space:pre-wrap">'+esc(rp.message||"")+'</span></div>').join("")+'</div>' : '';
+  const statusBtns = (r.status==="resolved"
+    ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Reopen</button>'
+    : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|resolved">Resolve</button>'
+       + (r.status!=="on-hold"
+            ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|on-hold">On hold</button>'
+            : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Take off hold</button>'));
   return '<div class="panel" style="margin-bottom:12px;padding:16px 18px">'
     +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px">'
       +'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+stc+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(r.status||"new")+'</span>'
       +'<span class="mono" style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;color:'+prc+';background:var(--chip);text-transform:uppercase;letter-spacing:.05em">'+esc(r.priority||"Normal")+'</span>'
       +'<span style="font-size:12.5px;font-weight:700">'+esc(r.category||"Enquiry")+'</span>'
+      +(r.ref?'<span class="mono" style="font-size:10px;color:var(--soft)">'+esc(r.ref)+'</span>':'')
       +'<span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--soft)">'+when+'</span>'
     +'</div>'
     +'<div style="font-size:13.5px;line-height:1.55;color:var(--text);white-space:pre-wrap;margin-bottom:10px">'+esc(r.message||"")+'</div>'
     +'<div class="minirow" style="border-top:1px solid var(--line)"><span class="mk">From</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(r.name||"-")+' \u00b7 '+esc(r.email||r.account||"-")+'</span></div>'
     +'<div class="minirow"><span class="mk">Company</span><span class="mv" style="font-family:inherit;font-weight:500">'+esc(supName(r.companyId))+'</span></div>'
-    +replied
-    +'<div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end">'
-      +'<textarea data-reply="'+key+'" placeholder="Reply to this person \u2014 sent to them in-app\u2026" style="'+TA_STYLE+'"></textarea>'
+    +thread
+    +'<div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end;flex-wrap:wrap">'
+      +'<textarea data-reply="'+key+'" placeholder="Reply \u2014 emailed to the customer and shown in-app\u2026" style="'+TA_STYLE+'"></textarea>'
       +'<button class="btn btn-primary btn-sm" data-send="'+key+'">Send reply</button>'
-      +(r.status==="resolved"
-          ? '<button class="btn btn-ghost btn-sm" data-status="'+key+'|open">Reopen</button>'
-          : '<button class="btn btn-ghost btn-sm" data-status="'+key+'|resolved">Resolve</button>')
+      +statusBtns
     +'</div>'
   +'</div>';
 }
@@ -1551,7 +1557,7 @@ function paintSupport(){
   box.querySelectorAll('[data-send]').forEach(b=>b.addEventListener('click',async()=>{
     const [cid,id]=b.dataset.send.split("|"); const ta=box.querySelector('[data-reply="'+b.dataset.send+'"]'); const msg=((ta&&ta.value)||"").trim();
     if(!msg){ toast("Type a reply first",true); return; }
-    b.disabled=true; try{ await api("feedback-action",{companyId:cid,id:id,reply:msg}); toast("Reply sent in-app."); await loadSupport(); }catch(e){ toast(e.message,true); b.disabled=false; }
+    b.disabled=true; try{ const d=await api("feedback-action",{companyId:cid,id:id,reply:msg}); toast(d.message||"Reply sent."); await loadSupport(); }catch(e){ toast(e.message,true); b.disabled=false; }
   }));
   box.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click',async()=>{
     const [cid,id,st]=b.dataset.status.split("|");
