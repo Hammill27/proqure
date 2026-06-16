@@ -17,6 +17,7 @@
 //   ADMIN_CONSOLE_EMAILS = comma-separated list of owner emails allowed in.
 
 import { createClient } from "@supabase/supabase-js";
+import { FEATURE_LIST } from "../feature-flags.js";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL;
 const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -230,6 +231,7 @@ export function assembleSummary({ members = [], authUsers = [], settingsRows = [
         return { period: u.period || null, measureWeb: Number(u.measureWebUsed || 0), omWeb: Number(u.omWebUsed || 0), catalogueWeb: Number(u.catalogueWebUsed || 0), addons: u.addons || {} };
       })(),
       onboarded: !!sv.onboarded,
+      featureFlags: (sv.featureFlags && typeof sv.featureFlags === "object") ? sv.featureFlags : {},
       trade: sv.primaryTrade || sv.trade || null,
       teamSize: sv.teamSize || null,
       fromEmail: sv.fromEmail || null,
@@ -531,7 +533,7 @@ export default async function handler(req, res) {
       } catch { /* RPC not installed yet */ }
 
       const summary = assembleSummary({ members: members || [], authUsers, settingsRows: settingsRows || [], countRows, usageRows: usageRows || [], emailStatsRows: emailStatsRows || [], storageRows, meterRows: meterRows || [], excludeEmails: ADMIN_EMAILS });
-      res.status(200).json({ ok: true, ...summary, viewer: callerEmail });
+      res.status(200).json({ ok: true, ...summary, features: FEATURE_LIST, viewer: callerEmail });
       return;
     }
 
@@ -601,6 +603,28 @@ export default async function handler(req, res) {
       if (wErr) { res.status(400).json({ error: wErr.message }); return; }
       await writeAudit(admin, caller, { action: "set-plan", target: companyId, detail: `plan=${plan}` });
       res.status(200).json({ ok: true, message: `Plan set to "${plan}".`, plan });
+      return;
+    }
+
+    if (action === "set-flags") {
+      const companyId = (body.companyId || "").trim();
+      const key = (body.key || "").trim();
+      const value = body.value; // "on" | "off" | "default"
+      if (!companyId || !FEATURE_LIST.some(f => f.key === key)) { res.status(400).json({ error: "companyId and a valid feature key are required." }); return; }
+      if (!["on", "off", "default"].includes(value)) { res.status(400).json({ error: "value must be on, off, or default." }); return; }
+      const { data: existing, error: rErr } = await admin
+        .from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", "piq_settings").maybeSingle();
+      if (rErr) { res.status(400).json({ error: rErr.message }); return; }
+      const cur = (existing && existing.value) || {};
+      const flags = (cur.featureFlags && typeof cur.featureFlags === "object") ? { ...cur.featureFlags } : {};
+      if (value === "default") delete flags[key]; else flags[key] = value;
+      const merged = { ...cur, featureFlags: flags };
+      const { error: wErr } = await admin.from("proqure_data").upsert(
+        { user_id: companyId, store_key: "piq_settings", value: merged, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,store_key" });
+      if (wErr) { res.status(400).json({ error: wErr.message }); return; }
+      await writeAudit(admin, caller, { action: "set-flags", target: companyId, detail: `${key}=${value}` });
+      res.status(200).json({ ok: true, message: `Feature "${key}" set to ${value}.`, featureFlags: flags });
       return;
     }
 
