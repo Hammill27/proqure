@@ -1138,6 +1138,28 @@ function buildEmailHtml(bodyText, settings, optsOrToken={}) {
 // with Reply-To pointing at the user's real inbox. The customer's own email is
 // never the sending address. Per-instance subdomains slot in later without
 // changing this shape - only SENDING_DOMAIN becomes the instance subdomain.
+function supportAckEmailHtml({ ref, name, category, priority, message }) {
+  const row=(k,v)=>`<tr><td style="padding:4px 0;font-size:13px;color:#6B6A63;width:90px">${k}</td><td style="padding:4px 0;font-size:13px;color:#1A1A17;font-weight:600">${esc(v||"")}</td></tr>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#F4F4F1;font-family:'Helvetica Neue',Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F4F1"><tr><td align="center" style="padding:24px 16px">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #E8E7E1;border-radius:12px;overflow:hidden">
+      <tr><td style="padding:22px 32px 16px;font-size:18px;font-weight:800;color:#15824F"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#15824F;vertical-align:middle;margin-right:6px"></span>ProQure Support</td></tr>
+      <tr><td style="height:3px;background:#15824F;font-size:0;line-height:3px">&nbsp;</td></tr>
+      <tr><td style="padding:24px 32px 26px">
+        <p style="margin:0 0 14px;font-size:15px;color:#1A1A17">Hi ${esc(name||"there")},</p>
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.55;color:#3A3A35">Thanks for getting in touch. We've logged your request and the team will take a look &mdash; we'll email you here as soon as there's an update.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:#F8F8F5;border:1px solid #EAE9E3;border-radius:10px;margin-bottom:16px"><tr><td style="padding:14px 16px">
+          <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%">${row("Reference",ref)}${row("Type",category)}${row("Priority",priority)}</table>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid #EAE9E3;font-size:13px;color:#3A3A35;line-height:1.5;white-space:pre-wrap">${esc(message||"")}</div>
+        </td></tr></table>
+        <p style="margin:0;font-size:12.5px;color:#908F86">Please quote <strong>${esc(ref||"")}</strong> if you need to follow up.</p>
+      </td></tr>
+    </table>
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%"><tr><td align="center" style="padding:14px 12px 0"><span style="font-size:11px;color:#908F86">Sent with <strong style="color:#15824F">ProQure</strong></span></td></tr></table>
+  </td></tr></table>
+</body></html>`;
+}
 const SENDING_DOMAIN = "proqure.co.uk"; // later: `${instanceSlug}.proqure.co.uk`
 // Inbound reply capture (Resend Inbound). Empty = disabled: replies go to the user's
 // own inbox exactly as before. Set the Vercel env var VITE_INBOUND_CAPTURE_DOMAIN to
@@ -3138,6 +3160,7 @@ function ProQureApp({ session, companyId }) {
 
   // Contact form
   const [contactForm, setContactForm] = useState({name:"",email:"",category:"Bug report",priority:"Normal",description:""});
+  const [contactRef, setContactRef] = useState("");
   const [contactSent, setContactSent] = useState(false);
   const [contactBusy, setContactBusy] = useState(false);
 
@@ -8870,8 +8893,8 @@ Rules:
             {contactSent?(
               <Card style={{textAlign:"center",padding:"48px 40px"}}>
                 <div style={{width:60,height:60,borderRadius:"50%",background:"var(--green-mint)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Icon name="check_circle" size={30} color="var(--green-dark)"/></div>
-                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request sent</div>
-                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Thank you for getting in touch. We will respond as soon as possible.</div>
+                <div style={{fontSize:20,fontWeight:700,color:"var(--text-primary)",marginBottom:8}}>Request logged{contactRef?` (${contactRef})`:""}</div>
+                <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>We've logged your request and emailed a confirmation to {(session&&session.user&&session.user.email)||"your account"}. We'll email you when there's an update.</div>
                 <div style={{display:"flex",gap:10,justifyContent:"center"}}>
                   <button onClick={()=>setContactSent(false)} style={{background:"var(--bg-subtle2)",color:"var(--text-secondary)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Send another</button>
                   <button onClick={()=>setView("dashboard")} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Back to dashboard</button>
@@ -8880,15 +8903,9 @@ Rules:
             ):(
               <Card>
                 <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:20}}>Submit a support request</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-                  <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Your name</label>
-                    <input value={contactForm.name} onChange={e=>setContactForm(p=>({...p,name:e.target.value}))} placeholder="Your name" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                  </div>
-                  <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Email address</label>
-                    <input type="email" value={contactForm.email} onChange={e=>setContactForm(p=>({...p,email:e.target.value}))} placeholder="your@email.co.uk" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                  </div>
+                <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:14,padding:"10px 14px",background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.45}}>
+                  <Icon name="check_circle" size={15} color="var(--green-dark)"/>
+                  <span>We'll reply to <strong style={{color:"var(--text-primary)"}}>{(session&&session.user&&session.user.email)||"your account email"}</strong> and in-app — no need to type your details.</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
                   <div>
@@ -8910,58 +8927,31 @@ Rules:
                 </div>
                 <button
                   onClick={async ()=>{
-                    if(!contactForm.name.trim()||!contactForm.email.trim()){showToast("Please add your name and email","warn");return;}
-                    if(!contactForm.description.trim()){showToast("Please add a description","warn");return;}
-                    // No email mailbox needed: feedback is stored in Supabase and
-                    // surfaced in the admin Support tab; replies come back in-app.
-                    if(!FEEDBACK_EMAIL){
-                      setContactBusy(true);
-                      try {
-                        if (cloudEnabled && supabase && cloudUserId) {
-                          const { data: ex } = await supabase.from("proqure_data").select("value").eq("user_id", cloudUserId).eq("store_key", "piq_feedback").maybeSingle();
-                          const arr = Array.isArray(ex && ex.value) ? ex.value : [];
-                          const fid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("fb-" + Date.now() + "-" + Math.random().toString(36).slice(2,7));
-                          arr.unshift({ id: fid, ts: new Date().toISOString(), name: contactForm.name.trim(), email: contactForm.email.trim(),
-                            account: (session && session.user && session.user.email) || "", category: contactForm.category, priority: contactForm.priority,
-                            message: contactForm.description.trim(), status: "new", reply: null });
-                          await supabase.from("proqure_data").upsert(
-                            { user_id: cloudUserId, store_key: "piq_feedback", value: arr.slice(0,200), updated_at: new Date().toISOString() },
-                            { onConflict: "user_id,store_key" });
-                        }
-                        showToast("Thanks - we've got it");
-                        setContactSent(true);
-                        setContactForm(p=>({...p,description:""}));
-                      } catch (e) {
-                        showToast("Couldn't send just now - please try again","warn");
-                      } finally { setContactBusy(false); }
-                      return;
-                    }
+                    if(!contactForm.description.trim()){showToast("Please describe what you need","warn");return;}
+                    if(!(cloudEnabled && supabase && cloudUserId)){showToast("You need to be online to send this","warn");return;}
+                    const myMail=(session&&session.user&&session.user.email)||"";
+                    const myName=(settings&&settings.contactName)||(myMember&&myMember.name)||myMail||"You";
                     setContactBusy(true);
                     try {
-                      const sender = buildSender("quotes", settings);
-                      const subject = `[ProQure] ${contactForm.category} (${contactForm.priority}) - ${contactForm.name||"User"}`;
-                      const body = [
-                        `Category: ${contactForm.category}`,
-                        `Priority: ${contactForm.priority}`,
-                        `From: ${contactForm.name} <${contactForm.email}>`,
-                        session?.user?.email ? `Account: ${session.user.email}` : "",
-                        `Company: ${settings.company||"-"}`,
-                        `Sent: ${new Date().toLocaleString("en-GB")}`,
-                        "",
-                        contactForm.description.trim(),
-                      ].filter(Boolean).join("\n");
-                      const res = await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())},
-                        body: JSON.stringify({ from:sender.from, company_id: cloudUserId, to:[FEEDBACK_EMAIL], reply_to:contactForm.email||undefined, subject, text:body })});
-                      if(!res.ok) throw new Error("send failed");
-                      showToast("Support request sent");
+                      const ref="PQ-"+Date.now().toString(36).toUpperCase().slice(-6);
+                      const fid=(typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():("fb-"+Date.now());
+                      const ticket={ id:fid, ref, ts:new Date().toISOString(), name:myName, email:myMail, account:myMail, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim(), status:"new", replies:[] };
+                      const { data:ex, error:rErr } = await supabase.from("proqure_data").select("value").eq("user_id",cloudUserId).eq("store_key","piq_feedback").maybeSingle();
+                      if(rErr) throw rErr;
+                      const arr=Array.isArray(ex&&ex.value)?ex.value:[];
+                      arr.unshift(ticket);
+                      const { error:wErr } = await supabase.from("proqure_data").upsert({ user_id:cloudUserId, store_key:"piq_feedback", value:arr.slice(0,200), updated_at:new Date().toISOString() },{ onConflict:"user_id,store_key" });
+                      if(wErr) throw wErr;
+                      if(myMail){ try{ await fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json", ...(await authHeaders())}, body:JSON.stringify({ from:"ProQure Support <quotes@proqure.co.uk>", to:[myMail], subject:`We've received your request [${ref}]`, html:supportAckEmailHtml({ ref, name:myName, category:contactForm.category, priority:contactForm.priority, message:contactForm.description.trim() }), company_id:cloudUserId })}); }catch(e){} }
+                      setContactRef(ref);
                       setContactSent(true);
                       setContactForm(p=>({...p,description:""}));
                     } catch(e) {
-                      showToast("Couldn't send right now - please try again","warn");
+                      showToast("Couldn't log that: "+((e&&e.message)||"please try again"),"warn");
                     } finally { setContactBusy(false); }
                   }}
-                  disabled={contactBusy||!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim()}
-                  style={{background:"linear-gradient(135deg,#5B5BD6,#4A4AB8)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:contactBusy?"wait":"pointer",opacity:(contactBusy||!contactForm.name.trim()||!contactForm.email.trim()||!contactForm.description.trim())?0.5:1}}>
+                  disabled={contactBusy||!contactForm.description.trim()}
+                  style={{background:"linear-gradient(135deg,#5B5BD6,#4A4AB8)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"11px 24px",fontSize:14,fontWeight:700,cursor:contactBusy?"wait":"pointer",opacity:(contactBusy||!contactForm.description.trim())?0.5:1}}>
                   {contactBusy?"Sending...":"Submit request"}
                 </button>
               </Card>
