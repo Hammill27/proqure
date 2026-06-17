@@ -10787,21 +10787,38 @@ function OfflineBanner() {
 // --- Tasteful one-time prompt shown only in iOS Safari (not the installed app),
 // guiding the person to add ProQure to their home screen. ---
 function InstallHint() {
-  const [show, setShow] = useState(false);
+  const [mode, setMode] = useState(null); // 'ios' | 'android'
   useEffect(() => {
     try {
       const ua = navigator.userAgent || "";
-      const isIOS = /iphone|ipad|ipod/i.test(ua);
       const standalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
       const dismissed = localStorage.getItem("pq_install_hint") === "1";
-      if (isIOS && !standalone && !dismissed) {
-        const t = setTimeout(() => setShow(true), 1400);
+      if (standalone || dismissed) return;
+      const isIOS = /iphone|ipad|ipod/i.test(ua);
+      if (isIOS) {
+        const t = setTimeout(() => setMode("ios"), 1400);
         return () => clearTimeout(t);
       }
+      // Android / Chrome: only once the browser says it's installable, and only on smaller screens.
+      const mobileish = window.innerWidth < 900 || (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+      if (!mobileish) return;
+      let t;
+      const reveal = () => { if (window.__pqInstallPrompt) { t = setTimeout(() => setMode("android"), 1200); } };
+      reveal();
+      const onInstallable = () => reveal();
+      window.addEventListener("pq-installable", onInstallable);
+      return () => { clearTimeout(t); window.removeEventListener("pq-installable", onInstallable); };
     } catch (e) {}
   }, []);
-  if (!show) return null;
-  const close = () => { setShow(false); try { localStorage.setItem("pq_install_hint", "1"); } catch (e) {} };
+  if (!mode) return null;
+  const close = () => { setMode(null); try { localStorage.setItem("pq_install_hint", "1"); } catch (e) {} };
+  const install = async () => {
+    try {
+      const p = window.__pqInstallPrompt;
+      if (p) { p.prompt(); await p.userChoice; window.__pqInstallPrompt = null; }
+    } catch (e) {}
+    close();
+  };
   return (
     <div style={{ position: "fixed", left: 12, right: 12, bottom: "calc(14px + env(safe-area-inset-bottom))", zIndex: 99997, background: "#16161B", color: "#F3F3F1", border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, padding: "13px 14px", boxShadow: "0 12px 44px rgba(0,0,0,.55)", display: "flex", alignItems: "center", gap: 12, animation: "slideUp .35s cubic-bezier(.16,1,.3,1)" }}>
       <div style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, background: "#0E0F0C", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -10809,8 +10826,13 @@ function InstallHint() {
       </div>
       <div style={{ flex: 1, fontSize: 13, lineHeight: 1.45 }}>
         <div style={{ fontWeight: 700, marginBottom: 2 }}>Install ProQure</div>
-        <div style={{ color: "#B4B4AE" }}>Tap the <b style={{ color: "#F3F3F1" }}>Share</b> icon, then <b style={{ color: "#F3F3F1" }}>Add to Home Screen</b>.</div>
+        {mode === "ios"
+          ? <div style={{ color: "#B4B4AE" }}>Tap the <b style={{ color: "#F3F3F1" }}>Share</b> icon, then <b style={{ color: "#F3F3F1" }}>Add to Home Screen</b>.</div>
+          : <div style={{ color: "#B4B4AE" }}>Add it to your home screen for the full app.</div>}
       </div>
+      {mode === "android" && (
+        <button onClick={install} style={{ flexShrink: 0, background: "#3DD68C", color: "#0E0F0C", border: "none", borderRadius: 10, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Install</button>
+      )}
       <button onClick={close} style={{ flexShrink: 0, alignSelf: "flex-start", background: "transparent", border: "none", color: "#87877F", fontSize: 18, lineHeight: 1, cursor: "pointer", padding: "2px 4px" }} aria-label="Dismiss">&times;</button>
     </div>
   );
