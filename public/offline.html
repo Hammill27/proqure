@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<title>ProQure — Offline</title>
+<style>
+  html,body{margin:0;height:100%;background:#0E0F0C;color:#F3F3F1;
+    font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:24px;padding-top:calc(24px + env(safe-area-inset-top));
+    padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+  svg{width:74px;height:74px;margin-bottom:26px}
+  h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 8px}
+  p{font-size:14px;line-height:1.55;color:#B4B4AE;margin:0 0 26px;max-width:300px}
+  button{font:inherit;font-weight:700;font-size:14px;color:#0E0F0C;background:#3DD68C;border:none;
+    border-radius:12px;padding:13px 26px;cursor:pointer}
+  button:active{transform:scale(.97)}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="ProQure">
+      <rect x="3" y="3" width="3" height="14" rx="1.5" fill="#2BB873"/>
+      <rect x="6" y="3" width="8" height="3" rx="1.5" fill="#2BB873"/>
+      <rect x="14" y="3" width="3" height="8" rx="1.5" fill="#2BB873"/>
+      <rect x="6" y="10" width="8" height="3" rx="1.5" fill="#3DD68C"/>
+      <circle cx="16.5" cy="15.5" r="2" fill="#2BB873"/>
+    </svg>
+    <h1>You're offline</h1>
+    <p>ProQure needs a connection to load your data. Check your signal or Wi-Fi and try again.</p>
+    <button onclick="location.reload()">Try again</button>
+  </div>
+  <script>
+    // Auto-retry the moment the connection comes back.
+    window.addEventListener("online", function(){ location.reload(); });
+  </script>
+</body>
+</html>
