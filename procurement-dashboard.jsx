@@ -5394,6 +5394,36 @@ ${settings.company||""}`;
     const ni = navItems.find(i=>i.id===view);
     if (ni && ni.feature && featureAccess[ni.feature] === false) setView("dashboard");
   }, [view, featureAccessKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- iOS-style edge swipe-back: remember where we've been, and a right-swipe
+  // from the very left edge pops to the previous screen (mobile only). ---
+  const viewStack = useRef([]);
+  const prevViewRef = useRef(view);
+  const backNavRef = useRef(false);
+  useEffect(() => {
+    if (backNavRef.current) { backNavRef.current = false; }
+    else if (prevViewRef.current !== view) {
+      viewStack.current.push(prevViewRef.current);
+      if (viewStack.current.length > 30) viewStack.current.shift();
+    }
+    prevViewRef.current = view;
+  }, [view]);
+  useEffect(() => {
+    if (typeof window === "undefined" || window.innerWidth >= 768) return;
+    let sx = 0, sy = 0, tracking = false;
+    const onS = (e) => { const t = e.touches[0]; if (t && t.clientX <= 24) { sx = t.clientX; sy = t.clientY; tracking = true; } else tracking = false; };
+    const onE = (e) => {
+      if (!tracking) return; tracking = false;
+      const t = e.changedTouches[0]; if (!t) return;
+      if (t.clientX - sx > 80 && Math.abs(t.clientY - sy) < 60 && viewStack.current.length) {
+        backNavRef.current = true; haptic(); const v = viewStack.current.pop(); setMoreMenuOpen(false); setView(v);
+      }
+    };
+    window.addEventListener("touchstart", onS, { passive: true });
+    window.addEventListener("touchend", onE, { passive: true });
+    return () => { window.removeEventListener("touchstart", onS); window.removeEventListener("touchend", onE); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const pendingOrders = visibleOrders.filter(o=>o.status==="pending-send").length;
 
   // Overdue requests (for dashboard banner)
@@ -5996,7 +6026,7 @@ Rules:
 
       {/* Mobile top bar */}
       {isMobile&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,height:60,background:"var(--topbar-bg)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100,borderBottom:"1px solid var(--sidebar-border)"}}>
+        <div style={{position:"fixed",top:0,left:0,right:0,height:"calc(60px + env(safe-area-inset-top))",paddingTop:"env(safe-area-inset-top)",background:"var(--topbar-bg)",display:"flex",alignItems:"center",justifyContent:"space-between",paddingLeft:16,paddingRight:16,zIndex:100,borderBottom:"1px solid var(--sidebar-border)"}}>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <div style={{width:28,height:28,background:"linear-gradient(135deg,#1E9E63,#15824F)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
               <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="white"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="white"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="white"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.45)"/><circle cx="16.5" cy="15.5" r="2" fill="white"/></svg>
@@ -6011,7 +6041,7 @@ Rules:
       )}
 
       {/* Main content */}
-      <div key={view} style={{marginLeft:isMobile?0:240,marginRight:(!isMobile&&notifOpen)?380:0,padding:isMobile?"76px 16px calc(88px + env(safe-area-inset-bottom))":"32px 40px",animation:"fadeIn 0.28s cubic-bezier(0.16,1,0.3,1)",position:"relative",zIndex:1,transition:"margin-right .28s cubic-bezier(0.16,1,0.3,1)"}} className="main-content">
+      <div key={view} style={{marginLeft:isMobile?0:240,marginRight:(!isMobile&&notifOpen)?380:0,padding:isMobile?"calc(76px + env(safe-area-inset-top)) 16px calc(88px + env(safe-area-inset-bottom))":"32px 40px",animation:"fadeIn 0.28s cubic-bezier(0.16,1,0.3,1)",position:"relative",zIndex:1,transition:"margin-right .28s cubic-bezier(0.16,1,0.3,1)"}} className="main-content">
         {renderNotifPanel()}
         {renderNotifBanners()}
 
@@ -10737,11 +10767,60 @@ function PullToRefresh() {
   );
 }
 
+// --- A thin banner when the device goes offline (the app is inherently online). ---
+function OfflineBanner() {
+  const [off, setOff] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
+  useEffect(() => {
+    const on = () => setOff(false), down = () => setOff(true);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", down);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", down); };
+  }, []);
+  if (!off) return null;
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 99999, background: "#C77D2E", color: "#fff", fontSize: 12.5, fontWeight: 600, textAlign: "center", padding: "calc(6px + env(safe-area-inset-top)) 12px 6px", letterSpacing: "-.01em" }}>
+      You're offline — changes may not save until you reconnect
+    </div>
+  );
+}
+
+// --- Tasteful one-time prompt shown only in iOS Safari (not the installed app),
+// guiding the person to add ProQure to their home screen. ---
+function InstallHint() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    try {
+      const ua = navigator.userAgent || "";
+      const isIOS = /iphone|ipad|ipod/i.test(ua);
+      const standalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+      const dismissed = localStorage.getItem("pq_install_hint") === "1";
+      if (isIOS && !standalone && !dismissed) {
+        const t = setTimeout(() => setShow(true), 1400);
+        return () => clearTimeout(t);
+      }
+    } catch (e) {}
+  }, []);
+  if (!show) return null;
+  const close = () => { setShow(false); try { localStorage.setItem("pq_install_hint", "1"); } catch (e) {} };
+  return (
+    <div style={{ position: "fixed", left: 12, right: 12, bottom: "calc(14px + env(safe-area-inset-bottom))", zIndex: 99997, background: "#16161B", color: "#F3F3F1", border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, padding: "13px 14px", boxShadow: "0 12px 44px rgba(0,0,0,.55)", display: "flex", alignItems: "center", gap: 12, animation: "slideUp .35s cubic-bezier(.16,1,.3,1)" }}>
+      <div style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, background: "#0E0F0C", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <svg width="22" height="22" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#2BB873"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#2BB873"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#2BB873"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#3DD68C"/><circle cx="16.5" cy="15.5" r="2" fill="#2BB873"/></svg>
+      </div>
+      <div style={{ flex: 1, fontSize: 13, lineHeight: 1.45 }}>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>Install ProQure</div>
+        <div style={{ color: "#B4B4AE" }}>Tap the <b style={{ color: "#F3F3F1" }}>Share</b> icon, then <b style={{ color: "#F3F3F1" }}>Add to Home Screen</b>.</div>
+      </div>
+      <button onClick={close} style={{ flexShrink: 0, alignSelf: "flex-start", background: "transparent", border: "none", color: "#87877F", fontSize: 18, lineHeight: 1, cursor: "pointer", padding: "2px 4px" }} aria-label="Dismiss">&times;</button>
+    </div>
+  );
+}
+
 export default function App() {
   // If cloud isn't configured, run the app exactly as before (browser-only).
   // This branch lives here (before AppInner) so AppInner's hooks are never conditional.
   const inner = !cloudEnabled
     ? <ErrorBoundary><ProQureApp session={null} /></ErrorBoundary>
     : <ErrorBoundary><AppInner /></ErrorBoundary>;
-  return (<><LaunchOverlay /><PullToRefresh />{inner}</>);
+  return (<><LaunchOverlay /><PullToRefresh /><OfflineBanner /><InstallHint />{inner}</>);
 }
