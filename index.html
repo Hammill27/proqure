@@ -46,6 +46,16 @@
     </div>
     <script type="module" src="/main.jsx"></script>
     <script>
+      // Capture Android/Chrome's install prompt for a one-tap Install button.
+      window.__pqInstallPrompt = null;
+      window.addEventListener("beforeinstallprompt", function (e) {
+        e.preventDefault();
+        window.__pqInstallPrompt = e;
+        window.dispatchEvent(new Event("pq-installable"));
+      });
+      window.addEventListener("appinstalled", function () { window.__pqInstallPrompt = null; });
+    </script>
+    <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
           navigator.serviceWorker.register("/sw.js").catch(function () {});
