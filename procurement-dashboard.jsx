@@ -5380,6 +5380,7 @@ ${settings.company||""}`;
   ];
   const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, om:2, reports:2, costs:2, invoices:2, team:3, settings:3 };
   const handleNav = (id) => {
+    haptic();
     const need = VIEW_MIN_ROLE[id];
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
     const ni = navItems.find(i=>i.id===id);
@@ -5913,6 +5914,12 @@ Rules:
       details summary::-webkit-details-marker{display:none}
       .card-hover{transition:transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s,border-color 0.2s}
       .card-hover:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:var(--border-solid)}
+      .card-hover:active{transform:scale(0.985)}
+      *{-webkit-tap-highlight-color:transparent}
+      .tabbtn{transition:background .2s cubic-bezier(.16,1,.3,1),transform .12s ease}
+      .tabbtn:active{transform:scale(0.9)}
+      .tap-press{transition:transform .12s ease}
+      .tap-press:active{transform:scale(0.97)}
       @media(max-width:768px){.desktop-only{display:none!important}.mobile-only{display:flex!important}}
       @media(min-width:769px){.mobile-only{display:none!important}.desktop-only{display:flex!important}}
       @media print{
@@ -6004,7 +6011,7 @@ Rules:
       )}
 
       {/* Main content */}
-      <div style={{marginLeft:isMobile?0:240,marginRight:(!isMobile&&notifOpen)?380:0,padding:isMobile?"76px 16px 88px":"32px 40px",animation:"fadeIn 0.2s ease",position:"relative",zIndex:1,transition:"margin-right .28s cubic-bezier(0.16,1,0.3,1)"}} className="main-content">
+      <div key={view} style={{marginLeft:isMobile?0:240,marginRight:(!isMobile&&notifOpen)?380:0,padding:isMobile?"76px 16px calc(88px + env(safe-area-inset-bottom))":"32px 40px",animation:"fadeIn 0.28s cubic-bezier(0.16,1,0.3,1)",position:"relative",zIndex:1,transition:"margin-right .28s cubic-bezier(0.16,1,0.3,1)"}} className="main-content">
         {renderNotifPanel()}
         {renderNotifBanners()}
 
@@ -9234,7 +9241,7 @@ Rules:
 
       {/* Mobile bottom bar */}
       {isMobile&&(
-        <div style={{position:"fixed",bottom:0,left:0,right:0,height:68,background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
+        <div style={{position:"fixed",bottom:0,left:0,right:0,height:"auto",minHeight:68,paddingBottom:"env(safe-area-inset-bottom)",background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
           {[
             {id:"dashboard",label:"Home",    d:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"},
             {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
@@ -9243,12 +9250,13 @@ Rules:
             {id:"settings", label:"More",    d:"M4 6h16M4 12h16M4 18h16"},
           ].filter(tab=>!tab.min||roleRank(myRole)>=tab.min).map(tab=>(
             <button key={tab.id}
+              className="tabbtn"
               onClick={()=>{
-                if(tab.id==="settings"){setMoreMenuOpen(p=>!p);return;}
+                if(tab.id==="settings"){haptic();setMoreMenuOpen(p=>!p);return;}
                 setMoreMenuOpen(false);
                 handleNav(tab.id);
               }}
-              style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"8px 14px",borderRadius:10,minWidth:56,position:"relative",flex:1}}>
+              style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:(tab.id==="settings"?moreMenuOpen:view===tab.id)?"var(--sidebar-activebg)":"none",border:"none",cursor:"pointer",padding:"8px 14px",borderRadius:12,minWidth:56,position:"relative",flex:1}}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
                 stroke={tab.id==="settings"?moreMenuOpen?"var(--green)":"var(--sidebar-text)":view===tab.id?"var(--green)":"var(--sidebar-text)"}
                 strokeWidth={view===tab.id||tab.id==="settings"&&moreMenuOpen?2.2:1.8}
@@ -10615,9 +10623,65 @@ function AppInner() {
   return <ProQureApp session={session} companyId={companyId} />;
 }
 
+// --- Light haptic tap (Android/where supported; a safe no-op on iOS Safari) ---
+function haptic(ms = 10) {
+  try { if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(ms); } catch (e) {}
+}
+
+// --- Premium launch animation: the ProQure mark builds, then fades to the app.
+// Plays once per cold launch. The first frame matches the static boot splash in
+// index.html so the hand-off from the OS splash is seamless. Honours reduced motion.
+let __pqLaunchPlayed = false;
+function LaunchOverlay() {
+  const reduce = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [show, setShow] = useState(() => !__pqLaunchPlayed);
+  const [out, setOut] = useState(false);
+  useEffect(() => {
+    if (__pqLaunchPlayed) return;
+    __pqLaunchPlayed = true;
+    const hold = reduce ? 450 : 1500;
+    const t1 = setTimeout(() => setOut(true), hold);
+    const t2 = setTimeout(() => setShow(false), hold + 520);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!show) return null;
+  return (
+    <div className={"pq-launch" + (out ? " pq-out" : "") + (reduce ? " pq-reduce" : "")} aria-hidden="true">
+      <style>{`
+        .pq-launch{position:fixed;inset:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;background:#0E0F0C;opacity:1;transition:opacity .5s ease,transform .5s ease;will-change:opacity,transform}
+        .pq-launch.pq-out{opacity:0;transform:scale(1.04);pointer-events:none}
+        .pq-launch svg{width:94px;height:94px;display:block;overflow:visible}
+        .pq-launch .pl-1,.pq-launch .pl-2,.pq-launch .pl-3,.pq-launch .pl-mid,.pq-launch .pl-dot{transform-box:fill-box;transform-origin:center}
+        .pq-launch .pl-mid{animation:plPop .55s cubic-bezier(.16,1,.3,1) .10s both}
+        .pq-launch .pl-1{animation:plRise .55s cubic-bezier(.16,1,.3,1) .34s both}
+        .pq-launch .pl-2{animation:plRise .55s cubic-bezier(.16,1,.3,1) .44s both}
+        .pq-launch .pl-3{animation:plRise .55s cubic-bezier(.16,1,.3,1) .54s both}
+        .pq-launch .pl-dot{animation:plDot .6s cubic-bezier(.16,1,.3,1) .72s both}
+        .pq-launch .pl-wm{font-family:'Plus Jakarta Sans','Helvetica Neue',sans-serif;font-weight:800;font-size:22px;letter-spacing:-.02em;color:#F3F3F1;animation:plFade .6s ease .98s both}
+        .pq-launch .pl-wm b{color:#3DD68C}
+        @keyframes plPop{from{opacity:0;transform:scale(.35)}to{opacity:1;transform:scale(1)}}
+        @keyframes plRise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes plDot{0%{opacity:0;transform:scale(0)}60%{opacity:1;transform:scale(1.3)}100%{opacity:1;transform:scale(1)}}
+        @keyframes plFade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+        .pq-launch.pq-reduce .pl-1,.pq-launch.pq-reduce .pl-2,.pq-launch.pq-reduce .pl-3,.pq-launch.pq-reduce .pl-mid,.pq-launch.pq-reduce .pl-dot,.pq-launch.pq-reduce .pl-wm{animation:plFade .3s ease both}
+      `}</style>
+      <svg viewBox="0 0 20 20" fill="none" aria-label="ProQure">
+        <rect className="pl-1" x="3" y="3" width="3" height="14" rx="1.5" fill="#2BB873"/>
+        <rect className="pl-2" x="6" y="3" width="8" height="3" rx="1.5" fill="#2BB873"/>
+        <rect className="pl-3" x="14" y="3" width="3" height="8" rx="1.5" fill="#2BB873"/>
+        <rect className="pl-mid" x="6" y="10" width="8" height="3" rx="1.5" fill="#3DD68C"/>
+        <circle className="pl-dot" cx="16.5" cy="15.5" r="2" fill="#2BB873"/>
+      </svg>
+      <div className="pl-wm">Pro<b>Qure</b></div>
+    </div>
+  );
+}
+
 export default function App() {
   // If cloud isn't configured, run the app exactly as before (browser-only).
   // This branch lives here (before AppInner) so AppInner's hooks are never conditional.
-  if (!cloudEnabled) return <ErrorBoundary><ProQureApp session={null} /></ErrorBoundary>;
-  return <ErrorBoundary><AppInner /></ErrorBoundary>;
+  const inner = !cloudEnabled
+    ? <ErrorBoundary><ProQureApp session={null} /></ErrorBoundary>
+    : <ErrorBoundary><AppInner /></ErrorBoundary>;
+  return (<><LaunchOverlay />{inner}</>);
 }
