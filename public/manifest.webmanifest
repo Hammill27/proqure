@@ -1,0 +1,17 @@
+{
+  "name": "ProQure",
+  "short_name": "ProQure",
+  "description": "AI procurement for UK trades — quotes compared fast, orders, hire, invoices and O&M in one place.",
+  "lang": "en-GB",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E0F0C",
+  "theme_color": "#0E0F0C",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
