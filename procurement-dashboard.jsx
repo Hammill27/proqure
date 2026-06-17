@@ -4634,6 +4634,8 @@ ${settings.company||""}`;
   const [notifOpen, setNotifOpen]   = useState(false);
   const [notifView, setNotifView]   = useState("list");
   const [notifTab, setNotifTab]     = useState("all");
+  // Close the notifications drawer whenever the user navigates to another page.
+  useEffect(() => { setNotifOpen(false); }, [view]);
 
   const notifInWindow = (a) => {
     const now = Date.now();
@@ -4882,7 +4884,7 @@ ${settings.company||""}`;
     return (
       <>
         {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
-        <div style={{ position:"fixed", top:0, right:0, height:"100dvh", width:isMobile?"min(380px,100vw)":380, background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)", zIndex:999, display:"flex", flexDirection:"column", transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)", pointerEvents:notifOpen?"auto":"none" }}>
+        <div style={{ position:"fixed", top:0, right:0, height:"100dvh", width:isMobile?"min(380px,100vw)":380, background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)", zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box", transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)", pointerEvents:notifOpen?"auto":"none" }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
             <button onClick={() => setNotifView("list")} aria-label="Back" style={{ border:"none", background:"transparent", cursor:"pointer", color:"var(--text-secondary)", fontSize:18, lineHeight:1, padding:0 }}>&larr;</button>
             <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Email preferences</span>
@@ -4930,7 +4932,7 @@ ${settings.company||""}`;
         {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
         <div style={{ position:"fixed", top:0, right:0, height:"100dvh", width:isMobile?"min(380px,100vw)":380,
           background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)",
-          zIndex:999, display:"flex", flexDirection:"column",
+          zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box",
           transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)",
           pointerEvents:notifOpen?"auto":"none" }}>
           <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
@@ -6616,7 +6618,7 @@ Rules:
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <input type="date" value={rfqDeadline} onChange={e=>setRfqDeadline(e.target.value)} min={new Date().toISOString().split("T")[0]}
-                      style={{padding:"8px 12px",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                      style={{padding:"10px 12px",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",fontSize:14,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",WebkitTextFillColor:"var(--text-primary)",minHeight:42,minWidth:150}}/>
                     {rfqDeadline&&<button onClick={()=>setRfqDeadline("")} style={{fontSize:11,color:"var(--amber)",background:"none",border:"none",cursor:"pointer"}}>Clear</button>}
                   </div>
                 </div>
@@ -6643,7 +6645,7 @@ Rules:
                   <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap"}}>
                     <div>
                       <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:4}}>Required by date</label>
-                      <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                      <input type="date" value={deliveryDate} onChange={e=>setDeliveryDate(e.target.value)} style={{padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:14,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)",WebkitTextFillColor:"var(--text-primary)",minHeight:42,minWidth:150}}/>
                     </div>
                   </div>
                 </div>
@@ -6652,6 +6654,7 @@ Rules:
                 <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px",marginBottom:16}}>
                   <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"var(--text-secondary)",fontWeight:400}}>({trade})</span></div>
                   {!can.sendRFQ(myRole)&&<div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,padding:"8px 12px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)"}}>As an engineer you don't need to pick suppliers - just raise the list and your buyer will request the quotes. You can skip this section.</div>}
+                  {_tradeSup.length===0&&suppliers.length>0&&<div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,padding:"8px 12px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)"}}>No suppliers tagged "{trade}" yet, so all your suppliers are shown. Tag suppliers by trade on the Suppliers page to filter this list automatically.</div>}
                   {suppliers.length>6&&(
                     <input value={supSearch} onChange={e=>setSupSearch(e.target.value)} placeholder="Search suppliers by name, trade or contact..." style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:10}}/>
                   )}
