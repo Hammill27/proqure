@@ -229,18 +229,25 @@ function useIsMobile() {
 function useSpeechRecognition({ onTranscript, onFinal }) {
   const recRef = useRef(null);
   const wantRef = useRef(false);
+  const SRRef = useRef(null);
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(false);
-  // Keep the latest callbacks in refs so the once-only setup effect below never
-  // re-subscribes the mic, yet always invokes the current handler (avoids a
-  // stale-closure trap if a caller's onFinal/onTranscript closes over state).
+  // Keep the latest callbacks in refs so a rebuilt recogniser always invokes the
+  // current handler (avoids a stale-closure trap if onFinal/onTranscript close over state).
   const onFinalRef = useRef(onFinal);
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => { onFinalRef.current = onFinal; onTranscriptRef.current = onTranscript; });
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-    setSupported(true);
+    if (SR) { SRRef.current = SR; setSupported(true); }
+    return () => { wantRef.current = false; try { recRef.current && recRef.current.stop(); } catch (e) {} };
+  }, []);
+  // Build a FRESH recogniser every time we start (and on each auto-restart). iOS Safari -
+  // including installed PWAs - frequently won't restart a reused instance: it silently
+  // fails until the page is reloaded ("mic works, then doesn't until refresh"). Never
+  // reusing an instance keeps the mic reliable on iOS while staying fine on Android.
+  const build = () => {
+    const SR = SRRef.current; if (!SR) return null;
     const rec = new SR();
     rec.continuous = true; rec.interimResults = true; rec.lang = "en-GB";
     rec.onresult = (e) => {
@@ -252,24 +259,29 @@ function useSpeechRecognition({ onTranscript, onFinal }) {
       if (final) onFinalRef.current(final); else onTranscriptRef.current(interim);
     };
     rec.onerror = (e) => {
-      // Transient Android errors (no-speech, aborted, network) shouldn't end the
-      // session - let onend decide. Only a hard permission/device error stops us.
       const err = e && e.error;
       if (err === "not-allowed" || err === "service-not-allowed" || err === "audio-capture") {
         wantRef.current = false; setListening(false);
       }
     };
     rec.onend = () => {
-      // Android Chrome fires onend after every pause even in continuous mode. If the
-      // user still wants to dictate, restart automatically so it doesn't cut out.
-      if (wantRef.current) { try { rec.start(); } catch (e) { /* already starting */ } }
+      // Continuous mode ends after pauses; if the user still wants to dictate, spin up
+      // a fresh instance and carry on (reliable on both iOS and Android).
+      if (wantRef.current) { const next = build(); if (next) { recRef.current = next; try { next.start(); } catch (e) {} } else setListening(false); }
       else { setListening(false); }
     };
+    return rec;
+  };
+  const start = () => {
+    if (!SRRef.current || wantRef.current) return;
+    wantRef.current = true;
+    const rec = build();
+    if (!rec) { wantRef.current = false; return; }
     recRef.current = rec;
-    return () => { wantRef.current = false; try { rec.stop(); } catch (e) {} };
-  }, []);
-  const start = () => { if (recRef.current && !wantRef.current) { wantRef.current = true; try { recRef.current.start(); } catch (e) {} setListening(true); } };
-  const stop  = () => { wantRef.current = false; if (recRef.current) { try { recRef.current.stop(); } catch (e) {} } setListening(false); };
+    try { rec.start(); } catch (e) {}
+    setListening(true);
+  };
+  const stop = () => { wantRef.current = false; if (recRef.current) { try { recRef.current.stop(); } catch (e) {} } setListening(false); };
   return { listening, supported, start, stop };
 }
 
@@ -3024,7 +3036,7 @@ function ProQureApp({ session, companyId }) {
   // A brand-new company's first Manager should set up their workspace before using it.
   // Only fires for a cloud account that is a manager with no company name saved yet, so
   // it never bothers an existing/established company (or invited engineers/buyers).
-  const needsOnboarding = cloudEnabled && roleRank(myRole) >= 3 && !settings.onboarded && !((settings.company || "").trim());
+  const needsOnboarding = cloudEnabled && roleRank(myRole) >= 3 && !settings.onboarded && !((settings.company || "").trim()) && (typeof navigator === "undefined" || navigator.onLine !== false);
   // If the user is on a view their role can't access, send them to the dashboard.
   // Guard against transient demotion: during a background cloud sync the team list
   // can momentarily be empty/re-loading, which would briefly resolve myRole to the
@@ -4571,7 +4583,7 @@ ${settings.company||""}`;
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [tourStep, setTourStep] = useState(()=>{ try{ return localStorage.getItem("piq_tour_done")==="1" ? -1 : 0; }catch{ return -1; } });
-  const dismissTour = () => { try{localStorage.setItem("piq_tour_done","1")}catch{} setTourStep(-1); };
+  const dismissTour = () => { try{localStorage.setItem("piq_tour_done","1")}catch{} setTourStep(-1); try{ saveSettings({...settings, tourDone:true}); }catch(e){} };
   const tourBase = [
     { title:"Welcome to ProQure", body:"A quick 30-second tour so you know your way around. You can skip anytime.", icon:"rocket" },
     { title:"Create a request", body:"Tap New request to list the materials you need. You can type, dictate, scan a document, or paste a spreadsheet - the AI turns it into a tidy request.", icon:"clipboard" },
@@ -7858,7 +7870,8 @@ Rules:
                   <div style={{fontSize:13}}>Create your first material request to get started</div>
                 </div>
               ):(
-                <div>
+                <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+                  <div style={{minWidth:760}}>
                   <div style={{display:"grid",gridTemplateColumns:"80px 1fr 120px 100px 80px 140px",gap:8,padding:"10px 16px",background:"var(--bg-subtle)",fontSize:11,fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em",borderRadius:"var(--radius-sm) var(--radius-sm) 0 0"}}>
                     <span>ID</span><span>Job ref</span><span>Trade</span><span>Status</span><span>Quotes</span><span>Actions</span>
                   </div>
@@ -7914,6 +7927,7 @@ Rules:
                       </div>
                     );
                   })}
+                  </div>
                 </div>
               )}
             </Card>
@@ -9650,7 +9664,7 @@ Rules:
         <CompanyOnboarding session={session} initial={settings} onComplete={(vals)=>{ saveSettings(vals); }} />
       )}
 
-      {!needsOnboarding && tourStep>=0&&tourStep<tourSteps.length&&(
+      {!needsOnboarding && !settings.tourDone && tourStep>=0&&tourStep<tourSteps.length&&(
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:2500,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"30px 32px",maxWidth:420,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
@@ -10618,12 +10632,17 @@ function AppInner() {
       setReady(false);
       (async () => {
         const co = await resolveCompany(session);
+        const resolved = !!(co && co.companyId);
         const scope = (co && co.companyId) || session.user.id; // fallback: per-user scope
         // Account-aware reset: if the data cached in THIS browser belongs to a different
         // account/company, clear it before loading - so we never display, or push up,
         // another account's data. (Same account => keep any unsynced local changes.)
+        // Crucially, only do this destructive reset when we actually RESOLVED a real
+        // company (i.e. we're online and certain who this is). Offline, or a failed
+        // resolve, must never wipe cached data - otherwise a returning user gets thrown
+        // into the brand-new-workspace wizard the moment their connection drops.
         try {
-          if (localStorage.getItem("piq_scope") !== scope) {
+          if (resolved && localStorage.getItem("piq_scope") !== scope) {
             SYNC_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
             localStorage.setItem("piq_scope", scope);
           }
