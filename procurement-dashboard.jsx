@@ -10634,10 +10634,13 @@ function haptic(ms = 10) {
 let __pqLaunchPlayed = false;
 function LaunchOverlay() {
   const reduce = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const [show, setShow] = useState(() => !__pqLaunchPlayed);
+  // A pull-to-refresh reload sets this flag so the animation doesn't replay on every refresh.
+  let skip = false;
+  try { if (typeof sessionStorage !== "undefined" && sessionStorage.getItem("pq_skip_launch")) { sessionStorage.removeItem("pq_skip_launch"); skip = true; } } catch (e) {}
+  const [show, setShow] = useState(() => !__pqLaunchPlayed && !skip);
   const [out, setOut] = useState(false);
   useEffect(() => {
-    if (__pqLaunchPlayed) return;
+    if (__pqLaunchPlayed || skip) { __pqLaunchPlayed = true; return; }
     __pqLaunchPlayed = true;
     const hold = reduce ? 450 : 1500;
     const t1 = setTimeout(() => setOut(true), hold);
@@ -10677,11 +10680,68 @@ function LaunchOverlay() {
   );
 }
 
+// --- Native-style pull-to-refresh (mobile). At the top of the page, pulling down
+// past a threshold reloads the app, which re-runs cloudPull and re-hydrates state.
+// Sets pq_skip_launch so the launch animation doesn't replay on the refresh.
+function PullToRefresh() {
+  const [dist, setDist] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const st = useRef({ startY: 0, active: false });
+  useEffect(() => {
+    if (typeof window === "undefined" || window.innerWidth >= 768) return;
+    const THRESH = 72, MAX = 110;
+    const top = () => { const el = document.scrollingElement || document.documentElement; return el ? el.scrollTop : window.scrollY; };
+    const onStart = (e) => { if (top() <= 0 && e.touches && e.touches.length === 1) { st.current.startY = e.touches[0].clientY; st.current.active = true; } else { st.current.active = false; } };
+    const onMove = (e) => {
+      if (!st.current.active || refreshing) return;
+      const dy = e.touches[0].clientY - st.current.startY;
+      if (dy > 0 && top() <= 0) { if (e.cancelable) e.preventDefault(); setDist(Math.min(MAX, dy * 0.5)); }
+      else if (dy <= 0) { st.current.active = false; setDist(0); }
+    };
+    const onEnd = () => {
+      if (!st.current.active) { setDist(0); return; }
+      st.current.active = false;
+      setDist((d) => {
+        if (d >= THRESH) {
+          setRefreshing(true);
+          try { sessionStorage.setItem("pq_skip_launch", "1"); } catch (e) {}
+          setTimeout(() => { try { window.location.reload(); } catch (e) {} }, 200);
+          return THRESH;
+        }
+        return 0;
+      });
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd, { passive: true });
+    window.addEventListener("touchcancel", onEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("touchcancel", onEnd);
+    };
+  }, [refreshing]);
+  if (dist <= 0 && !refreshing) return null;
+  const prog = Math.min(1, dist / 72);
+  const y = (refreshing ? 58 : dist) - 4;
+  return (
+    <div aria-hidden="true" style={{ position: "fixed", top: 0, left: 0, right: 0, display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 99998, transform: `translateY(${y}px)`, transition: st.current.active ? "none" : "transform .25s cubic-bezier(.16,1,.3,1)" }}>
+      <div style={{ width: 38, height: 38, borderRadius: "50%", background: "#FFFFFF", boxShadow: "0 4px 16px rgba(0,0,0,.20)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ transform: refreshing ? "none" : `rotate(${prog * 270}deg)`, animation: refreshing ? "spin 0.7s linear infinite" : "none" }}>
+          <circle cx="12" cy="12" r="9" stroke="#E5E5E0" strokeWidth="2.6" />
+          <path d="M12 3a9 9 0 0 1 9 9" stroke="#2BB873" strokeWidth="2.6" strokeLinecap="round" style={{ opacity: refreshing ? 1 : prog }} />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // If cloud isn't configured, run the app exactly as before (browser-only).
   // This branch lives here (before AppInner) so AppInner's hooks are never conditional.
   const inner = !cloudEnabled
     ? <ErrorBoundary><ProQureApp session={null} /></ErrorBoundary>
     : <ErrorBoundary><AppInner /></ErrorBoundary>;
-  return (<><LaunchOverlay />{inner}</>);
+  return (<><LaunchOverlay /><PullToRefresh />{inner}</>);
 }
