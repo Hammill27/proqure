@@ -62,7 +62,7 @@
   input:focus{border-color:var(--green)}
   select{background:var(--card-2);border:1px solid var(--line-2);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13.5px;outline:none;font-family:inherit}
 
-  #gate,#login{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:24px;background:#0B0B0E;background-image:radial-gradient(700px 400px at 50% 0%,rgba(61,214,140,.10),transparent 60%)}
+  #gate,#login,#mfa{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:24px;background:#0B0B0E;background-image:radial-gradient(700px 400px at 50% 0%,rgba(61,214,140,.10),transparent 60%)}
   #login{z-index:150}
   .auth-card{width:100%;max-width:392px;background:#16161B;border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:34px 30px;box-shadow:0 40px 90px rgba(0,0,0,.5);color:#F3F3F1}
   .auth-card .logo{justify-content:center}
@@ -441,6 +441,32 @@
   </div>
 </div>
 
+<div id="mfa" style="display:none">
+  <div class="auth-card">
+    <span class="logo"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></span>
+
+    <div id="mfaEnrol" style="display:none">
+      <h1>Set up two-factor</h1>
+      <p class="s">Scan this with an authenticator app (Google Authenticator, Authy, Microsoft Authenticator or 1Password), then enter the 6-digit code it shows.</p>
+      <div id="mfaQr" style="display:flex;justify-content:center;margin:16px 0;min-height:120px;align-items:center"></div>
+      <p class="s" style="font-size:12px">Can&rsquo;t scan? Enter this key manually:<br><b id="mfaSecret" style="font-family:var(--mono);font-size:12px;word-break:break-all"></b></p>
+      <div class="field"><input id="mfaEnrolCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"></div>
+      <button id="mfaEnrolBtn" class="btn btn-primary">Verify &amp; enable</button>
+      <div class="err" id="mfaEnrolErr"></div>
+      <button id="mfaEnrolCancel" class="btn btn-sm" style="margin-top:10px;background:transparent">Cancel &amp; sign out</button>
+    </div>
+
+    <div id="mfaChallenge" style="display:none">
+      <h1>Two-factor</h1>
+      <p class="s">Enter the 6-digit code from your authenticator app.</p>
+      <div class="field"><input id="mfaCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"></div>
+      <button id="mfaBtn" class="btn btn-primary">Verify</button>
+      <div class="err" id="mfaErr"></div>
+      <button id="mfaSignout" class="btn btn-sm" style="margin-top:10px;background:transparent">Cancel &amp; sign out</button>
+    </div>
+  </div>
+</div>
+
 <div id="app">
   <div class="shell">
     <aside class="rail">
@@ -707,7 +733,7 @@ async function init(){
   let s=null;
   try{ const { data } = await sb.auth.getSession(); s=(data&&data.session)||null; }catch(e){}
   session=s;
-  if(session){ if(gatePassed) showApp(); }
+  if(session){ if(gatePassed) gateMfa(); }
   else if(gatePassed){ $("gate").style.display="none"; $("login").style.display="flex"; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },80); }
 }
 let gatePassed=false; try{ gatePassed=sessionStorage.getItem("pq_admin_gate")==="1"; }catch(e){}
@@ -715,7 +741,7 @@ let gatePassed=false; try{ gatePassed=sessionStorage.getItem("pq_admin_gate")===
   const g=$("gate"),inp=$("gateInput"),btn=$("gateBtn"),err=$("gateErr");
   if(gatePassed){ g.style.display="none"; $("login").style.display="flex"; }
   else { document.body.classList.add("locked"); setTimeout(()=>inp&&inp.focus(),150); }
-  function pass(){ gatePassed=true; try{sessionStorage.setItem("pq_admin_gate","1");}catch(e){} g.style.display="none"; document.body.classList.remove("locked"); if(session) showApp(); else { $("login").style.display="flex"; setTimeout(()=>$("liEmail").focus(),100); } }
+  function pass(){ gatePassed=true; try{sessionStorage.setItem("pq_admin_gate","1");}catch(e){} g.style.display="none"; document.body.classList.remove("locked"); if(session) gateMfa(); else { $("login").style.display="flex"; setTimeout(()=>$("liEmail").focus(),100); } }
   function tryCode(){ if((inp.value||"").trim().toLowerCase()===ADMIN_GATE_CODE.toLowerCase()) pass(); else { err.textContent="That code isn\u2019t right."; const c=g.querySelector(".auth-card"); c.classList.add("gate-shake"); setTimeout(()=>c.classList.remove("gate-shake"),420); inp.select(); } }
   btn.addEventListener("click",tryCode); inp.addEventListener("keydown",e=>{ if(e.key==="Enter") tryCode(); });
 })();
@@ -725,14 +751,100 @@ async function login(){
   $("liErr").textContent=""; const email=$("liEmail").value.trim(),password=$("liPass").value;
   if(!email||!password){ $("liErr").textContent="Enter your email and password."; return; }
   $("liBtn").disabled=true; $("liBtn").textContent="Signing in...";
-  try{ const { data,error } = await sb.auth.signInWithPassword({email,password}); if(error) $("liErr").textContent=error.message; else { session=data.session; showApp(); } }
+  try{ const { data,error } = await sb.auth.signInWithPassword({email,password}); if(error) $("liErr").textContent=error.message; else { session=data.session; gateMfa(); } }
   catch(e){ $("liErr").textContent="Could not sign in. Please try again."; }
   $("liBtn").disabled=false; $("liBtn").textContent="Sign in";
 }
 $("signoutBtn").addEventListener("click",async()=>{ try{ await sb.auth.signOut(); }catch(e){} session=null; $("app").style.display="none"; $("gate").style.display="none"; $("login").style.display="flex"; const p=$("liPass"); if(p) p.value=""; const er=$("liErr"); if(er) er.textContent=""; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },60); });
 $("refreshBtn").addEventListener("click",()=>loadData());
 
-function showApp(){ $("gate").style.display="none"; $("login").style.display="none"; $("app").style.display="block"; $("whoami").textContent=(session.user&&session.user.email)||""; loadData(); }
+// --- Two-factor (TOTP) -------------------------------------------------------
+// After a correct password we check the session's assurance level:
+//   - already aal2  -> straight in
+//   - has a factor, needs a code (nextLevel aal2) -> challenge screen
+//   - no factor yet -> enrolment screen (enforced)
+// If the assurance check itself errors we fail OPEN here so a transient glitch
+// can never lock the admin out; the server-side check (added later) is what makes
+// MFA unbypassable.
+let mfaFactorId = null;
+function showMfaScreen(){ $("gate").style.display="none"; $("login").style.display="none"; $("mfa").style.display="flex"; }
+async function gateMfa(){
+  let aal = null;
+  try { const { data } = await sb.auth.mfa.getAuthenticatorAssuranceLevel(); aal = data; }
+  catch(e){ aal = null; }
+  if(!aal){ showApp(); return; }
+  if(aal.currentLevel === "aal2"){ showApp(); return; }
+  if(aal.nextLevel === "aal2"){ startMfaChallenge(); return; }
+  startMfaEnrol();
+}
+async function startMfaEnrol(){
+  showMfaScreen();
+  $("mfaEnrol").style.display="block"; $("mfaChallenge").style.display="none";
+  $("mfaEnrolErr").textContent=""; $("mfaEnrolCode").value="";
+  $("mfaQr").innerHTML='<span class="spin"></span>'; $("mfaSecret").textContent="";
+  try{
+    // Clear any half-finished (unverified) factor from a previous attempt.
+    try{ const { data: fl } = await sb.auth.mfa.listFactors();
+      if(fl && fl.all){ for(const f of fl.all){ if(f.status!=="verified"){ try{ await sb.auth.mfa.unenroll({ factorId:f.id }); }catch(e){} } } }
+    }catch(e){}
+    const { data, error } = await sb.auth.mfa.enroll({ factorType:"totp", friendlyName:"ProQure Admin" });
+    if(error){ $("mfaEnrolErr").textContent=error.message; $("mfaQr").innerHTML=""; return; }
+    mfaFactorId = data.id;
+    const qr = (data.totp && data.totp.qr_code) || "";
+    if(qr.trim().startsWith("<svg")) $("mfaQr").innerHTML = qr;
+    else $("mfaQr").innerHTML = '<img alt="QR code" style="width:180px;height:180px;background:#fff;padding:8px;border-radius:10px" src="'+qr+'">';
+    $("mfaSecret").textContent = (data.totp && data.totp.secret) || "";
+    setTimeout(()=>$("mfaEnrolCode").focus(),60);
+  }catch(e){ $("mfaEnrolErr").textContent="Could not start enrolment. Try again."; $("mfaQr").innerHTML=""; }
+}
+async function verifyMfaEnrol(){
+  const code=($("mfaEnrolCode").value||"").trim(); $("mfaEnrolErr").textContent="";
+  if(code.length<6){ $("mfaEnrolErr").textContent="Enter the 6-digit code."; return; }
+  if(!mfaFactorId){ $("mfaEnrolErr").textContent="Enrolment expired. Refresh and try again."; return; }
+  $("mfaEnrolBtn").disabled=true; $("mfaEnrolBtn").textContent="Verifying...";
+  try{
+    const ch = await sb.auth.mfa.challenge({ factorId: mfaFactorId });
+    if(ch.error){ $("mfaEnrolErr").textContent=ch.error.message; }
+    else{
+      const v = await sb.auth.mfa.verify({ factorId: mfaFactorId, challengeId: ch.data.id, code });
+      if(v.error){ $("mfaEnrolErr").textContent=v.error.message; }
+      else { session = v.data; showApp(); }
+    }
+  }catch(e){ $("mfaEnrolErr").textContent="Verification failed. Check the code and try again."; }
+  $("mfaEnrolBtn").disabled=false; $("mfaEnrolBtn").textContent="Verify & enable";
+}
+async function startMfaChallenge(){
+  showMfaScreen();
+  $("mfaEnrol").style.display="none"; $("mfaChallenge").style.display="block";
+  $("mfaErr").textContent=""; $("mfaCode").value="";
+  try{ const { data } = await sb.auth.mfa.listFactors(); const t=(data&&data.totp&&data.totp[0])||null; mfaFactorId = t?t.id:null; }catch(e){}
+  setTimeout(()=>$("mfaCode").focus(),60);
+}
+async function verifyMfaChallenge(){
+  const code=($("mfaCode").value||"").trim(); $("mfaErr").textContent="";
+  if(code.length<6){ $("mfaErr").textContent="Enter the 6-digit code."; return; }
+  if(!mfaFactorId){ $("mfaErr").textContent="No authenticator found. Sign out and try again."; return; }
+  $("mfaBtn").disabled=true; $("mfaBtn").textContent="Verifying...";
+  try{
+    const ch = await sb.auth.mfa.challenge({ factorId: mfaFactorId });
+    if(ch.error){ $("mfaErr").textContent=ch.error.message; }
+    else{
+      const v = await sb.auth.mfa.verify({ factorId: mfaFactorId, challengeId: ch.data.id, code });
+      if(v.error){ $("mfaErr").textContent=v.error.message; }
+      else { session = v.data; showApp(); }
+    }
+  }catch(e){ $("mfaErr").textContent="Verification failed. Check the code and try again."; }
+  $("mfaBtn").disabled=false; $("mfaBtn").textContent="Verify";
+}
+async function mfaCancel(){ try{ await sb.auth.signOut(); }catch(e){} session=null; $("mfa").style.display="none"; $("login").style.display="flex"; const p=$("liPass"); if(p) p.value=""; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },60); }
+$("mfaEnrolBtn").addEventListener("click", verifyMfaEnrol);
+$("mfaEnrolCode").addEventListener("keydown", e=>{ if(e.key==="Enter") verifyMfaEnrol(); });
+$("mfaBtn").addEventListener("click", verifyMfaChallenge);
+$("mfaCode").addEventListener("keydown", e=>{ if(e.key==="Enter") verifyMfaChallenge(); });
+$("mfaSignout").addEventListener("click", mfaCancel);
+$("mfaEnrolCancel").addEventListener("click", mfaCancel);
+
+function showApp(){ $("gate").style.display="none"; $("login").style.display="none"; $("mfa").style.display="none"; $("app").style.display="block"; $("whoami").textContent=(session.user&&session.user.email)||""; loadData(); }
 
 async function api(action,payload){
   const url=API_BASE+"/api/admin-metrics"+(action==="summary"?"?action=summary":"");
