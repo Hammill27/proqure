@@ -6068,14 +6068,17 @@ Rules:
         </div>
       )}
 
-      {/* Notifications panel + banners: rendered at the root level (NOT inside the
-          main-content box, which has its own zIndex stacking context) so the drawer's
-          zIndex:999 truly sits above the mobile top bar instead of behind it. */}
+      {/* Notifications drawer: rendered at the root level (NOT inside the main-content
+          box, which has its own zIndex stacking context) so its zIndex:999 truly sits
+          above the mobile top bar instead of behind it. The in-flow banners, however,
+          belong INSIDE the padded main content (below) - at root they'd hide behind the
+          fixed top bar and only show during a pull-to-refresh overscroll. */}
       {renderNotifPanel()}
-      {renderNotifBanners()}
 
       {/* Main content */}
       <div key={view} style={{marginLeft:isMobile?0:240,marginRight:(!isMobile&&notifOpen)?380:0,padding:isMobile?"calc(76px + env(safe-area-inset-top)) 16px calc(88px + env(safe-area-inset-bottom))":"32px 40px",animation:"fadeIn 0.28s cubic-bezier(0.16,1,0.3,1)",position:"relative",zIndex:1,transition:"margin-right .28s cubic-bezier(0.16,1,0.3,1)"}} className="main-content">
+        {renderNotifBanners()}
+
 
         {view==="dashboard"&&(
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:1280}}>
