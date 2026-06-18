@@ -418,6 +418,18 @@ function clientIp(req) {
   return xff || req.headers["x-real-ip"] || null;
 }
 function clientUa(req) { return (req.headers["user-agent"] || "").slice(0, 300) || null; }
+// Read the assurance level (aal1 = password only, aal2 = password + MFA) straight
+// from the verified JWT, so the server can require MFA was actually completed.
+function tokenAal(token) {
+  try {
+    const parts = String(token).split(".");
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const payload = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    return (payload && payload.aal) ? String(payload.aal) : null;
+  } catch { return null; }
+}
 async function writeSecurityEvent(svc, { email, action, detail, req }) {
   try {
     if (!svc) return;
@@ -562,6 +574,18 @@ export default async function handler(req, res) {
   if (!ADMIN_EMAILS.includes(callerEmail)) {
     await writeSecurityEvent(admin, { email: callerEmail, action: "console-DENIED", detail: "not on admin allow-list", req });
     res.status(403).json({ error: "This account is not authorised for the admin console." });
+    return;
+  }
+
+  // Require that MFA was actually completed (token assurance level aal2). A
+  // password-only session (aal1) is rejected even for an allow-listed admin, so
+  // MFA cannot be bypassed by calling the API directly. The console always
+  // elevates to aal2 (enrol/challenge) before it reaches here, so this never
+  // locks out a legitimate admin.
+  const callerAal = tokenAal(token);
+  if (callerAal !== "aal2") {
+    await writeSecurityEvent(admin, { email: callerEmail, action: "console-MFA-REQUIRED", detail: "token aal=" + (callerAal || "unknown"), req });
+    res.status(403).json({ error: "Two-factor authentication required.", mfa_required: true });
     return;
   }
 
