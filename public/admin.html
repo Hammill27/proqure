@@ -748,7 +748,10 @@ window.openUser=openUser;
 function configOk(){ return SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length>20; }
 async function init(){
   if(!configOk()){ $("gate").style.display="none"; $("login").style.display="flex"; $("cfgWarn").style.display="block"; $("cfgWarn").textContent="Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file."; return; }
-  try{ sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{storageKey:"pq-admin-auth",persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}}); }
+  // persistSession:false => the console never silently resumes a saved login.
+  // Every time it's opened the flow is enforced: access code -> email & password
+  // -> MFA. autoRefreshToken stays on so a token won't expire mid-session while in use.
+  try{ sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{storageKey:"pq-admin-auth",persistSession:false,autoRefreshToken:true,detectSessionInUrl:false}}); }
   catch(e){ if(gatePassed){ $("gate").style.display="none"; $("login").style.display="flex"; } return; }
   let s=null;
   try{ const { data } = await sb.auth.getSession(); s=(data&&data.session)||null; }catch(e){}
