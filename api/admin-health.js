@@ -55,6 +55,16 @@ function clientIp(req) {
   return xff || req.headers["x-real-ip"] || null;
 }
 function clientUa(req) { return (req.headers["user-agent"] || "").slice(0, 300) || null; }
+function tokenAal(token) {
+  try {
+    const parts = String(token).split(".");
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const payload = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    return (payload && payload.aal) ? String(payload.aal) : null;
+  } catch { return null; }
+}
 async function writeSecurityEvent(svc, { email, action, detail, req }) {
   try {
     if (!svc) return;
@@ -346,6 +356,14 @@ export default async function handler(req, res) {
   if (!ADMIN_EMAILS.includes(callerEmail)) {
     await writeSecurityEvent(svc, { email: callerEmail, action: "health-DENIED", detail: "not on admin allow-list", req });
     res.status(403).json({ error: "This account is not authorised for the admin console." });
+    return;
+  }
+
+  // Require MFA was completed (aal2); reject password-only (aal1) sessions.
+  const callerAal = tokenAal(token);
+  if (callerAal !== "aal2") {
+    await writeSecurityEvent(svc, { email: callerEmail, action: "health-MFA-REQUIRED", detail: "token aal=" + (callerAal || "unknown"), req });
+    res.status(403).json({ error: "Two-factor authentication required.", mfa_required: true });
     return;
   }
 
