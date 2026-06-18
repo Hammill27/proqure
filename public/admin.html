@@ -837,13 +837,14 @@ async function mfaDoEnroll(){
         $("mfaQr").innerHTML = '<img alt="QR code" style="width:200px;height:200px;background:#fff;padding:10px;border-radius:10px" src="'+raw+'">';
       } else { $("mfaQr").innerHTML=""; }
     };
-    if(totp.uri && window.QRCode && typeof window.QRCode.toCanvas === "function"){
-      const canvas = document.createElement("canvas");
-      canvas.style.cssText = "width:200px;height:200px;background:#fff;padding:10px;border-radius:10px";
-      window.QRCode.toCanvas(canvas, totp.uri, { width: 200, margin: 2, errorCorrectionLevel: "M",
-        color: { dark: "#000000", light: "#ffffff" } }, function(err){
-        if(err){ drawQrFallback(); }
-        else { $("mfaQr").innerHTML=""; $("mfaQr").appendChild(canvas); }
+    if(totp.uri && window.QRCode && typeof window.QRCode.toDataURL === "function"){
+      // Render at HIGH resolution (512px) then display smaller, so it stays razor
+      // sharp on high-DPI phone screens (drawing at display size and letting the
+      // screen upscale it is what made it look blocky / "like Paint").
+      window.QRCode.toDataURL(totp.uri, { width: 512, margin: 2, errorCorrectionLevel: "M",
+        color: { dark: "#000000", light: "#ffffff" } }, function(err, url){
+        if(err || !url){ drawQrFallback(); }
+        else { $("mfaQr").innerHTML = '<img alt="Two-factor QR code" style="width:210px;height:210px;background:#fff;padding:12px;border-radius:12px;display:block" src="'+url+'">'; }
       });
     } else {
       drawQrFallback();
