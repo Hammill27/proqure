@@ -4636,6 +4636,20 @@ ${settings.company||""}`;
   const [notifTab, setNotifTab]     = useState("all");
   // Close the notifications drawer whenever the user navigates to another page.
   useEffect(() => { setNotifOpen(false); }, [view]);
+  // Measure the real bottom-nav height so the notifications drawer can stop exactly
+  // at its top edge on ANY device (varying safe-areas, font scaling, tablets) - rather
+  // than guessing with a hard-coded number that leaves a gap or an overlap.
+  const bottomNavRef = useRef(null);
+  const [bottomNavH, setBottomNavH] = useState(0);
+  useEffect(() => {
+    if (!isMobile) { setBottomNavH(0); return; }
+    const measure = () => { if (bottomNavRef.current) setBottomNavH(bottomNavRef.current.offsetHeight); };
+    measure();
+    const t = setTimeout(measure, 120); // re-measure once fonts/safe-areas settle
+    window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+    return () => { clearTimeout(t); window.removeEventListener("resize", measure); window.removeEventListener("orientationchange", measure); };
+  }, [isMobile]);
 
   const notifInWindow = (a) => {
     const now = Date.now();
@@ -4883,8 +4897,8 @@ ${settings.company||""}`;
     const groups = ["Announcements","Subscription & Usage","Activity"];
     return (
       <>
-        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", top:0, left:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
-        <div style={{ position:"fixed", top:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, width:isMobile?"min(380px,100vw)":380, background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)", zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box", transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)", pointerEvents:notifOpen?"auto":"none" }}>
+        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", top:0, left:0, right:0, bottom:isMobile?bottomNavH:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
+        <div style={{ position:"fixed", top:0, right:0, bottom:isMobile?bottomNavH:0, width:isMobile?"min(380px,100vw)":380, background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)", zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box", transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)", pointerEvents:notifOpen?"auto":"none" }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
             <button onClick={() => setNotifView("list")} aria-label="Back" style={{ border:"none", background:"transparent", cursor:"pointer", color:"var(--text-secondary)", fontSize:18, lineHeight:1, padding:0 }}>&larr;</button>
             <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Email preferences</span>
@@ -4929,8 +4943,8 @@ ${settings.company||""}`;
     if (notifView === "prefs") return renderNotifPrefsPanel();
     return (
       <>
-        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", top:0, left:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
-        <div style={{ position:"fixed", top:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, width:isMobile?"min(380px,100vw)":380,
+        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", top:0, left:0, right:0, bottom:isMobile?bottomNavH:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
+        <div style={{ position:"fixed", top:0, right:0, bottom:isMobile?bottomNavH:0, width:isMobile?"min(380px,100vw)":380,
           background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)",
           zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box",
           transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)",
@@ -9292,7 +9306,7 @@ Rules:
 
       {/* Mobile bottom bar */}
       {isMobile&&(
-        <div style={{position:"fixed",bottom:0,left:0,right:0,height:"auto",minHeight:68,paddingBottom:"env(safe-area-inset-bottom)",background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
+        <div ref={bottomNavRef} style={{position:"fixed",bottom:0,left:0,right:0,height:"auto",minHeight:68,paddingBottom:"env(safe-area-inset-bottom)",background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
           {[
             {id:"dashboard",label:"Home",    d:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"},
             {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
