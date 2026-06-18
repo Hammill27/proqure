@@ -4883,8 +4883,8 @@ ${settings.company||""}`;
     const groups = ["Announcements","Subscription & Usage","Activity"];
     return (
       <>
-        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
-        <div style={{ position:"fixed", top:0, right:0, height:"100dvh", width:isMobile?"min(380px,100vw)":380, background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)", zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box", transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)", pointerEvents:notifOpen?"auto":"none" }}>
+        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", top:0, left:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
+        <div style={{ position:"fixed", top:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, width:isMobile?"min(380px,100vw)":380, background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)", zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box", transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)", pointerEvents:notifOpen?"auto":"none" }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 14px", borderBottom:"1px solid var(--border)" }}>
             <button onClick={() => setNotifView("list")} aria-label="Back" style={{ border:"none", background:"transparent", cursor:"pointer", color:"var(--text-secondary)", fontSize:18, lineHeight:1, padding:0 }}>&larr;</button>
             <span style={{ fontWeight:800, fontSize:15, color:"var(--text-primary)" }}>Email preferences</span>
@@ -4929,8 +4929,8 @@ ${settings.company||""}`;
     if (notifView === "prefs") return renderNotifPrefsPanel();
     return (
       <>
-        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
-        <div style={{ position:"fixed", top:0, right:0, height:"100dvh", width:isMobile?"min(380px,100vw)":380,
+        {notifOpen && isMobile && <div onClick={() => setNotifOpen(false)} style={{ position:"fixed", top:0, left:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, background:"rgba(0,0,0,0.5)", zIndex:998 }} />}
+        <div style={{ position:"fixed", top:0, right:0, bottom:isMobile?"calc(68px + env(safe-area-inset-bottom))":0, width:isMobile?"min(380px,100vw)":380,
           background:"var(--bg-card-solid)", borderLeft:"1px solid var(--border)", boxShadow:"var(--shadow-lg)",
           zIndex:999, display:"flex", flexDirection:"column", paddingTop:"env(safe-area-inset-top)", boxSizing:"border-box",
           transform:notifOpen?"translateX(0)":"translateX(100%)", transition:"transform .28s cubic-bezier(0.16,1,0.3,1)",
@@ -5399,7 +5399,7 @@ ${settings.company||""}`;
     if (need && roleRank(myRole) < need) { showToast("You don't have access to that section.","warn"); return; }
     const ni = navItems.find(i=>i.id===id);
     if (ni && ni.feature && !featureAccess[ni.feature]) { showToast("That feature isn't enabled for your account.","warn"); return; }
-    setView(id); setMoreMenuOpen(false); if(id==="new")resetNewRequest();
+    setView(id); setMoreMenuOpen(false); setNotifOpen(false); if(id==="new")resetNewRequest();
   };
   // Feature backstop: if the current view's feature gets disabled (e.g. an admin
   // override), bounce to the dashboard. Separate from the role backstop above so it
