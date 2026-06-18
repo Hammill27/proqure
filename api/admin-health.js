@@ -46,6 +46,41 @@ function readBody(req) {
   return req.body;
 }
 
+// --- Security audit + rate-limit (shared shape with admin-metrics) ------------
+const AUDIT_KEY = "piq_admin_audit";
+const SEC_AUDIT_UID = "platform-audit";
+const SEC_CAP = 2000;
+function clientIp(req) {
+  const xff = (req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return xff || req.headers["x-real-ip"] || null;
+}
+function clientUa(req) { return (req.headers["user-agent"] || "").slice(0, 300) || null; }
+async function writeSecurityEvent(svc, { email, action, detail, req }) {
+  try {
+    if (!svc) return;
+    const { data } = await svc.from("proqure_data")
+      .select("value").eq("user_id", SEC_AUDIT_UID).eq("store_key", AUDIT_KEY).maybeSingle();
+    const log = Array.isArray(data && data.value) ? data.value : [];
+    log.push({ ts: new Date().toISOString(), actor: (email || "").toLowerCase(), action,
+      target: null, detail: detail || null, ip: clientIp(req), ua: clientUa(req) });
+    await svc.from("proqure_data").upsert(
+      { user_id: SEC_AUDIT_UID, store_key: AUDIT_KEY, value: log.slice(-SEC_CAP), updated_at: new Date().toISOString() },
+      { onConflict: "user_id,store_key" });
+  } catch { /* never block on logging */ }
+}
+async function tooManyFailures(svc, req) {
+  try {
+    if (!svc) return false;
+    const ip = clientIp(req); if (!ip) return false;
+    const { data } = await svc.from("proqure_data")
+      .select("value").eq("user_id", SEC_AUDIT_UID).eq("store_key", AUDIT_KEY).maybeSingle();
+    const log = Array.isArray(data && data.value) ? data.value : [];
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    const fails = log.filter(e => e && e.ip === ip && /denied/i.test(e.action || "") && Date.parse(e.ts) >= cutoff).length;
+    return fails >= 10;
+  } catch { return false; } // fail open
+}
+
 // fetch with a hard timeout so a hanging provider can't hang the whole board.
 async function timedFetch(url, opts = {}, ms = 6000) {
   const ctrl = new AbortController();
@@ -274,7 +309,8 @@ const SERVICE_META = {
 };
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Origin", "https://app.proqure.co.uk");
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") { res.status(204).end(); return; }
@@ -285,6 +321,13 @@ export default async function handler(req, res) {
   }
   if (!ADMIN_EMAILS.length) {
     res.status(500).json({ error: "No admins configured. Set ADMIN_CONSOLE_EMAILS." });
+    return;
+  }
+
+  // Service-role client (for security logging / rate-limit bookkeeping).
+  const svc = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  if (await tooManyFailures(svc, req)) {
+    res.status(429).json({ error: "Too many attempts. Please try again later." });
     return;
   }
 
@@ -301,6 +344,7 @@ export default async function handler(req, res) {
   } catch { res.status(401).json({ error: "Could not verify session." }); return; }
   const callerEmail = (caller.email || "").toLowerCase();
   if (!ADMIN_EMAILS.includes(callerEmail)) {
+    await writeSecurityEvent(svc, { email: callerEmail, action: "health-DENIED", detail: "not on admin allow-list", req });
     res.status(403).json({ error: "This account is not authorised for the admin console." });
     return;
   }
