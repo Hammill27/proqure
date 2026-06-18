@@ -515,6 +515,7 @@
 <div class="cmdk-wrap" id="cmdk"><div class="cmdk"><input id="cmdkInput" placeholder="Search companies, people, sections&hellip;" autocomplete="off" spellcheck="false"><div class="cmdk-list" id="cmdkList"></div><div class="cmdk-hint"><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> navigate</span><span><kbd>&crarr;</kbd> open</span><span><kbd>esc</kbd> close</span></div></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script>
 /* ============================================================================
    CONFIG - paste your Supabase project's PUBLIC values (same as your app's
@@ -819,18 +820,35 @@ async function mfaDoEnroll(){
     const { data, error } = await sb.auth.mfa.enroll({ factorType:"totp", friendlyName:"ProQure Admin" });
     if(error){ $("mfaScanErr").textContent=error.message; $("mfaQr").innerHTML=""; return; }
     mfaFactorId = data.id;
-    // Supabase returns the QR as an SVG string (sometimes with an <?xml?> prefix).
-    // Inject from the first <svg so it always renders cleanly - never as an <img>.
-    const raw = ((data.totp && data.totp.qr_code) || "").trim();
-    const i = raw.indexOf("<svg");
-    if(i !== -1){
-      $("mfaQr").innerHTML = raw.slice(i);
-      const svg = $("mfaQr").querySelector("svg");
-      if(svg){ svg.style.width="190px"; svg.style.height="190px"; svg.style.background="#fff"; svg.style.padding="10px"; svg.style.borderRadius="10px"; svg.removeAttribute("width"); svg.removeAttribute("height"); }
-    } else if(raw.startsWith("data:")){
-      $("mfaQr").innerHTML = '<img alt="QR code" style="width:190px;height:190px;background:#fff;padding:10px;border-radius:10px" src="'+raw+'">';
-    } else { $("mfaQr").innerHTML=""; }
-    $("mfaSecret").textContent = (data.totp && data.totp.secret) || "";
+    const totp = data.totp || {};
+    // Render a CRISP, scannable QR ourselves from the otpauth URI. Resizing
+    // Supabase's pre-rendered SVG can leave soft edges that stricter scanners
+    // (e.g. Microsoft Authenticator) won't lock onto. We draw it sharp at a fixed
+    // pixel size with a proper quiet-zone margin. Falls back to the SVG only if
+    // the QR library didn't load.
+    const drawQrFallback = () => {
+      const raw = (totp.qr_code || "").trim();
+      const i = raw.indexOf("<svg");
+      if(i !== -1){
+        $("mfaQr").innerHTML = raw.slice(i);
+        const svg = $("mfaQr").querySelector("svg");
+        if(svg){ svg.setAttribute("shape-rendering","crispEdges"); svg.style.width="200px"; svg.style.height="200px"; svg.style.background="#fff"; svg.style.padding="10px"; svg.style.borderRadius="10px"; svg.removeAttribute("width"); svg.removeAttribute("height"); }
+      } else if(raw.startsWith("data:")){
+        $("mfaQr").innerHTML = '<img alt="QR code" style="width:200px;height:200px;background:#fff;padding:10px;border-radius:10px" src="'+raw+'">';
+      } else { $("mfaQr").innerHTML=""; }
+    };
+    if(totp.uri && window.QRCode && typeof window.QRCode.toCanvas === "function"){
+      const canvas = document.createElement("canvas");
+      canvas.style.cssText = "width:200px;height:200px;background:#fff;padding:10px;border-radius:10px";
+      window.QRCode.toCanvas(canvas, totp.uri, { width: 200, margin: 2, errorCorrectionLevel: "M",
+        color: { dark: "#000000", light: "#ffffff" } }, function(err){
+        if(err){ drawQrFallback(); }
+        else { $("mfaQr").innerHTML=""; $("mfaQr").appendChild(canvas); }
+      });
+    } else {
+      drawQrFallback();
+    }
+    $("mfaSecret").textContent = totp.secret || "";
   }catch(e){ $("mfaScanErr").textContent="Could not start enrolment. Try again."; $("mfaQr").innerHTML=""; }
 }
 async function verifyMfaEnrol(){
