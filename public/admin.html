@@ -446,14 +446,33 @@
     <span class="logo"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></span>
 
     <div id="mfaEnrol" style="display:none">
-      <h1>Set up two-factor</h1>
-      <p class="s">Scan this with an authenticator app (Google Authenticator, Authy, Microsoft Authenticator or 1Password), then enter the 6-digit code it shows.</p>
-      <div id="mfaQr" style="display:flex;justify-content:center;margin:16px 0;min-height:120px;align-items:center"></div>
-      <p class="s" style="font-size:12px">Can&rsquo;t scan? Enter this key manually:<br><b id="mfaSecret" style="font-family:var(--mono);font-size:12px;word-break:break-all"></b></p>
-      <div class="field"><input id="mfaEnrolCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"></div>
-      <button id="mfaEnrolBtn" class="btn btn-primary">Verify &amp; enable</button>
-      <div class="err" id="mfaEnrolErr"></div>
-      <button id="mfaEnrolCancel" class="btn btn-sm" style="margin-top:10px;background:transparent">Cancel &amp; sign out</button>
+      <div id="mfaStep1">
+        <h1>Set up two-factor</h1>
+        <p class="s">Add an extra layer of security to the admin console. Each time you sign in, you&rsquo;ll enter a 6-digit code from an authenticator app.</p>
+        <p class="s" style="font-size:12px;margin-top:10px">You&rsquo;ll need an app such as Google Authenticator, Microsoft Authenticator, Authy or 1Password installed on your phone.</p>
+        <button id="mfaStartBtn" class="btn btn-primary" style="margin-top:6px">Get started</button>
+        <div class="err" id="mfaIntroErr"></div>
+        <button id="mfaIntroCancel" class="btn btn-sm" style="margin-top:10px;background:transparent">Cancel &amp; sign out</button>
+      </div>
+
+      <div id="mfaStep2" style="display:none">
+        <h1>Scan the code</h1>
+        <p class="s">Open your authenticator app and scan this QR code.</p>
+        <div id="mfaQr" style="display:flex;justify-content:center;margin:16px 0;min-height:170px;align-items:center"></div>
+        <p class="s" style="font-size:12px">Can&rsquo;t scan? Enter this key manually:<br><b id="mfaSecret" style="font-family:var(--mono);font-size:12px;word-break:break-all"></b></p>
+        <button id="mfaScannedBtn" class="btn btn-primary">I&rsquo;ve scanned it</button>
+        <div class="err" id="mfaScanErr"></div>
+        <button id="mfaScanCancel" class="btn btn-sm" style="margin-top:10px;background:transparent">Cancel &amp; sign out</button>
+      </div>
+
+      <div id="mfaStep3" style="display:none">
+        <h1>Enter the code</h1>
+        <p class="s">Type the 6-digit code shown in your authenticator app to finish.</p>
+        <div class="field"><input id="mfaEnrolCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"></div>
+        <button id="mfaEnrolBtn" class="btn btn-primary">Verify &amp; enable</button>
+        <div class="err" id="mfaEnrolErr"></div>
+        <button id="mfaBackToScan" class="btn btn-sm" style="margin-top:10px;background:transparent">Back</button>
+      </div>
     </div>
 
     <div id="mfaChallenge" style="display:none">
@@ -777,25 +796,42 @@ async function gateMfa(){
   if(aal.nextLevel === "aal2"){ startMfaChallenge(); return; }
   startMfaEnrol();
 }
+function mfaShowStep(n){
+  $("mfaStep1").style.display = n===1?"block":"none";
+  $("mfaStep2").style.display = n===2?"block":"none";
+  $("mfaStep3").style.display = n===3?"block":"none";
+}
 async function startMfaEnrol(){
   showMfaScreen();
   $("mfaEnrol").style.display="block"; $("mfaChallenge").style.display="none";
-  $("mfaEnrolErr").textContent=""; $("mfaEnrolCode").value="";
+  $("mfaIntroErr").textContent=""; $("mfaScanErr").textContent=""; $("mfaEnrolErr").textContent=""; $("mfaEnrolCode").value="";
+  mfaShowStep(1);
+}
+async function mfaDoEnroll(){
+  $("mfaIntroErr").textContent=""; $("mfaScanErr").textContent="";
   $("mfaQr").innerHTML='<span class="spin"></span>'; $("mfaSecret").textContent="";
+  mfaShowStep(2);
   try{
     // Clear any half-finished (unverified) factor from a previous attempt.
     try{ const { data: fl } = await sb.auth.mfa.listFactors();
       if(fl && fl.all){ for(const f of fl.all){ if(f.status!=="verified"){ try{ await sb.auth.mfa.unenroll({ factorId:f.id }); }catch(e){} } } }
     }catch(e){}
     const { data, error } = await sb.auth.mfa.enroll({ factorType:"totp", friendlyName:"ProQure Admin" });
-    if(error){ $("mfaEnrolErr").textContent=error.message; $("mfaQr").innerHTML=""; return; }
+    if(error){ $("mfaScanErr").textContent=error.message; $("mfaQr").innerHTML=""; return; }
     mfaFactorId = data.id;
-    const qr = (data.totp && data.totp.qr_code) || "";
-    if(qr.trim().startsWith("<svg")) $("mfaQr").innerHTML = qr;
-    else $("mfaQr").innerHTML = '<img alt="QR code" style="width:180px;height:180px;background:#fff;padding:8px;border-radius:10px" src="'+qr+'">';
+    // Supabase returns the QR as an SVG string (sometimes with an <?xml?> prefix).
+    // Inject from the first <svg so it always renders cleanly - never as an <img>.
+    const raw = ((data.totp && data.totp.qr_code) || "").trim();
+    const i = raw.indexOf("<svg");
+    if(i !== -1){
+      $("mfaQr").innerHTML = raw.slice(i);
+      const svg = $("mfaQr").querySelector("svg");
+      if(svg){ svg.style.width="190px"; svg.style.height="190px"; svg.style.background="#fff"; svg.style.padding="10px"; svg.style.borderRadius="10px"; svg.removeAttribute("width"); svg.removeAttribute("height"); }
+    } else if(raw.startsWith("data:")){
+      $("mfaQr").innerHTML = '<img alt="QR code" style="width:190px;height:190px;background:#fff;padding:10px;border-radius:10px" src="'+raw+'">';
+    } else { $("mfaQr").innerHTML=""; }
     $("mfaSecret").textContent = (data.totp && data.totp.secret) || "";
-    setTimeout(()=>$("mfaEnrolCode").focus(),60);
-  }catch(e){ $("mfaEnrolErr").textContent="Could not start enrolment. Try again."; $("mfaQr").innerHTML=""; }
+  }catch(e){ $("mfaScanErr").textContent="Could not start enrolment. Try again."; $("mfaQr").innerHTML=""; }
 }
 async function verifyMfaEnrol(){
   const code=($("mfaEnrolCode").value||"").trim(); $("mfaEnrolErr").textContent="";
@@ -837,12 +873,16 @@ async function verifyMfaChallenge(){
   $("mfaBtn").disabled=false; $("mfaBtn").textContent="Verify";
 }
 async function mfaCancel(){ try{ await sb.auth.signOut(); }catch(e){} session=null; $("mfa").style.display="none"; $("login").style.display="flex"; const p=$("liPass"); if(p) p.value=""; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },60); }
+$("mfaStartBtn").addEventListener("click", mfaDoEnroll);
+$("mfaScannedBtn").addEventListener("click", ()=>{ mfaShowStep(3); setTimeout(()=>$("mfaEnrolCode").focus(),60); });
+$("mfaBackToScan").addEventListener("click", ()=>mfaShowStep(2));
+$("mfaIntroCancel").addEventListener("click", mfaCancel);
+$("mfaScanCancel").addEventListener("click", mfaCancel);
 $("mfaEnrolBtn").addEventListener("click", verifyMfaEnrol);
 $("mfaEnrolCode").addEventListener("keydown", e=>{ if(e.key==="Enter") verifyMfaEnrol(); });
 $("mfaBtn").addEventListener("click", verifyMfaChallenge);
 $("mfaCode").addEventListener("keydown", e=>{ if(e.key==="Enter") verifyMfaChallenge(); });
 $("mfaSignout").addEventListener("click", mfaCancel);
-$("mfaEnrolCancel").addEventListener("click", mfaCancel);
 
 function showApp(){ $("gate").style.display="none"; $("login").style.display="none"; $("mfa").style.display="none"; $("app").style.display="block"; $("whoami").textContent=(session.user&&session.user.email)||""; loadData(); }
 
