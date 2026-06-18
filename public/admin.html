@@ -821,27 +821,32 @@ async function mfaDoEnroll(){
     if(error){ $("mfaScanErr").textContent=error.message; $("mfaQr").innerHTML=""; return; }
     mfaFactorId = data.id;
     const totp = data.totp || {};
-    // Render a CRISP, scannable QR ourselves from the otpauth URI. Resizing
-    // Supabase's pre-rendered SVG can leave soft edges that stricter scanners
-    // (e.g. Microsoft Authenticator) won't lock onto. We draw it sharp at a fixed
-    // pixel size with a proper quiet-zone margin. Falls back to the SVG only if
-    // the QR library didn't load.
+    const secret = totp.secret || "";
+    // Build a CLEAN, SHORT, standard otpauth URI from the secret. Supabase's own
+    // QR embeds a long issuer string, producing a very dense code that fussy
+    // scanners (Microsoft Authenticator) struggle to lock onto. A short URI =
+    // fewer, bigger squares = instant scan. Supabase verifies with the universal
+    // TOTP defaults (SHA1 / 6 digits / 30s) so the codes still match.
+    const acct = (session && session.user && session.user.email) || "admin";
+    const otpuri = secret
+      ? ("otpauth://totp/" + encodeURIComponent("ProQure") + ":" + encodeURIComponent(acct) +
+         "?secret=" + secret + "&issuer=" + encodeURIComponent("ProQure") + "&algorithm=SHA1&digits=6&period=30")
+      : (totp.uri || "");
     const drawQrFallback = () => {
       const raw = (totp.qr_code || "").trim();
       const i = raw.indexOf("<svg");
       if(i !== -1){
         $("mfaQr").innerHTML = raw.slice(i);
         const svg = $("mfaQr").querySelector("svg");
-        if(svg){ svg.setAttribute("shape-rendering","crispEdges"); svg.style.width="200px"; svg.style.height="200px"; svg.style.background="#fff"; svg.style.padding="10px"; svg.style.borderRadius="10px"; svg.removeAttribute("width"); svg.removeAttribute("height"); }
+        if(svg){ svg.setAttribute("shape-rendering","crispEdges"); svg.style.width="210px"; svg.style.height="210px"; svg.style.background="#fff"; svg.style.padding="12px"; svg.style.borderRadius="12px"; svg.removeAttribute("width"); svg.removeAttribute("height"); }
       } else if(raw.startsWith("data:")){
-        $("mfaQr").innerHTML = '<img alt="QR code" style="width:200px;height:200px;background:#fff;padding:10px;border-radius:10px" src="'+raw+'">';
+        $("mfaQr").innerHTML = '<img alt="QR code" style="width:210px;height:210px;background:#fff;padding:12px;border-radius:12px" src="'+raw+'">';
       } else { $("mfaQr").innerHTML=""; }
     };
-    if(totp.uri && window.QRCode && typeof window.QRCode.toDataURL === "function"){
+    if(otpuri && window.QRCode && typeof window.QRCode.toDataURL === "function"){
       // Render at HIGH resolution (512px) then display smaller, so it stays razor
-      // sharp on high-DPI phone screens (drawing at display size and letting the
-      // screen upscale it is what made it look blocky / "like Paint").
-      window.QRCode.toDataURL(totp.uri, { width: 512, margin: 2, errorCorrectionLevel: "M",
+      // sharp on high-DPI phone screens.
+      window.QRCode.toDataURL(otpuri, { width: 512, margin: 2, errorCorrectionLevel: "M",
         color: { dark: "#000000", light: "#ffffff" } }, function(err, url){
         if(err || !url){ drawQrFallback(); }
         else { $("mfaQr").innerHTML = '<img alt="Two-factor QR code" style="width:210px;height:210px;background:#fff;padding:12px;border-radius:12px;display:block" src="'+url+'">'; }
@@ -849,7 +854,7 @@ async function mfaDoEnroll(){
     } else {
       drawQrFallback();
     }
-    $("mfaSecret").textContent = totp.secret || "";
+    $("mfaSecret").textContent = secret;
   }catch(e){ $("mfaScanErr").textContent="Could not start enrolment. Try again."; $("mfaQr").innerHTML=""; }
 }
 async function verifyMfaEnrol(){
