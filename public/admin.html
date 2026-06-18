@@ -417,18 +417,7 @@
 </head>
 <body>
 
-<div id="gate">
-  <div class="auth-card">
-    <span class="logo"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></span>
-    <h1>Restricted area</h1>
-    <p class="s">Enter the admin access code to continue.</p>
-    <div class="field"><input id="gateInput" type="password" placeholder="Access code" autocomplete="off" aria-label="Access code"></div>
-    <button id="gateBtn" class="btn btn-primary">Continue</button>
-    <div class="err" id="gateErr"></div>
-  </div>
-</div>
-
-<div id="login" style="display:none">
+<div id="login">
   <div class="auth-card">
     <span class="logo"><span class="logo-tile"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="3" height="14" rx="1.5" fill="#fff"/><rect x="6" y="3" width="8" height="3" rx="1.5" fill="#fff"/><rect x="14" y="3" width="3" height="8" rx="1.5" fill="#fff"/><rect x="6" y="10" width="8" height="3" rx="1.5" fill="#fff"/><circle cx="16.5" cy="15.5" r="2" fill="#fff"/></svg></span><span class="wordmark">Pro<span>Qure</span></span><span class="tag">Admin</span></span>
     <h1>Admin console</h1>
@@ -526,7 +515,6 @@
 const SUPABASE_URL = "https://pjltclnrjuvqqcxowamw.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_V8TuiFK-dvUeVFATxQ6YmQ_9SiYCJc8";
 const API_BASE = "";
-const ADMIN_GATE_CODE = "PQAD-9X4K-7M2R-VB6E";   // change to your own code
 const USD_TO_GBP = 0.75;   // keep in sync with the app + /api/ai
 const TRIAL_DAYS = 14;   // free-trial length; used to estimate days-left when Stripe trialEndsAt is not supplied
 const STRIPE_DASH = "https://dashboard.stripe.com/test";   // drop "/test" at go-live   // OpenRouter bills in USD; AI spend is shown in £ at this rate. Update when it drifts.
@@ -747,27 +735,18 @@ window.openUser=openUser;
 
 function configOk(){ return SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length>20; }
 async function init(){
-  if(!configOk()){ $("gate").style.display="none"; $("login").style.display="flex"; $("cfgWarn").style.display="block"; $("cfgWarn").textContent="Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file."; return; }
+  if(!configOk()){ $("login").style.display="flex"; $("cfgWarn").style.display="block"; $("cfgWarn").textContent="Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file."; return; }
   // persistSession:false => the console never silently resumes a saved login.
-  // Every time it's opened the flow is enforced: access code -> email & password
-  // -> MFA. autoRefreshToken stays on so a token won't expire mid-session while in use.
+  // Every time it's opened the flow is enforced: email & password -> MFA.
+  // autoRefreshToken stays on so a token won't expire mid-session while in use.
   try{ sb = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{storageKey:"pq-admin-auth",persistSession:false,autoRefreshToken:true,detectSessionInUrl:false}}); }
-  catch(e){ if(gatePassed){ $("gate").style.display="none"; $("login").style.display="flex"; } return; }
+  catch(e){ $("login").style.display="flex"; return; }
   let s=null;
   try{ const { data } = await sb.auth.getSession(); s=(data&&data.session)||null; }catch(e){}
   session=s;
-  if(session){ if(gatePassed) gateMfa(); }
-  else if(gatePassed){ $("gate").style.display="none"; $("login").style.display="flex"; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },80); }
+  if(session){ gateMfa(); }
+  else { $("login").style.display="flex"; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },80); }
 }
-let gatePassed=false; try{ gatePassed=sessionStorage.getItem("pq_admin_gate")==="1"; }catch(e){}
-(function gate(){
-  const g=$("gate"),inp=$("gateInput"),btn=$("gateBtn"),err=$("gateErr");
-  if(gatePassed){ g.style.display="none"; $("login").style.display="flex"; }
-  else { document.body.classList.add("locked"); setTimeout(()=>inp&&inp.focus(),150); }
-  function pass(){ gatePassed=true; try{sessionStorage.setItem("pq_admin_gate","1");}catch(e){} g.style.display="none"; document.body.classList.remove("locked"); if(session) gateMfa(); else { $("login").style.display="flex"; setTimeout(()=>$("liEmail").focus(),100); } }
-  function tryCode(){ if((inp.value||"").trim().toLowerCase()===ADMIN_GATE_CODE.toLowerCase()) pass(); else { err.textContent="That code isn\u2019t right."; const c=g.querySelector(".auth-card"); c.classList.add("gate-shake"); setTimeout(()=>c.classList.remove("gate-shake"),420); inp.select(); } }
-  btn.addEventListener("click",tryCode); inp.addEventListener("keydown",e=>{ if(e.key==="Enter") tryCode(); });
-})();
 
 $("liBtn").addEventListener("click",login); $("liPass").addEventListener("keydown",e=>{ if(e.key==="Enter") login(); });
 async function login(){
@@ -778,7 +757,7 @@ async function login(){
   catch(e){ $("liErr").textContent="Could not sign in. Please try again."; }
   $("liBtn").disabled=false; $("liBtn").textContent="Sign in";
 }
-$("signoutBtn").addEventListener("click",async()=>{ try{ await sb.auth.signOut(); }catch(e){} session=null; $("app").style.display="none"; $("gate").style.display="none"; $("login").style.display="flex"; const p=$("liPass"); if(p) p.value=""; const er=$("liErr"); if(er) er.textContent=""; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },60); });
+$("signoutBtn").addEventListener("click",async()=>{ try{ await sb.auth.signOut(); }catch(e){} session=null; $("app").style.display="none"; $("login").style.display="flex"; const p=$("liPass"); if(p) p.value=""; const er=$("liErr"); if(er) er.textContent=""; setTimeout(()=>{ const e=$("liEmail"); if(e) e.focus(); },60); });
 $("refreshBtn").addEventListener("click",()=>loadData());
 
 // --- Two-factor (TOTP) -------------------------------------------------------
@@ -790,7 +769,7 @@ $("refreshBtn").addEventListener("click",()=>loadData());
 // can never lock the admin out; the server-side check (added later) is what makes
 // MFA unbypassable.
 let mfaFactorId = null;
-function showMfaScreen(){ $("gate").style.display="none"; $("login").style.display="none"; $("mfa").style.display="flex"; }
+function showMfaScreen(){ $("login").style.display="none"; $("mfa").style.display="flex"; }
 async function gateMfa(){
   let aal = null;
   try { const { data } = await sb.auth.mfa.getAuthenticatorAssuranceLevel(); aal = data; }
@@ -906,7 +885,7 @@ $("mfaBtn").addEventListener("click", verifyMfaChallenge);
 $("mfaCode").addEventListener("keydown", e=>{ if(e.key==="Enter") verifyMfaChallenge(); });
 $("mfaSignout").addEventListener("click", mfaCancel);
 
-function showApp(){ $("gate").style.display="none"; $("login").style.display="none"; $("mfa").style.display="none"; $("app").style.display="block"; $("whoami").textContent=(session.user&&session.user.email)||""; loadData(); }
+function showApp(){ $("login").style.display="none"; $("mfa").style.display="none"; $("app").style.display="block"; $("whoami").textContent=(session.user&&session.user.email)||""; loadData(); }
 
 async function api(action,payload){
   const url=API_BASE+"/api/admin-metrics"+(action==="summary"?"?action=summary":"");
