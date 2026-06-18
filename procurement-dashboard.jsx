@@ -10624,12 +10624,143 @@ function SetPassword({ onDone }) {
   </div></div>);
 }
 
+// --- In-app two-factor for Managers & Buyers (Option A: enforced at login) ----
+// Engineers never see this. Mirrors the admin console: enrol (QR) the first time,
+// then a 6-digit challenge on each fresh sign-in. UI only in this phase - the
+// server-side aal2 enforcement is added separately so there is no lockout window.
+function AppMfaScreen({ session, onDone }) {
+  const [mode, setMode] = useState("loading"); // loading|enrolIntro|enrolScan|enrolCode|challenge
+  const [factorId, setFactorId] = useState(null);
+  const [secret, setSecret] = useState("");
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const qrRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (!active) return;
+        if (data && data.nextLevel === "aal2" && data.currentLevel !== "aal2") {
+          try { const { data: f } = await supabase.auth.mfa.listFactors(); const t = f && f.totp && f.totp[0]; setFactorId(t ? t.id : null); } catch (e) {}
+          setMode("challenge");
+        } else { setMode("enrolIntro"); }
+      } catch (e) { if (active) setMode("enrolIntro"); }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  function renderQr(sec) {
+    try {
+      const acct = (session && session.user && session.user.email) || "user";
+      const uri = "otpauth://totp/" + encodeURIComponent("ProQure") + ":" + encodeURIComponent(acct) +
+        "?secret=" + sec + "&issuer=" + encodeURIComponent("ProQure") + "&algorithm=SHA1&digits=6&period=30";
+      if (qrRef.current && window.qrcode) {
+        const qr = window.qrcode(0, "M"); qr.addData(uri); qr.make();
+        qrRef.current.innerHTML = '<img alt="Two-factor QR code" style="width:200px;height:200px;display:block;background:#fff;padding:10px;border-radius:10px;border:1px solid #E2E0D9" src="' + qr.createDataURL(8, 4) + '">';
+      }
+    } catch (e) {}
+  }
+
+  async function startEnroll() {
+    setErr(""); setBusy(true);
+    try {
+      try { const { data: fl } = await supabase.auth.mfa.listFactors(); if (fl && fl.all) for (const f of fl.all) if (f.status !== "verified") { try { await supabase.auth.mfa.unenroll({ factorId: f.id }); } catch (e) {} } } catch (e) {}
+      const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName: "ProQure" });
+      if (error) { setErr(error.message); setBusy(false); return; }
+      const totp = data.totp || {};
+      setFactorId(data.id); setSecret(totp.secret || ""); setMode("enrolScan"); setBusy(false);
+      setTimeout(() => renderQr(totp.secret || ""), 40);
+    } catch (e) { setErr("Could not start setup. Please try again."); setBusy(false); }
+  }
+
+  async function verifyCode() {
+    const c = (code || "").trim();
+    if (c.length < 6) { setErr("Enter the 6-digit code."); return; }
+    if (!factorId) { setErr("Setup expired - go back and try again."); return; }
+    setBusy(true); setErr("");
+    try {
+      const ch = await supabase.auth.mfa.challenge({ factorId });
+      if (ch.error) { setErr(ch.error.message); setBusy(false); return; }
+      const v = await supabase.auth.mfa.verify({ factorId, challengeId: ch.data.id, code: c });
+      if (v.error) { setErr(v.error.message); setBusy(false); return; }
+      onDone();
+    } catch (e) { setErr("Verification failed. Check the code and try again."); setBusy(false); }
+  }
+
+  async function signOut() { try { await supabase.auth.signOut(); } catch (e) {} }
+
+  const wrap = { position: "fixed", inset: 0, minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(150deg,#0E1512,#101013 55%,#15211b)", fontFamily: "'Plus Jakarta Sans',sans-serif", padding: 20 };
+  const card = { background: "#fff", borderRadius: 18, padding: "34px 30px", width: "100%", maxWidth: 400, boxShadow: "0 24px 60px rgba(0,0,0,0.4)" };
+  const inp = { width: "100%", boxSizing: "border-box", padding: "12px 14px", border: "1px solid #E2E0D9", borderRadius: 10, fontSize: 18, letterSpacing: "0.3em", textAlign: "center", marginBottom: 12, outline: "none" };
+  const primaryBtn = { width: "100%", padding: "12px", background: "linear-gradient(135deg,#1E9E63,#15824F)", color: "#fff", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1 };
+  const linkBtn = { width: "100%", marginTop: 12, padding: "8px", background: "transparent", color: "#5C5B54", border: "none", fontSize: 13, cursor: "pointer" };
+  const h = { fontSize: 19, fontWeight: 800, color: "#101013", marginBottom: 6 };
+  const sub = { fontSize: 13.5, color: "#5C5B54", marginBottom: 18, lineHeight: 1.55 };
+  const errBox = err ? <div style={{ fontSize: 12.5, color: "#C0392B", marginTop: 10 }}>{err}</div> : null;
+  const Logo = (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+      <div style={{ width: 40, height: 40, background: "linear-gradient(135deg,#1E9E63,#15824F)", borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h10M4 17h7" /></svg>
+      </div>
+      <span style={{ fontSize: 22, fontWeight: 800, color: "#101013", letterSpacing: "-0.02em" }}>Pro<span style={{ color: "#15824F" }}>Qure</span></span>
+    </div>
+  );
+
+  let body;
+  if (mode === "loading") {
+    body = <div style={sub}>Checking your security settings...</div>;
+  } else if (mode === "enrolIntro") {
+    body = (<>
+      <div style={h}>Set up two-factor</div>
+      <div style={sub}>Your role can see pricing and manage your team, so ProQure asks managers and buyers to add a second step at sign-in. It takes about a minute with an authenticator app (Google Authenticator, Microsoft Authenticator, Authy or 1Password).</div>
+      <button onClick={startEnroll} disabled={busy} style={primaryBtn}>{busy ? "Starting..." : "Get started"}</button>
+      {errBox}
+      <button onClick={signOut} style={linkBtn}>Sign out</button>
+    </>);
+  } else if (mode === "enrolScan") {
+    body = (<>
+      <div style={h}>Scan the code</div>
+      <div style={sub}>Open your authenticator app, add an account, and scan this QR code.</div>
+      <div ref={qrRef} style={{ display: "flex", justifyContent: "center", margin: "4px 0 14px", minHeight: 200, alignItems: "center" }} />
+      <div style={{ fontSize: 12, color: "#5C5B54", marginBottom: 16, wordBreak: "break-all", textAlign: "center" }}>Can&rsquo;t scan? Enter this key manually:<br /><b style={{ fontFamily: "monospace", fontSize: 12.5 }}>{secret}</b></div>
+      <button onClick={() => { setErr(""); setCode(""); setMode("enrolCode"); }} style={primaryBtn}>I&rsquo;ve scanned it &ndash; continue</button>
+      {errBox}
+      <button onClick={signOut} style={linkBtn}>Sign out</button>
+    </>);
+  } else if (mode === "enrolCode") {
+    body = (<>
+      <div style={h}>Enter your code</div>
+      <div style={sub}>Type the 6-digit code shown in your authenticator app to finish turning on two-factor.</div>
+      <input style={inp} value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={e => { if (e.key === "Enter") verifyCode(); }} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" autoFocus />
+      <button onClick={verifyCode} disabled={busy} style={primaryBtn}>{busy ? "Verifying..." : "Verify & enable"}</button>
+      {errBox}
+      <button onClick={() => { setErr(""); setMode("enrolScan"); setTimeout(() => renderQr(secret), 40); }} style={linkBtn}>Back</button>
+    </>);
+  } else { // challenge
+    body = (<>
+      <div style={h}>Two-factor</div>
+      <div style={sub}>Enter the 6-digit code from your authenticator app.</div>
+      <input style={inp} value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={e => { if (e.key === "Enter") verifyCode(); }} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" autoFocus />
+      <button onClick={verifyCode} disabled={busy} style={primaryBtn}>{busy ? "Verifying..." : "Verify"}</button>
+      {errBox}
+      <button onClick={signOut} style={linkBtn}>Sign out</button>
+    </>);
+  }
+
+  return <div style={wrap}><div style={card}>{Logo}{body}</div></div>;
+}
+
 function AppInner() {
   const [session, setSession] = useState(null);
   const [companyId, setCompanyId] = useState(null);
   const [needPassword, setNeedPassword] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
+  const [mfaRole, setMfaRole] = useState(null);   // role resolved for MFA gating ("_unknown" if resolve failed)
+  const [mfaGate, setMfaGate] = useState("checking"); // checking | pass | need
   const [gateOk, setGateOk] = useState(() => {
     if (!SITE_GATE_PASSWORD) return true;
     // Trial signups (from the website) and anyone on a real auth link skip the gate,
@@ -10679,6 +10810,7 @@ function AppInner() {
       (async () => {
         const co = await resolveCompany(session);
         const resolved = !!(co && co.companyId);
+        if (active) setMfaRole(co && co.role ? co.role : "_unknown");
         const scope = (co && co.companyId) || session.user.id; // fallback: per-user scope
         // Account-aware reset: if the data cached in THIS browser belongs to a different
         // account/company, clear it before loading - so we never display, or push up,
@@ -10698,10 +10830,30 @@ function AppInner() {
         if (active) setReady(true);
       })();
     } else {
-      setReady(false); setCompanyId(null);
+      setReady(false); setCompanyId(null); setMfaRole(null);
     }
     return () => { active = false; };
   }, [session]);
+
+  // Decide whether this session must clear two-factor before reaching the app.
+  // Only Managers/Buyers are gated; engineers always pass. Fails OPEN if we can't
+  // resolve the role or check the level (e.g. offline) so nobody is ever locked out.
+  useEffect(() => {
+    let active = true;
+    if (!session?.user?.id) { setMfaGate("pass"); return; }
+    if (mfaRole === null) { setMfaGate("checking"); return; }      // role still resolving
+    const required = (mfaRole === "manager" || mfaRole === "buyer" || mfaRole === "owner");
+    if (!required) { setMfaGate("pass"); return; }                  // engineers + unknown/offline
+    setMfaGate("checking");
+    (async () => {
+      try {
+        const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (!active) return;
+        setMfaGate(data && data.currentLevel === "aal2" ? "pass" : "need");
+      } catch (e) { if (active) setMfaGate("pass"); }
+    })();
+    return () => { active = false; };
+  }, [session, mfaRole]);
 
   const loadStyle = {position:"fixed",inset:0,minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)",color:"rgba(255,255,255,0.85)",fontFamily:"'Plus Jakarta Sans',sans-serif",fontSize:14};
   if (!gateOk) {
@@ -10714,6 +10866,12 @@ function AppInner() {
   if (needPassword) return <SetPassword onDone={() => { setNeedPassword(false); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} }} />;
   if (!ready) {
     return <div style={loadStyle}>Syncing your data...</div>;
+  }
+  if (mfaGate === "checking") {
+    return <div style={loadStyle}>Checking security...</div>;
+  }
+  if (mfaGate === "need") {
+    return <AppMfaScreen session={session} onDone={() => setMfaGate("pass")} />;
   }
   return <ProQureApp session={session} companyId={companyId} />;
 }
