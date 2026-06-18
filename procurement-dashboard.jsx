@@ -4651,6 +4651,28 @@ ${settings.company||""}`;
     return () => { clearTimeout(t); window.removeEventListener("resize", measure); window.removeEventListener("orientationchange", measure); };
   }, [isMobile]);
 
+  // Detect when the on-screen keyboard is open so we can hide the bottom nav while
+  // typing - otherwise iOS's keyboard accessory bar (the up/down/tick toolbar) collides
+  // with our fixed nav. Uses the visualViewport (reliable across devices); falls back to
+  // focus tracking where it isn't available.
+  const [kbOpen, setKbOpen] = useState(false);
+  useEffect(() => {
+    if (!isMobile) { setKbOpen(false); return; }
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (vv) {
+      const onResize = () => setKbOpen((window.innerHeight - vv.height) > 150);
+      vv.addEventListener("resize", onResize);
+      onResize();
+      return () => vv.removeEventListener("resize", onResize);
+    }
+    const isField = (el) => !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    const onIn = (e) => { if (isField(e.target)) setKbOpen(true); };
+    const onOut = () => setTimeout(() => { if (!isField(document.activeElement)) setKbOpen(false); }, 60);
+    document.addEventListener("focusin", onIn);
+    document.addEventListener("focusout", onOut);
+    return () => { document.removeEventListener("focusin", onIn); document.removeEventListener("focusout", onOut); };
+  }, [isMobile]);
+
   const notifInWindow = (a) => {
     const now = Date.now();
     if (a.starts_at && new Date(a.starts_at).getTime() > now) return false;
@@ -9309,7 +9331,7 @@ Rules:
 
       {/* Mobile bottom bar */}
       {isMobile&&(
-        <div ref={bottomNavRef} style={{position:"fixed",bottom:0,left:0,right:0,height:"auto",minHeight:68,paddingBottom:"env(safe-area-inset-bottom)",background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
+        <div ref={bottomNavRef} style={{position:"fixed",bottom:0,left:0,right:0,height:"auto",minHeight:68,paddingBottom:"env(safe-area-inset-bottom)",background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:kbOpen?"none":"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
           {[
             {id:"dashboard",label:"Home",    d:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"},
             {id:"new",      label:"Request", d:"M12 5v14M5 12h14"},
