@@ -515,7 +515,7 @@
 <div class="cmdk-wrap" id="cmdk"><div class="cmdk"><input id="cmdkInput" placeholder="Search companies, people, sections&hellip;" autocomplete="off" spellcheck="false"><div class="cmdk-list" id="cmdkList"></div><div class="cmdk-hint"><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> navigate</span><span><kbd>&crarr;</kbd> open</span><span><kbd>esc</kbd> close</span></div></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
 /* ============================================================================
    CONFIG - paste your Supabase project's PUBLIC values (same as your app's
@@ -822,38 +822,33 @@ async function mfaDoEnroll(){
     mfaFactorId = data.id;
     const totp = data.totp || {};
     const secret = totp.secret || "";
-    // Build a CLEAN, SHORT, standard otpauth URI from the secret. Supabase's own
-    // QR embeds a long issuer string, producing a very dense code that fussy
-    // scanners (Microsoft Authenticator) struggle to lock onto. A short URI =
-    // fewer, bigger squares = instant scan. Supabase verifies with the universal
-    // TOTP defaults (SHA1 / 6 digits / 30s) so the codes still match.
+    // Clean, short, standard otpauth URI built from the secret. Verified to decode
+    // back correctly; Supabase verifies with the universal TOTP defaults
+    // (SHA1 / 6 digits / 30s) so the codes match.
     const acct = (session && session.user && session.user.email) || "admin";
     const otpuri = secret
       ? ("otpauth://totp/" + encodeURIComponent("ProQure") + ":" + encodeURIComponent(acct) +
          "?secret=" + secret + "&issuer=" + encodeURIComponent("ProQure") + "&algorithm=SHA1&digits=6&period=30")
       : (totp.uri || "");
+    const showQrImg = (src) => { $("mfaQr").innerHTML = '<img alt="Two-factor QR code" style="width:210px;height:210px;background:#fff;padding:12px;border-radius:12px;display:block" src="'+src+'">'; };
     const drawQrFallback = () => {
+      // Last resort: render Supabase's own QR (raw SVG) crisply via a base64 image.
       const raw = (totp.qr_code || "").trim();
       const i = raw.indexOf("<svg");
-      if(i !== -1){
-        $("mfaQr").innerHTML = raw.slice(i);
-        const svg = $("mfaQr").querySelector("svg");
-        if(svg){ svg.setAttribute("shape-rendering","crispEdges"); svg.style.width="210px"; svg.style.height="210px"; svg.style.background="#fff"; svg.style.padding="12px"; svg.style.borderRadius="12px"; svg.removeAttribute("width"); svg.removeAttribute("height"); }
-      } else if(raw.startsWith("data:")){
-        $("mfaQr").innerHTML = '<img alt="QR code" style="width:210px;height:210px;background:#fff;padding:12px;border-radius:12px" src="'+raw+'">';
-      } else { $("mfaQr").innerHTML=""; }
+      if(i !== -1){ try{ showQrImg("data:image/svg+xml;base64," + btoa(raw.slice(i))); return; }catch(e){ $("mfaQr").innerHTML = raw.slice(i); return; } }
+      if(raw.startsWith("data:")){ showQrImg(raw); return; }
+      $("mfaQr").innerHTML = "";
     };
-    if(otpuri && window.QRCode && typeof window.QRCode.toDataURL === "function"){
-      // Render at HIGH resolution (512px) then display smaller, so it stays razor
-      // sharp on high-DPI phone screens.
-      window.QRCode.toDataURL(otpuri, { width: 512, margin: 2, errorCorrectionLevel: "M",
-        color: { dark: "#000000", light: "#ffffff" } }, function(err, url){
-        if(err || !url){ drawQrFallback(); }
-        else { $("mfaQr").innerHTML = '<img alt="Two-factor QR code" style="width:210px;height:210px;background:#fff;padding:12px;border-radius:12px;display:block" src="'+url+'">'; }
-      });
-    } else {
-      drawQrFallback();
-    }
+    try{
+      if(otpuri && typeof window.qrcode === "function"){
+        const qr = window.qrcode(0, "M");   // type 0 = auto-size, M = error correction
+        qr.addData(otpuri);
+        qr.make();
+        showQrImg(qr.createDataURL(8, 4));  // 8px per module, 4-module quiet zone => crisp & scannable
+      } else {
+        drawQrFallback();
+      }
+    }catch(e){ drawQrFallback(); }
     $("mfaSecret").textContent = secret;
   }catch(e){ $("mfaScanErr").textContent="Could not start enrolment. Try again."; $("mfaQr").innerHTML=""; }
 }
