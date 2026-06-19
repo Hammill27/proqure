@@ -59,12 +59,18 @@ async function verifyCaller(req) {
 async function meterRead(companyId) {
   const { data } = await sb.from("proqure_data").select("store_key,value")
     .eq("user_id", companyId).in("store_key", ["piq_settings", "piq_ai_meter"]);
-  let plan = "trial", spent = 0;
+  let plan = "trial", spent = 0, trialEndsAt = null;
   for (const row of (data || [])) {
-    if (row.store_key === "piq_settings" && row.value) plan = row.value.plan || "trial";
+    if (row.store_key === "piq_settings" && row.value) {
+      plan = row.value.plan || "trial";
+      // trialEndsAt is server-authoritative: a database trigger
+      // (proqure_billing_guard) freezes plan/trialEndsAt against any browser
+      // write, so this value cannot be forged by the client to extend a trial.
+      trialEndsAt = row.value.trialEndsAt || null;
+    }
     if (row.store_key === "piq_ai_meter" && row.value && row.value.period === aiPeriod()) spent = Number(row.value.costPeriod) || 0;
   }
-  return { plan, spent };
+  return { plan, spent, trialEndsAt };
 }
 // Add a call's cost to the server-owned meter (auto-resets on a new month).
 // Prefer the atomic RPC (proqure_ai_meter_add) so concurrent AI calls cannot
@@ -164,7 +170,23 @@ export default async function handler(req, res) {
     // The meter stores USD (OpenRouter's unit); budgets are GBP, so convert.
     if (sb && effectiveCompany) {
       try {
-        const { plan, spent } = await meterRead(effectiveCompany);
+        const { plan, spent, trialEndsAt } = await meterRead(effectiveCompany);
+        // Trial expiry (server-authoritative): once a trial's window has closed,
+        // AI stops until the company picks a paid plan. trialEndsAt is frozen by
+        // the proqure_billing_guard DB trigger, so an expired trial cannot extend
+        // its own date, and (because the same trigger freezes `plan`) cannot
+        // self-promote to a paid tier to dodge this. Data stays fully accessible;
+        // only the metered AI spend is gated. A small grace window absorbs clock
+        // skew between the browser and the server.
+        if (plan === "trial" && trialEndsAt) {
+          const ends = Date.parse(trialEndsAt);
+          if (!isNaN(ends) && Date.now() > ends + 60 * 1000) {
+            return res.status(402).json({
+              error: "Your free trial has ended — choose a plan to keep using AI features.",
+              blocked: true, trialExpired: true,
+            });
+          }
+        }
         const cap = AI_BUDGET[plan] != null ? AI_BUDGET[plan] : AI_BUDGET.trial;
         if (cap > 0 && spent * USD_TO_GBP >= cap) {
           return res.status(402).json({ error: "Monthly AI limit reached for this plan.", blocked: true });
