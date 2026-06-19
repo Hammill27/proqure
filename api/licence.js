@@ -8,6 +8,20 @@
 // a brand-new, fully isolated company (resolveCompany bootstraps that on first sign-in,
 // because we deliberately do NOT pre-register them into any existing company).
 //
+// ABUSE CONTROLS (this endpoint is public + unauthenticated, so it is hardened in depth):
+//   1. Honeypot       - a hidden field real users never fill; if set, pretend success.
+//   2. Optional key   - LICENCE_SIGNUP_KEY, if set, must match.
+//   3. Turnstile      - if TURNSTILE_SECRET_KEY is set, a valid Cloudflare Turnstile
+//                       token is required (invisible CAPTCHA). Gated on the env var so
+//                       nothing breaks until the widget is live on the site.
+//   4. Disposable mail - reject throwaway inbox domains used for trial-farming.
+//   5. Per-IP throttle - a small number of signups per IP per hour (best-effort,
+//                       fail-open). A Vercel WAF rate-limit rule on /api/licence is the
+//                       recommended edge-layer complement (see deployment notes).
+// Even past all of these, a completed trial can spend at most its plan's AI budget,
+// and the proqure_billing_guard DB trigger makes that plan/trial window
+// server-authoritative so a trial cannot promote itself or extend its own clock.
+//
 // STRIPE: payment is intentionally left out for now (the website button just proceeds).
 // When you add it, take the payment immediately BEFORE the inviteUserByEmail call below
 // and only send the link once it succeeds - nothing else here needs to change.
@@ -17,7 +31,9 @@
 //   SUPABASE_SERVICE_ROLE_KEY   - service role key (Project Settings > API)
 //   APP_URL                     - where the setup link lands, e.g. https://app.proqure.co.uk
 //   LICENCE_SIGNUP_KEY          - OPTIONAL shared guard; if set, the website must send a
-//                                 matching `key`. Leave unset while it's just you + Andy.
+//                                 matching `key`. Leave unset for open self-serve signup.
+//   TURNSTILE_SECRET_KEY        - OPTIONAL; if set, a valid Cloudflare Turnstile token
+//                                 (sent as `turnstileToken`) is required.
 //
 import { createClient } from "@supabase/supabase-js";
 
@@ -25,15 +41,89 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL 
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const APP_URL = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
 const LICENCE_KEY = process.env.LICENCE_SIGNUP_KEY || "";
+const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET_KEY || "";
 
 const admin = (SUPABASE_URL && SERVICE_KEY)
   ? createClient(SUPABASE_URL, SERVICE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
   : null;
 
+// --- Abuse-control tunables -------------------------------------------------
+const MAX_SIGNUPS_PER_IP_PER_HOUR = 3;   // generous for a real person, lethal to a script
+const THROTTLE_UID = "platform-signup";  // synthetic row owner for the throttle ledger
+const THROTTLE_KEY = "piq_signup_throttle";
+const THROTTLE_WINDOW_MS = 60 * 60 * 1000;
+const THROTTLE_MAX_IPS = 5000;           // cap the ledger size
+
+// Throwaway-inbox domains commonly used to farm free trials. Not exhaustive by
+// design - the goal is to raise the cost of mass abuse, not to be a perfect list.
+// Extend freely, or swap for a maintained list later.
+const DISPOSABLE_DOMAINS = new Set([
+  "mailinator.com", "guerrillamail.com", "guerrillamail.info", "sharklasers.com",
+  "10minutemail.com", "10minutemail.net", "tempmail.com", "temp-mail.org",
+  "tempmail.net", "throwawaymail.com", "yopmail.com", "getnada.com", "nada.email",
+  "trashmail.com", "trashmail.net", "maildrop.cc", "dispostable.com", "mintemail.com",
+  "fakeinbox.com", "spam4.me", "mailnesia.com", "mohmal.com", "moakt.com",
+  "emailondeck.com", "tempinbox.com", "burnermail.io", "mailcatch.com",
+  "inboxbear.com", "tempr.email", "discard.email", "anonbox.net", "spamgourmet.com",
+]);
+
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+function clientIp(req) {
+  const xff = (req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return xff || req.headers["x-real-ip"] || null;
+}
+
+// Best-effort per-IP throttle on the signup ledger. Uses the service-role client
+// (so it works without a user session). FAIL-OPEN: a bookkeeping error must never
+// block a genuine signup - the Turnstile + WAF layers are the hard stops.
+async function tooManySignups(ip) {
+  if (!admin || !ip) return false;
+  try {
+    const { data } = await admin.from("proqure_data").select("value")
+      .eq("user_id", THROTTLE_UID).eq("store_key", THROTTLE_KEY).maybeSingle();
+    const map = (data && data.value && data.value.ips) || {};
+    const cutoff = Date.now() - THROTTLE_WINDOW_MS;
+    const recent = (map[ip] || []).filter(t => t >= cutoff);
+    if (recent.length >= MAX_SIGNUPS_PER_IP_PER_HOUR) return true;
+    recent.push(Date.now());
+    map[ip] = recent;
+    // Prune expired IPs and cap the ledger so it can't grow without bound.
+    const pruned = {};
+    let n = 0;
+    for (const k of Object.keys(map)) {
+      const r = (map[k] || []).filter(t => t >= cutoff);
+      if (r.length) { pruned[k] = r; n++; }
+      if (n >= THROTTLE_MAX_IPS) break;
+    }
+    await admin.from("proqure_data").upsert(
+      { user_id: THROTTLE_UID, store_key: THROTTLE_KEY, value: { ips: pruned }, updated_at: new Date().toISOString() },
+      { onConflict: "user_id,store_key" });
+    return false;
+  } catch (e) {
+    return false; // fail-open
+  }
+}
+
+// Verify a Cloudflare Turnstile token. Only called when TURNSTILE_SECRET is set.
+async function turnstileOk(token, ip) {
+  try {
+    const form = new URLSearchParams({ secret: TURNSTILE_SECRET, response: token || "" });
+    if (ip) form.set("remoteip", ip);
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form,
+    });
+    const j = await r.json().catch(() => ({}));
+    return !!(j && j.success);
+  } catch (e) {
+    return false; // if Cloudflare is unreachable we treat it as not-verified (fail-closed on the captcha)
+  }
 }
 
 export default async function handler(req, res) {
@@ -44,18 +134,41 @@ export default async function handler(req, res) {
 
   const body = req.body || {};
 
-  // Honeypot: a hidden field real users never fill. If it's populated it's a bot -
+  // 1) Honeypot: a hidden field real users never fill. If it's populated it's a bot -
   // pretend success and do nothing.
   if (body.company_url) return res.status(200).json({ ok: true });
 
-  // Optional shared-key guard (enable by setting LICENCE_SIGNUP_KEY in Vercel + the site).
+  // 2) Optional shared-key guard (enable by setting LICENCE_SIGNUP_KEY in Vercel + the site).
   if (LICENCE_KEY && body.key !== LICENCE_KEY) return res.status(403).json({ error: "Not authorised" });
 
   const email = String(body.email || "").trim().toLowerCase();
   const name = String(body.name || "").trim();
   const company = String(body.company || "").trim();
+
+  // 3) Basic validation.
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address" });
   if (!company) return res.status(400).json({ error: "Enter your company name" });
+
+  // 4) Reject disposable / throwaway inbox domains (trial-farming defence).
+  const domain = email.split("@")[1] || "";
+  if (DISPOSABLE_DOMAINS.has(domain)) {
+    return res.status(400).json({ error: "Please sign up with your business email address." });
+  }
+
+  const ip = clientIp(req);
+
+  // 5) Turnstile (only enforced once TURNSTILE_SECRET_KEY is set + the widget is live).
+  if (TURNSTILE_SECRET) {
+    const token = body.turnstileToken || body.cf_turnstile_response || "";
+    if (!token) return res.status(400).json({ error: "Please complete the verification and try again." });
+    const ok = await turnstileOk(token, ip);
+    if (!ok) return res.status(403).json({ error: "Verification failed - please try again." });
+  }
+
+  // 6) Per-IP throttle (checked just before the expensive invite/email step).
+  if (await tooManySignups(ip)) {
+    return res.status(429).json({ error: "Too many signups from this connection. Please try again later." });
+  }
 
   // --- Stripe payment would be taken HERE, before the link is sent (left out for now). ---
 
