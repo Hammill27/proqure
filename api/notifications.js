@@ -25,6 +25,18 @@ function getBearer(req) {
   const h = req.headers.authorization || req.headers.Authorization || "";
   return h.startsWith("Bearer ") ? h.slice(7).trim() : null;
 }
+// Read the assurance level (aal1 = password only, aal2 = password + MFA) straight
+// from the verified JWT, so the server can require MFA was actually completed.
+function tokenAal(token) {
+  try {
+    const parts = String(token).split(".");
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const payload = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    return (payload && payload.aal) ? String(payload.aal) : null;
+  } catch { return null; }
+}
 function readBody(req) {
   if (!req.body) return {};
   if (typeof req.body === "string") { try { return JSON.parse(req.body); } catch { return {}; } }
@@ -113,6 +125,12 @@ export default async function handler(req, res) {
   const callerEmail = (caller.email || "").toLowerCase();
   if (!ADMIN_EMAILS.includes(callerEmail)) {
     res.status(403).json({ error: "This account is not authorised for the admin console." }); return;
+  }
+  // Phase 2 — server-side MFA enforcement, mirroring api/admin-metrics.js. Operator
+  // broadcasts are a privileged action, so the session must have actually cleared
+  // two-factor (aal2); a password-only (aal1) session is refused.
+  if (tokenAal(token) !== "aal2") {
+    res.status(403).json({ error: "Two-factor authentication is required for operator actions.", code: "mfa_required" }); return;
   }
 
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
