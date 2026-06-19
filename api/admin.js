@@ -30,6 +30,18 @@ function clientIp(req) {
   return xff || req.headers["x-real-ip"] || null;
 }
 function clientUa(req) { return (req.headers["user-agent"] || "").slice(0, 300) || null; }
+// Read the assurance level (aal1 = password only, aal2 = password + MFA) from the
+// verified JWT, so privileged actions can require that MFA was actually completed.
+function tokenAal(token) {
+  try {
+    const parts = String(token).split(".");
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const payload = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    return (payload && payload.aal) ? String(payload.aal) : null;
+  } catch { return null; }
+}
 async function writeSecurityEvent(svc, { email, action, detail, req }) {
   try {
     if (!svc) return;
@@ -61,6 +73,17 @@ export default async function handler(req, res) {
   } catch (e) { return res.status(401).json({ error: "Invalid session" }); }
 
   const callerEmail = (caller.email || "").toLowerCase();
+
+  // Privileged account actions (inviting teammates, assigning roles) require the
+  // caller's session to have actually cleared two-factor (aal2) — the same bar as
+  // billing and the admin console. Managers/buyers enrol 2FA at sign-in, so this is
+  // normally already met; it stops a stolen password-only (aal1) session from
+  // creating accounts or assigning roles.
+  const callerAal = tokenAal(token);
+  if (callerAal !== "aal2") {
+    await writeSecurityEvent(admin, { email: callerEmail, action: "invite-MFA-REQUIRED", detail: "token aal=" + (callerAal || "unknown"), req });
+    return res.status(403).json({ error: "Two-factor authentication is required for this action.", code: "mfa_required" });
+  }
 
   // Look up the caller's membership (company + role).
   let callerCompany = null, callerRole = null;
