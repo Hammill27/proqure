@@ -14,6 +14,19 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const supabase = (SUPABASE_URL && SERVICE_KEY) ? createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 
 
+// Read the assurance level (aal1 = password only, aal2 = password + MFA) straight
+// from the verified JWT, so the server can require MFA was actually completed.
+function tokenAal(token) {
+  try {
+    const parts = String(token).split(".");
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const payload = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    return (payload && payload.aal) ? String(payload.aal) : null;
+  } catch { return null; }
+}
+
 // Caller verification: billing actions must come from a signed-in MANAGER of the
 // company in question (when the anon key is configured; otherwise legacy open mode).
 const SB_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
@@ -27,12 +40,21 @@ async function verifyManager(req, companyId) {
     const { data, error } = await sbAnon.auth.getUser(token);
     if (error || !data || !data.user) return { ok: false, reason: "Session invalid or expired." };
     const uid = data.user.id;
-    if (uid === companyId) return { ok: true }; // the company owner account itself
-    if (supabase) {
+    let isManager = (uid === companyId); // the company owner account itself
+    if (!isManager && supabase) {
       const { data: m } = await supabase.from("members").select("role").eq("user_id", uid).eq("company_id", companyId).limit(1).maybeSingle();
-      if (m && m.role === "manager") return { ok: true };
+      if (m && m.role === "manager") isManager = true;
     }
-    return { ok: false, reason: "Only a manager of this company can manage billing." };
+    if (!isManager) return { ok: false, reason: "Only a manager of this company can manage billing." };
+    // Phase 2 — server-side MFA enforcement. Billing is a privileged action, so the
+    // session must have actually cleared two-factor (aal2), exactly like the admin
+    // console. Managers enrol 2FA at sign-in (Phase 1), so this is normally already
+    // satisfied; it stops a password-only (aal1) session acting on billing even if
+    // the in-app gate was bypassed or failed open.
+    if (tokenAal(token) !== "aal2") {
+      return { ok: false, code: "mfa_required", reason: "Two-factor authentication is required to manage billing. Complete the second step and try again." };
+    }
+    return { ok: true };
   } catch (e) { return { ok: false, reason: "Could not verify session." }; }
 }
 
@@ -51,7 +73,7 @@ export default async function handler(req, res) {
   const { companyId } = req.body || {};
   if (!companyId) return res.status(400).json({ error: "Missing companyId" });
   const ver = await verifyManager(req, companyId);
-  if (!ver.ok) return res.status(401).json({ error: ver.reason });
+  if (!ver.ok) return res.status(ver.code === "mfa_required" ? 403 : 401).json({ error: ver.reason, code: ver.code });
 
   try {
     const { data } = await supabase.from("proqure_billing")
