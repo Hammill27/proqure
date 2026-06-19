@@ -2859,7 +2859,7 @@ function invBestOrder(inv, orders) {
   return best || null;
 }
 
-function ProQureApp({ session, companyId }) {
+function ProQureApp({ session, companyId, onNeedMfa }) {
   // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
   // user id (sole trader / pre-migration fallback). Declared up here because effects
   // and handlers below reference it - a const can't be used before its declaration.
@@ -5142,6 +5142,11 @@ ${settings.company||""}`;
       const r = await fetch("/api/create-checkout-session", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ companyId: cloudUserId, email: session && session.user && session.user.email, ...body }) });
       const d = await r.json();
+      if (r.status === 403 && d && d.code === "mfa_required") {
+        showToast("Two-factor needed to manage billing — verify to continue.", "warn");
+        if (typeof onNeedMfa === "function") onNeedMfa();
+        return;
+      }
       if (d && d.url) window.location.href = d.url;
       else showToast(d && d.error ? d.error : "Could not start checkout.", "warn");
     } catch (e) { showToast("Billing isn't available right now.", "warn"); }
@@ -5151,6 +5156,11 @@ ${settings.company||""}`;
       const r = await fetch("/api/create-portal-session", { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ companyId: cloudUserId }) });
       const d = await r.json();
+      if (r.status === 403 && d && d.code === "mfa_required") {
+        showToast("Two-factor needed to manage billing — verify to continue.", "warn");
+        if (typeof onNeedMfa === "function") onNeedMfa();
+        return;
+      }
       if (d && d.url) window.location.href = d.url;
       else showToast(d && d.error ? d.error : "No billing account yet.", "warn");
     } catch (e) { showToast("Billing isn't available right now.", "warn"); }
@@ -10873,7 +10883,7 @@ function AppInner() {
   if (mfaGate === "need") {
     return <AppMfaScreen session={session} onDone={() => setMfaGate("pass")} />;
   }
-  return <ProQureApp session={session} companyId={companyId} />;
+  return <ProQureApp session={session} companyId={companyId} onNeedMfa={() => setMfaGate("need")} />;
 }
 
 // --- Light haptic tap (Android/where supported; a safe no-op on iOS Safari) ---
