@@ -87,7 +87,7 @@ CREATE OR REPLACE FUNCTION public.is_platform_admin()
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-  select lower(auth.jwt() ->> 'email') in ('proqureadmin@proqure.co.uk')
+  select false
 $function$;
 
 CREATE OR REPLACE FUNCTION public.my_company()
