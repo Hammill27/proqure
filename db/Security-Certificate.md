@@ -6,7 +6,7 @@
 > conversation, machine, or developer, **this document is the source of truth** — not
 > memory and not code comments (the `plan` incident proved comments can lie).
 
-**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-22  **Version:** 1.3 (Phase 1, Phase 2 Supabase-Auth, tenant-isolation audit COMPLETE; OPS-1/2 corrected; Phase 3 Vercel next)
+**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-22  **Version:** 1.4 (Phase 1, Phase 2, isolation audit, Phase 3 Vercel + provider spend guardrails COMPLETE; deeper cost review + ISO-TEST deferred)
 
 ### Confidence taxonomy
 - **GUARANTEED** — enforced at a layer the client cannot bypass, *with evidence on file* (policy dump, trigger definition, a rejected test write, a dashboard screenshot, a live end-to-end test).
@@ -86,13 +86,21 @@
 | TIER-2 | SMS MFA — Pro-only; **not wanted** (TOTP-only is stronger; SIM-swap risk). Record as a deliberate no. | n/a |
 | TIER-3 | PITR / point-in-time recovery — Pro + compute add-on, billed hourly, **not covered by spend cap** | P1 at go-live |
 
-### Phase 3 — Vercel (NEXT)
-| ID | Action | Priority |
-|----|--------|----------|
-| TODO-VC-1 | Redirect/remove the 3 non-canonical app hostnames (esp. stale `procureiq-two.vercel.app`) | P1 |
-| TODO-VC-2 | Env-var exposure audit (no `VITE_` secret; mark secrets Sensitive) | P0 |
-| TODO-VC-3 | Preview Deployment Protection (previews hit live DB + live secrets) | P1 |
-| TODO-VC-4 | Spend management cap/alert | P1 |
+### Phase 3 — Vercel (COMPLETE 2026-06-22)
+| ID | Action | Outcome |
+|----|--------|---------|
+| TODO-VC-1 | Stale `procureiq-two.vercel.app` hostname | **Done** — removed from proqure project; verified no code/marketing/auth reference first. App served only on `app.proqure.co.uk`. Other `*-jordan-s-projects2.vercel.app` are auto-gen deploy URLs, now behind deployment-protection login. |
+| TODO-VC-2 | Env-var exposure audit | **Done** — no secret is `VITE_`-exposed (only URL/anon-key/inbound-domain are, all non-secret). Bug found + fixed: `TRIPE_PRICE_BUSINESS` typo → renamed `STRIPE_PRICE_BUSINESS` (`price_1TgP…`), Business checkout restored. Minor: `VITE_INBOUND_CAPTURE_DOMAIN` possibly redundant. |
+| TODO-VC-3 | Preview deployment protection | **Done** — Vercel Authentication "Require Log In" (Standard Protection) ON; previews require logged-in team member. Production `app.proqure.co.uk` confirmed still public (incognito). |
+| TODO-VC-4 | Spend cap/alert | **Done** — Pro base $20/mo, $20 included credit (32¢ used), on-demand budget $200 with Notifications ON / Pause-Projects OFF (won't take prod offline). Safe as-is. |
+
+### Provider spend guardrails (2026-06-22)
+| ID | Item | State |
+|----|------|-------|
+| COST-OR | OpenRouter | Key "ProQure" credit limit set **$50** (was unlimited); balance $4.87, **auto-top-up OFF** (hard ceiling = balance); lifetime key spend $0.13 (Gemini 2.5 Flash / DeepSeek V3 / Gemini 3.5 Flash). Guardrail policies: default/empty (optional model-restriction policy noted for cost review). In-code budget meter + trial gate remain per-tenant layer. Runaway-bill risk: effectively nil. |
+| COST-DOC | Dedicated **Cost & Spend Analysis PDF** | **Deferred** — to be built after the fuller spend review (provider fixed vs variable costs, guardrails, unit economics). Data being gathered (Vercel + OpenRouter captured above). |
+
+### Earlier-phase items still open
 
 ### Later phases
 | ID | Action | Phase |
@@ -108,7 +116,7 @@
 | ID | Finding | Priority | Status |
 |----|---------|----------|--------|
 | OPS-1 | **`retention-sweep` cron** — file is correctly at `api/retention-sweep.js` and `vercel.json` schedules `/api/retention-sweep` (03:00). Path and cron target match; cron resolves to a real function. | — | **Closed (verified in repo 2026-06-22)** |
-| OPS-2 | `SECURITY.md` no longer names a mailbox (no Exchange Online exists yet). Rewritten to route reports via **GitHub private vulnerability reporting**. Action: enable "Private vulnerability reporting" in repo Settings. | P2 | **Resolved (file rewritten); enable the GitHub toggle** |
+| OPS-2 | `SECURITY.md` — **finding withdrawn.** Verified against the live repo: no `SECURITY.md` was ever committed (only the root `README.md` from the "extras" batch landed). No dead address exists anywhere. A `SECURITY.md` is optional and not currently wanted (no mailbox / Exchange Online). | — | **Withdrawn — nothing live to fix** |
 | OPS-3 | **Repo visibility.** Repo currently public (re-opened so Claude could read code). Recommendation: flip back to **private**, or hold Tier-2 docs + the cert out of it. A public repo carrying the open-gaps register + admin context is the one loose thread. | P1 | Open — decision pending |
 
 ---
@@ -193,7 +201,8 @@ Three SECURITY DEFINER functions (bypass RLS by design), client-EXECUTE-able, **
 ---
 
 ## I. Change log
-- **2026-06-22 (v1.3):** Corrected two OPS findings against reality. **OPS-1 closed** — `retention-sweep` already moved to `api/retention-sweep.js` (verified in repo); the prior "cron dead" note was stale, written before the move. **OPS-2 resolved** — `SECURITY.md` previously named `security@proqure.co.uk`, but no Exchange Online / mailbox exists; rewritten to route reports via GitHub private vulnerability reporting (no mailbox), action remaining is to enable that toggle in repo settings. Honest note: the original `SECURITY.md` address was added by convention without verifying a mailbox existed — corrected.
+- **2026-06-22 (v1.4):** **Phase 3 (Vercel) COMPLETE** + provider spend guardrails. Env audit: no secret `VITE_`-exposed (P0 clean); found & fixed `TRIPE_PRICE_BUSINESS` typo (Business checkout was broken) → `STRIPE_PRICE_BUSINESS`. Preview deployment protection ON (prod still public). Stale `procureiq-two.vercel.app` removed (no references, verified). Vercel spend: $20 base + $20 included credit (32¢ used), $200 on-demand budget notify-not-pause — safe. OpenRouter: key credit limit set $50, auto-top-up OFF (ceiling = $4.87 balance), guardrail policies default/empty. Deferred: dedicated Cost & Spend Analysis PDF (after fuller review) and ISO-TEST (dev build).
+- **2026-06-22 (v1.3):** Corrected two OPS findings. OPS-1 closed — `retention-sweep` already at `api/retention-sweep.js` (prior "cron dead" note was stale). OPS-2 — `SECURITY.md` was never actually committed to the repo; no mailbox exists; finding withdrawn (no live dead-address). Honest note: the `SECURITY.md`/address was a generated suggestion never deployed; cert had drifted ahead of repo reality on both — corrected by checking the live repo.
 - **2026-06-22 (v1.2):** **Tenant-isolation audit COMPLETE (§J).** Core model clean — all 6 tables RLS-on, no views, all policy predicates membership-bound, zero client `.rpc()` calls. Bypass hunt found 3 undocumented client-callable SECURITY DEFINER functions trusting their company arg: `proqure_event_push`/`proqure_stats_bump` (cross-tenant write) + `proqure_storage_stats` (cross-tenant storage-metadata read). Fixed two-layer (in-function membership guard with service-role bypass + client EXECUTE revoked) / service-role lockdown; verified live (all three EXECUTE = postgres+service_role); callers confirmed server-only from code; committed `db/proqure_telemetry_guard.sql` (closes drift). Recorded multi-membership as a deferred architectural finding with a hard prerequisite gate, and ISO-TEST (adversarial isolation suite) as the recommended next security investment. `db/` now also holds `README.md` + `Security-Certificate.md`.
 - **2026-06-22 (v1.1):** **Phase 2 (Supabase Auth) COMPLETE.** ADMIN-1 retired (`is_platform_admin()`→`select false`, live+repo; old `proqureadmin@` account long deleted; admin centre uses `ADMIN_CONSOLE_EMAILS`+service role). TENANT-EMAIL resolved positive (invite-link signup proves ownership). SMTP (Resend custom), redirect allow-list (locked), MFA (TOTP on/SMS off/AAL1 limit on), password policy — all GUARANTEED via screenshots. CAPTCHA (APP-4) live + end-to-end tested → TODO-MK-1 closed, APP-3 Turnstile active. Funded-tier bucket recorded (TIER-1/2/3). New findings: OPS-1 (retention-sweep cron dead — file misplaced at repo root), OPS-2 (SECURITY.md mailbox), OPS-3 (repo visibility). Repo docs added (DOC-3). Next: Phase 3 (Vercel).
 - **2026-06-19 (v1.0):** Phase 1 COMPLETE & version-controlled. Schema-wide RLS audit (6/6 tables). Migrations committed (`1486c8f`, byte-verified). `proqure_security_migration.sql` regenerated from live DDL; 28 policies cross-checked. App-layer aal2 coverage mapped. Carried forward ADMIN-1, TENANT-EMAIL.
