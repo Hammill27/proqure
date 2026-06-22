@@ -134,7 +134,7 @@ export default async function handler(req, res) {
     try {
       const { error: mErr } = await admin.from("members").upsert(
         { email, company_id: companyId, role, employment: employment || null },
-        { onConflict: "email" }
+        { onConflict: "company_id,email" }
       );
       if (mErr) return res.status(500).json({ error: "Could not save membership: " + mErr.message });
     } catch (e) { return res.status(500).json({ error: "Could not save membership" }); }
