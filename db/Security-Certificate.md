@@ -6,7 +6,7 @@
 > conversation, machine, or developer, **this document is the source of truth** — not
 > memory and not code comments (the `plan` incident proved comments can lie).
 
-**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-22  **Version:** 1.2 (Phase 1, Phase 2 Supabase-Auth, and tenant-isolation audit COMPLETE; Phase 3 Vercel next)
+**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-22  **Version:** 1.3 (Phase 1, Phase 2 Supabase-Auth, tenant-isolation audit COMPLETE; OPS-1/2 corrected; Phase 3 Vercel next)
 
 ### Confidence taxonomy
 - **GUARANTEED** — enforced at a layer the client cannot bypass, *with evidence on file* (policy dump, trigger definition, a rejected test write, a dashboard screenshot, a live end-to-end test).
@@ -107,8 +107,8 @@
 ### Operational findings (this session)
 | ID | Finding | Priority | Status |
 |----|---------|----------|--------|
-| OPS-1 | **`retention-sweep` cron is dead.** `vercel.json` schedules `/api/retention-sweep` daily, but the file sits at repo **root** (`retention-sweep.js`), not in `api/`, so it's not deployed as a function → 404s silently. The 90-day telemetry-deletion backstop isn't running (privacy-commitment gap, not a breach; client-side prune still operates). **Fix:** move/rename to `api/retention-sweep.js` (GitHub: edit file, change path in filename box). | P1 | **Open** |
-| OPS-2 | `SECURITY.md` lists `security@proqure.co.uk` — confirm that mailbox exists in M365 (a disclosure address that bounces is worse than none) | P2 | Open |
+| OPS-1 | **`retention-sweep` cron** — file is correctly at `api/retention-sweep.js` and `vercel.json` schedules `/api/retention-sweep` (03:00). Path and cron target match; cron resolves to a real function. | — | **Closed (verified in repo 2026-06-22)** |
+| OPS-2 | `SECURITY.md` no longer names a mailbox (no Exchange Online exists yet). Rewritten to route reports via **GitHub private vulnerability reporting**. Action: enable "Private vulnerability reporting" in repo Settings. | P2 | **Resolved (file rewritten); enable the GitHub toggle** |
 | OPS-3 | **Repo visibility.** Repo currently public (re-opened so Claude could read code). Recommendation: flip back to **private**, or hold Tier-2 docs + the cert out of it. A public repo carrying the open-gaps register + admin context is the one loose thread. | P1 | Open — decision pending |
 
 ---
@@ -193,6 +193,7 @@ Three SECURITY DEFINER functions (bypass RLS by design), client-EXECUTE-able, **
 ---
 
 ## I. Change log
+- **2026-06-22 (v1.3):** Corrected two OPS findings against reality. **OPS-1 closed** — `retention-sweep` already moved to `api/retention-sweep.js` (verified in repo); the prior "cron dead" note was stale, written before the move. **OPS-2 resolved** — `SECURITY.md` previously named `security@proqure.co.uk`, but no Exchange Online / mailbox exists; rewritten to route reports via GitHub private vulnerability reporting (no mailbox), action remaining is to enable that toggle in repo settings. Honest note: the original `SECURITY.md` address was added by convention without verifying a mailbox existed — corrected.
 - **2026-06-22 (v1.2):** **Tenant-isolation audit COMPLETE (§J).** Core model clean — all 6 tables RLS-on, no views, all policy predicates membership-bound, zero client `.rpc()` calls. Bypass hunt found 3 undocumented client-callable SECURITY DEFINER functions trusting their company arg: `proqure_event_push`/`proqure_stats_bump` (cross-tenant write) + `proqure_storage_stats` (cross-tenant storage-metadata read). Fixed two-layer (in-function membership guard with service-role bypass + client EXECUTE revoked) / service-role lockdown; verified live (all three EXECUTE = postgres+service_role); callers confirmed server-only from code; committed `db/proqure_telemetry_guard.sql` (closes drift). Recorded multi-membership as a deferred architectural finding with a hard prerequisite gate, and ISO-TEST (adversarial isolation suite) as the recommended next security investment. `db/` now also holds `README.md` + `Security-Certificate.md`.
 - **2026-06-22 (v1.1):** **Phase 2 (Supabase Auth) COMPLETE.** ADMIN-1 retired (`is_platform_admin()`→`select false`, live+repo; old `proqureadmin@` account long deleted; admin centre uses `ADMIN_CONSOLE_EMAILS`+service role). TENANT-EMAIL resolved positive (invite-link signup proves ownership). SMTP (Resend custom), redirect allow-list (locked), MFA (TOTP on/SMS off/AAL1 limit on), password policy — all GUARANTEED via screenshots. CAPTCHA (APP-4) live + end-to-end tested → TODO-MK-1 closed, APP-3 Turnstile active. Funded-tier bucket recorded (TIER-1/2/3). New findings: OPS-1 (retention-sweep cron dead — file misplaced at repo root), OPS-2 (SECURITY.md mailbox), OPS-3 (repo visibility). Repo docs added (DOC-3). Next: Phase 3 (Vercel).
 - **2026-06-19 (v1.0):** Phase 1 COMPLETE & version-controlled. Schema-wide RLS audit (6/6 tables). Migrations committed (`1486c8f`, byte-verified). `proqure_security_migration.sql` regenerated from live DDL; 28 policies cross-checked. App-layer aal2 coverage mapped. Carried forward ADMIN-1, TENANT-EMAIL.
