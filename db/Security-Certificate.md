@@ -6,7 +6,7 @@
 > conversation, machine, or developer, **this document is the source of truth** — not
 > memory and not code comments (the `plan` incident proved comments can lie).
 
-**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-22  **Version:** 1.1 (Phase 1 + Phase 2 Supabase-Auth COMPLETE; Phase 3 Vercel next)
+**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-22  **Version:** 1.2 (Phase 1, Phase 2 Supabase-Auth, and tenant-isolation audit COMPLETE; Phase 3 Vercel next)
 
 ### Confidence taxonomy
 - **GUARANTEED** — enforced at a layer the client cannot bypass, *with evidence on file* (policy dump, trigger definition, a rejected test write, a dashboard screenshot, a live end-to-end test).
@@ -156,7 +156,44 @@ Tenant isolation (schema-wide RLS, all 6 base tables), within-tenant locks (mete
 
 ---
 
+## J. Tenant-isolation audit (COMPLETE, 2026-06-22)
+
+**Purpose:** answer the present-day question — *can any authenticated user today reach another company's data through a forgotten path?* — weighted toward bypass-hunting (paths that never touch `my_company()`/RLS), not just resolver dependencies. Method: full live-schema enumeration (all tables + RLS + policy predicates; all views; all functions + security type + grants; client-role table grants) plus code reading of call-sites.
+
+### Clean (evidence on file)
+| Area | Finding | Evidence |
+|------|---------|----------|
+| RLS coverage | All 6 public base tables RLS-enabled; the 6 are the complete base-table set | Q1 schema-wide |
+| Views | **None exist** — entire view-bypass category empty | Q3 returned 0 rows |
+| Policy predicates | Every policy ties to `my_company()` / `proqure_member_rank`/`role` (verified membership) / `auth.uid()` / signed JWT email. No `using (true)`, nothing keyed on a forgeable value | Q2 full predicate dump |
+| Client `.rpc()` surface | Browser makes **zero** `.rpc()` calls; all RPCs invoked server-side with service role only | Code: `procurement-dashboard.jsx` (no `.rpc(`), callers in `api/` use `SUPABASE_SERVICE_ROLE_KEY` |
+| Table grants to anon/authenticated | Broad (full CRUD) but **gated by RLS** — expected under the Supabase model; not a finding while RLS stays on. (This is precisely what the Phase-4 isolation test suite must guard.) | Q5 |
+
+### HOLES FOUND + FIXED (the bypass hunt's payoff)
+Three SECURITY DEFINER functions (bypass RLS by design), client-EXECUTE-able, **not in the committed migrations**, that trusted their company argument:
+
+| Function | Risk | Fix | Confidence |
+|----------|------|-----|-----------|
+| `proqure_event_push(uuid,text,jsonb,int)` | Cross-tenant **write** — push events into any company's `proqure_data` | In-function membership guard (service-role bypass) **+** client EXECUTE revoked | GUARANTEED |
+| `proqure_stats_bump(uuid,text,jsonb)` | Cross-tenant **write** — bump stats on any company | Same two-layer fix | GUARANTEED |
+| `proqure_storage_stats()` | Cross-tenant **read** — returns every company's storage footprint (no per-company scope) | Locked to service_role (no safe client form) | GUARANTEED |
+
+**Evidence:** post-fix grant query shows all three EXECUTE = `postgres` + `service_role` only (no anon/authenticated/PUBLIC); guard bodies live (migration ran clean); callers verified server-only/service-role from code (`resend-webhook.js`, `inbound.js`, `admin-metrics.js`). Fix committed as `db/proqure_telemetry_guard.sql` — closing the version-control drift that let them hide.
+
+**Audit verdict:** as of this schema snapshot, every enumerated tenant-data path is membership-guarded, definer-guarded, or service-role-only. No present-day cross-tenant read/write path remains in the enumerated surface. *Caveat (acknowledged): an audit gives high point-in-time confidence within its enumerated surface, not a proof for all time or all paths — continuous enforcement is the job of the deferred isolation test suite (see ISO-TEST).*
+
+### Architectural finding (deferred — multi-membership)
+> **Finding (architectural, not a current security issue).** Tenant resolution uses `my_company()` → `select company_id from members where email = … limit 1`. This is safe **under the invariant that an identity holds exactly one membership**. Introducing multiple memberships per identity without first implementing deterministic, fail-closed tenant resolution (database-authoritative, no arbitrary row selection, no implicit fallback to another company, no trust in client-controlled context) and reviewing all dependent RLS policies and tenant-data paths would create a latent tenant-isolation risk. **Prerequisite gate:** multi-membership MUST NOT be enabled until (a) tenant resolution is deterministic and fails closed, validating any active-company hint against `members` rather than trusting it, and (b) every RLS policy/function depending on `my_company()` has been reviewed. Agreed phased plan: audit/map → resolver contract → refactor single-membership assumptions (`LIMIT 1`/`.single()`/email-uniqueness) → **isolation test suite** → active-company resolution → enable multi-membership. Implementation deferred until a business requirement exists.
+
+| ID | Item | Status |
+|----|------|--------|
+| ISO-TEST | Adversarial cross-tenant isolation test suite (two tenants; assert every table/RPC/definer fn denies cross-tenant read+write) — the continuous guardrail against regression | **Open — recommended next security investment** |
+| MULTI-MEM | Multi-membership feature, gated behind the prerequisite above | Deferred (roadmap) |
+
+---
+
 ## I. Change log
+- **2026-06-22 (v1.2):** **Tenant-isolation audit COMPLETE (§J).** Core model clean — all 6 tables RLS-on, no views, all policy predicates membership-bound, zero client `.rpc()` calls. Bypass hunt found 3 undocumented client-callable SECURITY DEFINER functions trusting their company arg: `proqure_event_push`/`proqure_stats_bump` (cross-tenant write) + `proqure_storage_stats` (cross-tenant storage-metadata read). Fixed two-layer (in-function membership guard with service-role bypass + client EXECUTE revoked) / service-role lockdown; verified live (all three EXECUTE = postgres+service_role); callers confirmed server-only from code; committed `db/proqure_telemetry_guard.sql` (closes drift). Recorded multi-membership as a deferred architectural finding with a hard prerequisite gate, and ISO-TEST (adversarial isolation suite) as the recommended next security investment. `db/` now also holds `README.md` + `Security-Certificate.md`.
 - **2026-06-22 (v1.1):** **Phase 2 (Supabase Auth) COMPLETE.** ADMIN-1 retired (`is_platform_admin()`→`select false`, live+repo; old `proqureadmin@` account long deleted; admin centre uses `ADMIN_CONSOLE_EMAILS`+service role). TENANT-EMAIL resolved positive (invite-link signup proves ownership). SMTP (Resend custom), redirect allow-list (locked), MFA (TOTP on/SMS off/AAL1 limit on), password policy — all GUARANTEED via screenshots. CAPTCHA (APP-4) live + end-to-end tested → TODO-MK-1 closed, APP-3 Turnstile active. Funded-tier bucket recorded (TIER-1/2/3). New findings: OPS-1 (retention-sweep cron dead — file misplaced at repo root), OPS-2 (SECURITY.md mailbox), OPS-3 (repo visibility). Repo docs added (DOC-3). Next: Phase 3 (Vercel).
 - **2026-06-19 (v1.0):** Phase 1 COMPLETE & version-controlled. Schema-wide RLS audit (6/6 tables). Migrations committed (`1486c8f`, byte-verified). `proqure_security_migration.sql` regenerated from live DDL; 28 policies cross-checked. App-layer aal2 coverage mapped. Carried forward ADMIN-1, TENANT-EMAIL.
 - **2026-06-19 (v0.5):** P1-C/D → GUARANTEED (post-lockdown grants). New finding: `proqure_billing` outside original RLS scope → schema-wide audit ordered.
