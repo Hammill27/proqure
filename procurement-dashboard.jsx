@@ -3102,7 +3102,7 @@ function ProQureApp({ session, companyId, onNeedMfa }) {
         // Fallback (server function not deployed yet): register the membership so the
         // person still joins this company when they sign in / reset their password.
         if (!emailed && cloudUserId) {
-          supabase.from("members").upsert({ email, company_id: cloudUserId, role: inviteRole, employment: inviteEmployment, user_id: null }, { onConflict: "email" })
+          supabase.from("members").upsert({ email, company_id: cloudUserId, role: inviteRole, employment: inviteEmployment, user_id: null }, { onConflict: "company_id,email" })
             .then(({ error }) => { if (error) console.warn("invite: members upsert failed", error.message); });
           showToast(`${email} added. They can sign in with this email to join.`);
         }
