@@ -6,13 +6,14 @@
 > conversation, machine, or developer, **this document is the source of truth** — not
 > memory and not code comments (the `plan` incident proved comments can lie).
 
-**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-19  **Version:** 1.0 (Phase 1 COMPLETE & version-controlled; Phase 2 next)
+**Owner:** Jordan Hammill  **Started:** 2026-06-19  **Last updated:** 2026-06-22  **Version:** 1.1 (Phase 1 + Phase 2 Supabase-Auth COMPLETE; Phase 3 Vercel next)
 
 ### Confidence taxonomy
-- **GUARANTEED** — enforced at a layer the client cannot bypass, *with evidence on file* (policy dump, trigger definition, a rejected test write, a dashboard screenshot).
+- **GUARANTEED** — enforced at a layer the client cannot bypass, *with evidence on file* (policy dump, trigger definition, a rejected test write, a dashboard screenshot, a live end-to-end test).
 - **DEFENCE-IN-DEPTH** — genuinely helps but is evadable or secondary; not a hard guarantee.
 - **IMPLEMENTED (unverified)** — built/deployed, but live enforcement not yet evidenced.
 - **UNVERIFIED** — assumed true; no evidence gathered yet.
+- **DEFERRED (paid-tier)** — sound control, blocked behind a Supabase paid plan; not an oversight.
 
 ### How to read an entry
 `ID · Item · Status · Confidence · Date · Evidence · Notes`
@@ -27,162 +28,139 @@
 | INF-2 | App project `prj_VVoapHLjoENF1EdxzEfXc2FOfwMM`: framework **vite**, Node 24.x | GUARANTEED | 2026-06-19 | Vercel API `get_project` |
 | INF-3 | App answers on 4 hostnames: `app.proqure.co.uk` + `procureiq-two.vercel.app` + `proqure-jordan-s-projects2.vercel.app` + `proqure-git-main-jordan-s-projects2.vercel.app` | GUARANTEED | 2026-06-19 | Vercel API `get_project` |
 | INF-4 | Marketing project `prj_uWDa8YmoZJkFl0MBdxifgOzs92Uy` (`proqure-website`): static (no framework), live on `proqure.co.uk` + `www.proqure.co.uk` | GUARANTEED | 2026-06-19 | Vercel API `get_project` |
-| INF-5 | Repo `Hammill27/proqure` (public as of 2026-06-19); app is single-file `procurement-dashboard.jsx`; 15 serverless functions in `api/` | GUARANTEED | 2026-06-19 | Repo clone, commit `1486c8f` |
+| INF-5 | Repo `Hammill27/proqure`; app is single-file `procurement-dashboard.jsx`; 14 serverless functions in `api/` (+ one misplaced at repo root, see OPS-1) | GUARANTEED | 2026-06-19 | Repo clone, commit `1486c8f` |
 
 ---
 
-## B. Implemented & verified this session
+## B. Application-layer controls
 
 | ID | Control | Status | Confidence | Date | Evidence | Notes |
 |----|---------|--------|-----------|------|----------|-------|
-| APP-1 | **Billing-field freeze trigger** (`proqure_billing_guard`) — browser cannot set/change `plan`, `trialEndsAt`, `subscriptionStatus`, `stripeCustomerId`, `renewsAt` in `piq_settings` | Live + body-verified | GUARANTEED (recommend a live client test-write to make airtight) | 2026-06-19 | Query 4 (trigger on INSERT+UPDATE) + F2 (function body); committed `db/proqure_billing_guard.sql` | INSERT forces `plan='trial'` + 14-day window; UPDATE freezes the 5 fields for client roles; service_role/SQL authoritative |
-| APP-2 | **Server-side trial-expiry gate** in `api/ai.js` — expired trial → HTTP 402, AI stops | Live (code-confirmed) | GUARANTEED (rests on APP-1) | 2026-06-19 | `api/ai.js` L181–188 (trial 402) + L192 (budget 402); reads server-authoritative `trialEndsAt` | Also enforces monthly `AI_BUDGET` cap per plan |
-| APP-3 | **`licence.js` hardening** — honeypot + optional `LICENCE_SIGNUP_KEY` + Turnstile (gated on `TURNSTILE_SECRET_KEY`) + disposable-email block + per-IP throttle | Live (code-confirmed) | DEFENCE-IN-DEPTH | 2026-06-19 | `api/licence.js` | Turnstile inert until secret + widget live (TODO-MK-1 / Phase 7); throttle fail-open — WAF rule is the hard stop |
-| DOC-1 | **Architecture Blueprint** (42pp) and **out-of-band checklist** produced | Complete | n/a | 2026-06-19 | `ProQure-Architecture-Blueprint.pdf`, `ProQure-out-of-band-security-checklist.md` | Reference artifacts |
-| DOC-2 | **Three DB migrations committed to repo `/db/`** — security model now reproducible from version control | Complete | GUARANTEED | 2026-06-19 | Repo `db/` at commit `1486c8f`; files byte-identical to regenerated source | Closes the root blind spot (TODO-DB-0/9) |
+| APP-1 | **Billing-field freeze trigger** (`proqure_billing_guard`) — browser cannot set/change `plan`, `trialEndsAt`, `subscriptionStatus`, `stripeCustomerId`, `renewsAt` in `piq_settings` | Live + body-verified | GUARANTEED (recommend a live client test-write to make airtight) | 2026-06-19 | Query 4 + F2; committed `db/proqure_billing_guard.sql` | INSERT forces `plan='trial'` + 14-day window; UPDATE freezes the 5 fields for client roles even at manager rank; service_role/SQL authoritative |
+| APP-2 | **Server-side trial-expiry gate** in `api/ai.js` — expired trial → HTTP 402 | Live (code-confirmed) | GUARANTEED (rests on APP-1) | 2026-06-19 | `api/ai.js` 402 gates | Also enforces monthly `AI_BUDGET` cap |
+| APP-3 | **`licence.js` hardening** — honeypot + optional `LICENCE_SIGNUP_KEY` + **Turnstile (now active)** + disposable-email block + per-IP throttle | Live | GUARANTEED (Turnstile element); DEFENCE-IN-DEPTH (rest) | 2026-06-22 | See APP-4 | Turnstile upgraded from inert to active this session |
+| APP-4 | **CAPTCHA on marketing signup** — Cloudflare Turnstile widget on the licence form, token verified server-side by `licence.js`, fail-closed | Live + end-to-end tested | GUARANTEED | 2026-06-22 | Live test: widget→token→server-verify→account created→setup email delivered (screenshots on file). Site key `0x4AAAAAADpDZaKR0No2Z1oy`; `TURNSTILE_SECRET_KEY` set on app project | Closes TODO-MK-1 |
+| DOC-1 | **Architecture Blueprint** (42pp) + out-of-band checklist | Complete | n/a | 2026-06-19 | PDF artifacts | Reference |
+| DOC-2 | **Three DB migrations committed to repo `/db/`** | Complete | GUARANTEED | 2026-06-19 | Repo `db/` commit `1486c8f`, byte-verified | Closed the root blind spot |
+| DOC-3 | **Repo documentation** — root `README.md`, `db/README.md`, `SECURITY.md`, `docs/README.md` (tiered), `.gitignore` | Complete | n/a | 2026-06-19/22 | Committed | `SECURITY.md` points to `security@proqure.co.uk` — confirm mailbox exists (OPS-2) |
 
 ---
 
-## C. Pre-existing controls — now confirmed with evidence
+## C. Tenant/data controls — confirmed with evidence
 
 | ID | Control | Confidence | Notes / evidence |
 |----|---------|-----------|------------------|
-| SEC-1 | Tenant isolation via Postgres RLS on all tenant tables | GUARANTEED | RLS enabled on all 6 public base tables (schema-wide audit); cross-tenant read isolation proven (Phase 1 §G) |
-| SEC-2 | `piq_ai_meter` is service-role-write-only | GUARANTEED | RESTRICTIVE policies `piq_ai_meter_no_client_{insert,update,delete}` block client writes (Query F1) |
-| SEC-3 | `members` role cannot be self-assigned | GUARANTEED | `proqure_members_guard` + `proqure_guard_member_role` trigger bodies verified (F2) |
-| SEC-4 | SECURITY DEFINER functions have pinned `search_path` | GUARANTEED | All definer functions show `SET search_path` (Query 3 / function defs) |
-| SEC-5 | Admin endpoints aal2 + allow-list + rate-limit | DEFENCE-IN-DEPTH | Confirmed in code (`admin.js`, `admin-metrics.js`, `admin-health.js` all gate on `aal2`); live env (`ADMIN_CONSOLE_EMAILS`) unconfirmed |
-| SEC-6 | Webhooks signature-verified (Stripe `constructEvent`, Resend/inbound Svix) | DEFENCE-IN-DEPTH | Confirmed in code; live secrets unconfirmed (Phase 6 / Phase 4) |
-| SEC-7 | All provider secrets server-side only; browser holds anon key + JWT | UNVERIFIED | Confirm no `VITE_`-prefixed secret (Phase 3 / TODO-VC-2) |
+| SEC-1 | Tenant isolation via Postgres RLS on all tenant tables | GUARANTEED | Schema-wide audit: all 6 public base tables `rls_enabled=true`; cross-tenant read isolation proven |
+| SEC-2 | `piq_ai_meter` service-role-write-only | GUARANTEED | RESTRICTIVE `piq_ai_meter_no_client_*` policies |
+| SEC-3 | `members` role cannot be self-assigned | GUARANTEED | `proqure_members_guard` + `proqure_guard_member_role` bodies verified |
+| SEC-4 | SECURITY DEFINER functions pin `search_path` | GUARANTEED | Function defs |
+| SEC-5 | Admin endpoints aal2 + allow-list + rate-limit | DEFENCE-IN-DEPTH | Code-confirmed (`admin*.js`); `ADMIN_CONSOLE_EMAILS` value pending reconcile (see ADMIN-1) |
+| SEC-6 | Webhooks signature-verified (Stripe/Resend/Svix) | DEFENCE-IN-DEPTH | Code-confirmed; live secrets unconfirmed (Phase 4/6) |
+| SEC-7 | All provider secrets server-side only; browser holds anon key + JWT | UNVERIFIED | Code side looks clean (only `VITE_SUPABASE_URL/ANON_KEY/INBOUND_CAPTURE_DOMAIN` exposed, none secret); full Vercel env audit = Phase 3 / TODO-VC-2 |
 
 ---
 
 ## D. Open register — blind spots, assumptions & TODO
 
-**The root blind spot is CLOSED.** All three migrations are now in the repo `/db/`
-(commit `1486c8f`), regenerated faithfully from the live database. The live security
-posture is reviewable and reproducible.
+**Root blind spot CLOSED** — all three migrations in repo `/db/` (commit `1486c8f`), regenerated from live DB.
 
-| ID | Action | Priority | Status |
-|----|--------|----------|--------|
-| TODO-DB-0 | Commit `proqure_security_migration.sql` + `proqure_billing_guard.sql` + `proqure_rpc_lockdown.sql` into the repo (`/db/`) | P0 | **Done — commit `1486c8f`** |
-| TODO-DB-1 | Verify RLS enabled + correct on all tenant tables | P0 | **Done — Guaranteed (§G, schema-wide audit)** |
-| TODO-DB-2 | Verify `piq_ai_meter` write-lock is live | P0 | **Done — Guaranteed (SEC-2)** |
-| TODO-DB-3 | Verify `members` role self-assignment is blocked | P0 | **Done — Guaranteed (SEC-3)** |
-| TODO-DB-4 | Verify SECURITY DEFINER `search_path` + RPC grants | P1 | **Done — Guaranteed (SEC-4, P1-C/D)** |
-| TODO-DB-5 | Evidence-test the billing trigger (attempt a client `plan` write; confirm neutralised) | P2 | Open (nice-to-have; body already verified) |
-| TODO-DB-6 | Decide: freeze `piq_usage.addons` server-side, or accept £-cap backstop | P1 | Open |
-| TODO-DB-7 | Run `proqure_rpc_lockdown.sql` + verify grants | P0 | **Done — Guaranteed (post-lockdown grant query)** |
-| TODO-DB-8 | Verify `is_platform_admin()` non-forgeable + rank helpers read-only | P0 | **Done — Guaranteed (F3)** |
-| TODO-DB-9 | Commit 3 migrations into repo `/db/` | P1 | **Done — commit `1486c8f`, byte-verified** |
-| TODO-ADMIN-1 | Protect `proqureadmin@proqure.co.uk` (master tenancy-bypass account): strong unique password + MFA enrolled; reconcile with `ADMIN_CONSOLE_EMAILS` | **P0** | Open (Phase 2 — first task) |
-| TODO-SB-1 | Supabase Auth: custom SMTP (not default), redirect allow-list, CAPTCHA, leaked-password, email-confirm, MFA factors | P1 | Open (Phase 2) |
-| TODO-SB-2 | Supabase backups / PITR on funded tier; network restrictions | P1 | Open (Phase 2) |
-| TODO-VC-1 | Redirect/remove the 3 non-canonical app hostnames (esp. stale `procureiq-two.vercel.app`) | P1 | Open (Phase 3) |
-| TODO-VC-2 | Env-var exposure audit (no `VITE_` secret; mark secrets Sensitive) | P0 | Open (Phase 3) |
-| TODO-VC-3 | Preview Deployment Protection (previews hit live DB + live secrets) | P1 | Open (Phase 3) |
-| TODO-VC-4 | Spend management cap/alert | P1 | Open (Phase 3) |
-| TODO-RS-1 | Resend SPF/DKIM/DMARC; webhook secret; inbound MX; plan limits | P1 | Open (Phase 4) |
-| TODO-CF-1 | Determine if domain is Cloudflare-proxied; decide single edge owner | P1 | Open (Phase 5) |
-| TODO-ST-1 | Stripe webhook secret + event-subscription match; portal config; cancel→downgrade; test→live swap; wire real payment in `licence.js` placeholder | P1 | Open (Phase 6) |
-| TODO-MK-1 | Marketing site: Turnstile on signup (+ contact) form; review neglect | P1 | Open (Phase 7) |
-| TODO-X-1 | 2FA on GitHub, Vercel, Supabase, Resend, Stripe, Cloudflare, **registrar**; registrar domain-lock | P0 | Open (Phase 8) |
-| TODO-X-2 | Secrets-in-git-history scan; rotate anything found | P1 | Open (Phase 8) |
-| TODO-X-3 | Break-glass key-rotation runbook | P2 | Open (Phase 8) |
-| TODO-P2-1 | **Reconcile overlapping `members` policy sets** (`members_*` vs `proqure_members_*`) and the `proqure_data` permissive sets into one coherent set (P1-F1) | P2 | Open |
-| TODO-P2-2 | **Consolidate the two `proqure_ai_meter_add` overloads** (text + uuid) to the single atomic uuid version (P1-F2) | P2 | Open |
+### Database / Phase 1 — all done
+| ID | Action | Status |
+|----|--------|--------|
+| TODO-DB-0..9 | RLS verify, meter lock, role guards, definer hygiene, RPC lockdown, migrations committed | **All Done — Guaranteed** |
+| TODO-DB-5 | Live client `plan`-write test (make APP-1 airtight) | Open (P2, nice-to-have; body already verified) |
+| TODO-DB-6 | Decide: freeze `piq_usage.addons` server-side vs £-cap backstop | Open (P1) |
+
+### Phase 2 — Supabase Auth — done this session
+| ID | Action | Status |
+|----|--------|--------|
+| TODO-ADMIN-1 | Master admin account | **Resolved — `proqureadmin@` was deleted long ago; gate retired (see ADMIN-1)** |
+| TODO-SB-1 | Supabase Auth: SMTP, redirect allow-list, MFA, email-confirm, CAPTCHA, leaked-password | **Mostly Done** (SMTP/redirect/MFA/email-confirm/CAPTCHA closed; leaked-password deferred → TIER-1) |
+| TODO-MK-1 | Turnstile on marketing signup | **Done — Guaranteed (APP-4)** |
+| TODO-SB-2 | Backups / PITR; network restrictions | Deferred → TIER-3 |
+
+### Funded-tier bucket (do on upgrade to Supabase Pro+)
+| ID | Action | Priority |
+|----|--------|----------|
+| TIER-1 | Leaked-password protection (HIBP) — Pro-only; mitigated now by min-10 + char-class requirements | P1 at go-live |
+| TIER-2 | SMS MFA — Pro-only; **not wanted** (TOTP-only is stronger; SIM-swap risk). Record as a deliberate no. | n/a |
+| TIER-3 | PITR / point-in-time recovery — Pro + compute add-on, billed hourly, **not covered by spend cap** | P1 at go-live |
+
+### Phase 3 — Vercel (NEXT)
+| ID | Action | Priority |
+|----|--------|----------|
+| TODO-VC-1 | Redirect/remove the 3 non-canonical app hostnames (esp. stale `procureiq-two.vercel.app`) | P1 |
+| TODO-VC-2 | Env-var exposure audit (no `VITE_` secret; mark secrets Sensitive) | P0 |
+| TODO-VC-3 | Preview Deployment Protection (previews hit live DB + live secrets) | P1 |
+| TODO-VC-4 | Spend management cap/alert | P1 |
+
+### Later phases
+| ID | Action | Phase |
+|----|--------|-------|
+| TODO-RS-1 | Resend SPF/DKIM/DMARC (confirm `proqure.co.uk` verified); webhook secret; inbound MX; plan limits | 4 |
+| TODO-CF-1 | Cloudflare-proxied? single edge owner | 5 |
+| TODO-ST-1 | Stripe webhook secret/event match; portal; cancel→downgrade; test→live; wire real payment in `licence.js` placeholder | 6 |
+| TODO-X-1 | 2FA on GitHub, Vercel, Supabase, Resend, Stripe, Cloudflare, registrar; registrar domain-lock | 8 (P0) |
+| TODO-X-2 | Secrets-in-git-history scan; rotate anything found (`.gitignore` now in place but doesn't touch history) | 8 |
+| TODO-X-3 | Break-glass key-rotation runbook | 8 |
+
+### Operational findings (this session)
+| ID | Finding | Priority | Status |
+|----|---------|----------|--------|
+| OPS-1 | **`retention-sweep` cron is dead.** `vercel.json` schedules `/api/retention-sweep` daily, but the file sits at repo **root** (`retention-sweep.js`), not in `api/`, so it's not deployed as a function → 404s silently. The 90-day telemetry-deletion backstop isn't running (privacy-commitment gap, not a breach; client-side prune still operates). **Fix:** move/rename to `api/retention-sweep.js` (GitHub: edit file, change path in filename box). | P1 | **Open** |
+| OPS-2 | `SECURITY.md` lists `security@proqure.co.uk` — confirm that mailbox exists in M365 (a disclosure address that bounces is worse than none) | P2 | Open |
+| OPS-3 | **Repo visibility.** Repo currently public (re-opened so Claude could read code). Recommendation: flip back to **private**, or hold Tier-2 docs + the cert out of it. A public repo carrying the open-gaps register + admin context is the one loose thread. | P1 | Open — decision pending |
 
 ---
 
-## E. Human-verification placement (decided 2026-06-19)
+## E. Human-verification placement (decided 2026-06-19, CAPTCHA now live)
 
-| Surface | Decision | Rationale |
-|---------|----------|-----------|
-| Marketing signup form | Turnstile | Public, unauth, creates accounts + sends mail + (later) payment |
-| Marketing contact form (if any) | Turnstile | Public unauth email trigger |
-| App login | Supabase Auth CAPTCHA | Credential-stuffing target; protect at the Supabase endpoint, not a bespoke widget |
-| Password reset | Supabase Auth CAPTCHA | Email-bomb / enumeration vector |
-| Invite (send) | None | Already authenticated + aal2 |
-| Invite (accept) | None | Emailed-link possession is the proof |
-| Admin console | None | Allow-list + aal2 + rate-limit already stronger than a CAPTCHA |
-| `/api/ai`, send-email, billing, webhooks | None | Session/role/signature already gate them |
+| Surface | Decision | Status |
+|---------|----------|--------|
+| Marketing signup form | Turnstile | **Live (APP-4)** |
+| App login | Supabase Auth CAPTCHA | Deferred — needs frontend token wiring in `procurement-dashboard.jsx` before enabling, or logins break (same fail-closed pattern as the marketing form) |
+| Password reset | Supabase Auth CAPTCHA | Deferred — as above |
+| Invite (send/accept), admin console, `/api/*` | None | Session/role/aal2/signature already gate them |
 
 ---
 
-## F. App-layer MFA (aal2) coverage — confirmed in code 2026-06-19
+## F. App-layer MFA (aal2) coverage — confirmed in code
 
-| Endpoint | aal2 enforced? | Notes |
-|----------|----------------|-------|
-| `api/create-checkout-session.js` | YES | Money endpoint |
-| `api/create-portal-session.js` | YES | Money endpoint |
-| `api/notifications.js` | YES | |
-| `api/admin.js` | YES | Admin |
-| `api/admin-metrics.js` | YES | Admin |
-| `api/admin-health.js` | YES | Admin |
-| `api/ai.js` | NO | Gated by session + role + budget/trial instead |
-| `api/send-email.js` | NO | Gated by session + role |
+| Endpoint | aal2? | Notes |
+|----------|-------|-------|
+| `create-checkout-session`, `create-portal-session`, `notifications`, `admin`, `admin-metrics`, `admin-health` | YES | Money + admin |
+| `ai`, `send-email` | NO | Gated by session + role + budget/trial instead |
 
-**Decision pending (roadmap "App MFA Phase 2"):** whether to extend aal2 to any
-remaining privileged endpoints (obvious candidate: `send-email.js`). Deliberate
-boundary, not a gap.
+Project-level MFA: **TOTP enabled**, SMS disabled (deliberate), AAL1 session-duration limit ON. Decision pending (roadmap "App MFA Phase 2"): whether to extend aal2 to `send-email`. Deliberate boundary, not a gap.
 
 ---
 
 ## G. Phase 1 — database verification (COMPLETE, 2026-06-19)
 
-**Evidence:** SQL exports run by Jordan (RLS flags, `pg_policies` dump, `pg_proc`
-definer/settings, `information_schema.triggers`, RPC grants, full `pg_get_functiondef`
-/ `pg_get_triggerdef` DDL, schema-wide RLS audit).
-
-### Verified (GUARANTEED)
-| ID | Finding | Evidence |
-|----|---------|----------|
-| P1-1 | RLS **enabled** on all 6 public base tables (`announcements`, `members`, `notification_state`, `notifications`, `proqure_billing`, `proqure_data`). The 6 are the *complete* base-table set — no untracked tables. | Schema-wide RLS audit |
-| P1-2 | **Cross-tenant read isolation** — every SELECT policy requires membership/ownership/admin; no `qual=true` for `authenticated`. | `pg_policies` dump |
-| P1-3 | **SECURITY DEFINER `search_path` pinned** on all definer functions. | Function defs |
-| P1-4 | **Billing-guard trigger live + body verified** — `trg_proqure_billing_guard` on INSERT+UPDATE; body matches committed file. | Query 4 + F2 |
-| P1-5 | `announcements` has **no client write policy** (read-only to clients). | `pg_policies` |
-| P1-6 | `notification_state` scoped to `user_id = auth.uid()`. | `pg_policies` |
-| P1-A | All lock policies are **RESTRICTIVE** (meter direct-write lock, money-key guard, role-rank guard, notif-rank guard) — they genuinely AND-lock. | Query F1 |
-| P1-B | `proqure_members_guard` + `proqure_guard_member_role` reject role escalation; only a manager may assign/change a role; safe owner-bootstrap + invite-accept paths can't alter `role`/`email`. | F2 (bodies) |
-| P1-C | `proqure_ai_meter_add` (both overloads) EXECUTE now limited to `postgres` + `service_role`; no `anon`/`authenticated`/PUBLIC. Meter-bypass vector closed. | Post-lockdown grant query |
-| P1-D | `proqure_notify` EXECUTE now limited to `postgres` + `service_role`. Notification-injection vector closed. | Post-lockdown grant query |
-| P1-E | `is_platform_admin()` compares signed `auth.jwt()->>'email'` to a hardcoded literal — non-forgeable. Rank helpers read the write-guarded `members` table (keyed on `auth.uid()`) or are `IMMUTABLE` pure mappings. No tenancy-bypass or rank-spoof. | F3 |
-
-### Phase 1 sign-off
-Tenant isolation (schema-wide RLS), the within-tenant locks (meter / money-keys /
-role-rank / notification-rank), role-escalation defence, definer-function hygiene,
-the RPC lockdown, and the platform-admin gate are all **GUARANTEED** with evidence on
-file. The one hole found (P1-C/D: client-callable definer RPCs) is fixed and verified.
-All three migrations are committed to the repo. **Phase 1 is complete — verified and
-version-controlled.**
-
-### Phase 1 findings carried forward
-| ID | Finding | Confidence | Notes |
-|----|---------|-----------|-------|
-| ADMIN-1 | **Single platform super-admin** `proqureadmin@proqure.co.uk` bypasses ALL tenancy (`is_platform_admin()` in `proqure_data` + `announcements` policies). The gate is non-forgeable; the **account itself is the master key to every tenant.** | gate: GUARANTEED · account protection: UNVERIFIED | **P0, first task of Phase 2:** strong unique password + MFA on this Supabase auth user. Reconcile/document vs `ADMIN_CONSOLE_EMAILS`. |
-| TENANT-EMAIL | **Tenant resolution is email-keyed.** `my_company()` resolves a user's tenant by matching `auth.jwt()->>'email'` against `members`. This makes **Supabase email-confirmation load-bearing for tenant isolation** — if email confirmation is off, someone could sign up under a known invited address and `my_company()` would hand them that tenant's data. | dependent on Phase 2 email-confirm setting | Verify explicitly in Phase 2 auth-settings review (item 3) |
-| P1-F1 | Overlapping legacy + new policy sets on `members` and `proqure_data` (permissive policies OR together; loosest wins). Security holds via the triggers, but effective permission is emergent. | n/a | Reconcile — TODO-P2-1 |
-| P1-F2 | Two `proqure_ai_meter_add` overloads (text + uuid). Both locked, so no security consequence; cosmetic. | n/a | Consolidate — TODO-P2-2 |
+Tenant isolation (schema-wide RLS, all 6 base tables), within-tenant locks (meter/money-keys/role-rank/notif-rank, all RESTRICTIVE), role-escalation triggers, definer hygiene, RPC lockdown (`proqure_ai_meter_add` + `proqure_notify` → service_role only), and the platform-admin gate — all **GUARANTEED** with evidence. One hole found (client-callable definer RPCs) → fixed + verified. Migrations committed. Policy counts cross-checked against live audit (28, exact match). Full detail retained in v1.0 history.
 
 ---
 
-## H. Phase 2 — Supabase Auth (NEXT — mostly dashboard, not SQL)
+## H. Phase 2 — Supabase Auth (COMPLETE, 2026-06-22)
 
-Priority order. Screenshots fine; none of these need secrets.
+| ID | Item | Outcome | Confidence | Evidence |
+|----|------|---------|-----------|----------|
+| ADMIN-1 | Platform super-admin gate | **Retired.** `proqureadmin@proqure.co.uk` was an old cross-tenant-login account, **deleted long ago**. The admin centre runs on `ADMIN_CONSOLE_EMAILS` + service role (server-side) and never used `is_platform_admin()` — so the function was vestigial. Its `OR is_platform_admin()` branches were a dormant landmine (anyone re-registering that email would inherit god-mode). **`is_platform_admin()` body hardwired to `select false`** in live DB + committed migration. | GUARANTEED | Live `prosrc` = `select false`; grep showing admin endpoints use `ADMIN_CONSOLE_EMAILS`+service role |
+| TENANT-EMAIL | Email-keyed tenancy (`my_company()` matches JWT email) | **Resolved — positive.** Trial signup uses `inviteUserByEmail` (emailed link → set password), so email ownership is proven before any session exists; tenancy lookup can't be hijacked. Public sign-up is OFF; accounts provisioned server-side only. Supabase "Confirm email" is off but **moot** for this flow. | GUARANTEED | `licence.js` L177 `inviteUserByEmail`; Supabase signup-disabled screenshot |
+| SB-SMTP | Auth email delivery | **Custom SMTP via Resend** (`smtp.resend.com`, port 465 implicit TLS, sender `accounts@proqure.co.uk`, name ProQure). Not on throttled default sender. Min-interval 60s/user. | GUARANTEED | SMTP settings screenshots |
+| SB-URL | Redirect allow-list | **Locked.** Site URL + sole redirect entry both `https://app.proqure.co.uk`. No wildcards, no stale hostnames. | GUARANTEED | URL Configuration screenshot (Total URLs: 1) |
+| SB-MFA | Multi-factor | **TOTP enabled** (the factor admin console + manager/buyer 2FA depend on); SMS disabled (deliberate); AAL1 session-duration limit ON. Max 10 factors/user. | GUARANTEED | Multi-Factor screenshot |
+| SB-PW | Password policy | Min length **10** + requires lowercase/uppercase/digits/symbols. Secure email change ON. Leaked-password protection OFF — **deferred (Pro-only, TIER-1)**. | GUARANTEED (policy) / DEFERRED (HIBP) | Email-provider settings screenshot |
 
-1. **`proqureadmin@proqure.co.uk` — MFA status** *(highest — ADMIN-1, the master key).* Authentication → Users → that user: enrolled MFA factor? Confirm strong unique password.
-2. **SMTP** — Authentication → Emails/SMTP. Custom SMTP (ideally Resend) or default Supabase sender? Decides whether invite/reset email silently throttles.
-3. **Auth protections** — min password length, leaked-password (HIBP) toggle, CAPTCHA (enabled? provider?), **and email-confirmation** (load-bearing — see TENANT-EMAIL).
-4. **URL configuration** — Site URL + Redirect URLs allow-list locked to `app.proqure.co.uk`, not wildcarded.
-5. **MFA factors + rate limits** — which factors enabled; per-hour email/token numbers.
+**Phase 2 verdict:** the Supabase-auth attack surface is hardened — admin bypass removed, signup proves ownership, auth email production-grade, redirect surface minimal, MFA strong, signup bot-protected end-to-end. Remaining auth items are paid-tier (TIER-1/3) or app-login CAPTCHA (needs frontend wiring, deferred by choice).
 
 ---
 
 ## I. Change log
-- **2026-06-19 (v1.0):** **Phase 1 COMPLETE & version-controlled.** Schema-wide RLS audit: all 6 public base tables `rls_enabled=true`, complete set, no untracked tables (SEC-1/2 → GUARANTEED). All three migrations committed to repo `/db/` (commit `1486c8f`, byte-verified identical to regenerated source) — root blind spot CLOSED (TODO-DB-0/9 done). `proqure_security_migration.sql` regenerated from live `pg_get_functiondef`/`pg_get_triggerdef`; policy counts cross-checked against live audit (28 total, exact match). `proqure_billing` confirmed server-only/service-role — RLS enable was pure hardening, no client impact. App-layer aal2 coverage mapped (§F). Carried forward: ADMIN-1 (P0, Phase 2 first task) and TENANT-EMAIL (email-keyed tenancy → email-confirm is load-bearing). Next: Phase 2 (Supabase Auth).
-- **2026-06-19 (v0.5):** P1-C/D → GUARANTEED (post-lockdown grant query: only `postgres`+`service_role`). TODO-DB-7 closed. New finding: `proqure_billing` table outside Phase 1's original 5-table scope; RLS state unverified → schema-wide audit ordered. Regenerated `proqure_security_migration.sql` from live DDL.
-- **2026-06-19 (v0.4):** Phase 1 verification complete bar repo commit. F3 confirmed `is_platform_admin()` non-forgeable + rank helpers safe (P1-E). Recorded ADMIN-1. Clarified migration status: DB-applied (evidence) but not yet in repo.
-- **2026-06-19 (v0.3):** F1 → all lock policies RESTRICTIVE (P1-A). F2 → member-role triggers block escalation (P1-B); billing-guard body verified (APP-1). HOLE FOUND: `proqure_ai_meter_add` + `proqure_notify` client-EXECUTE + DEFINER (P1-C/D); fix `proqure_rpc_lockdown.sql` delivered.
-- **2026-06-19 (v0.2):** Phase 1 partial results (§G). Verified RLS enabled, cross-tenant read isolation, definer search_path hygiene, billing-guard trigger present, announcements/notification_state scoping.
-- **2026-06-19 (v0.1):** Document created. Recorded session work (APP-1..3, DOC-1), Vercel infra (INF-1..4), human-verification decisions (E), full open register (D).
+- **2026-06-22 (v1.1):** **Phase 2 (Supabase Auth) COMPLETE.** ADMIN-1 retired (`is_platform_admin()`→`select false`, live+repo; old `proqureadmin@` account long deleted; admin centre uses `ADMIN_CONSOLE_EMAILS`+service role). TENANT-EMAIL resolved positive (invite-link signup proves ownership). SMTP (Resend custom), redirect allow-list (locked), MFA (TOTP on/SMS off/AAL1 limit on), password policy — all GUARANTEED via screenshots. CAPTCHA (APP-4) live + end-to-end tested → TODO-MK-1 closed, APP-3 Turnstile active. Funded-tier bucket recorded (TIER-1/2/3). New findings: OPS-1 (retention-sweep cron dead — file misplaced at repo root), OPS-2 (SECURITY.md mailbox), OPS-3 (repo visibility). Repo docs added (DOC-3). Next: Phase 3 (Vercel).
+- **2026-06-19 (v1.0):** Phase 1 COMPLETE & version-controlled. Schema-wide RLS audit (6/6 tables). Migrations committed (`1486c8f`, byte-verified). `proqure_security_migration.sql` regenerated from live DDL; 28 policies cross-checked. App-layer aal2 coverage mapped. Carried forward ADMIN-1, TENANT-EMAIL.
+- **2026-06-19 (v0.5):** P1-C/D → GUARANTEED (post-lockdown grants). New finding: `proqure_billing` outside original RLS scope → schema-wide audit ordered.
+- **2026-06-19 (v0.4):** Phase 1 verification complete bar repo commit. F3 (admin gate non-forgeable). ADMIN-1 recorded.
+- **2026-06-19 (v0.3):** F1 (lock policies RESTRICTIVE), F2 (member triggers), billing-guard body. HOLE FOUND: client-EXECUTE definer RPCs → `proqure_rpc_lockdown.sql`.
+- **2026-06-19 (v0.2):** Phase 1 partial — RLS enabled, cross-tenant isolation, definer hygiene, billing-guard trigger, scoping.
+- **2026-06-19 (v0.1):** Document created.
