@@ -4113,6 +4113,16 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
   }
 
   // ---- Tool & Asset Register (Phase 4) -------------------------------------
+  // Raise a managers-visible notification via the server (the browser can't emit a
+  // managers-only category itself). Fire-and-forget; never blocks the action.
+  const notifyEvent = (event, data) => {
+    if (!cloudEnabled || !supabase || !cloudUserId) return;
+    (async () => {
+      try {
+        await fetch("/api/notify-event", { method:"POST", headers:{"Content-Type":"application/json", ...(await authHeaders())}, body: JSON.stringify({ company_id: cloudUserId, event, data }) });
+      } catch (e) { /* notification is best-effort */ }
+    })();
+  };
   const nameFor = (who) => { const m=team.find(t=>(t.email||"").toLowerCase()===String(who||"").toLowerCase()); return (m&&m.name)||who||"Unknown"; };
   const assetHistEntry = (action, detail) => ({ at:new Date().toISOString(), action, detail:detail||"", by:(myEmail||"") });
 
@@ -4146,8 +4156,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
     if (mode==="transfer" && (!engineer||!engineer.trim())) { showToast("Pick who to transfer it to.","warn"); return; }
     const req = { type: mode==="transfer"?"transfer":"assign", toEngineer: mode==="transfer"?engineer.trim():"", by:(myEmail||""), at:new Date().toISOString(), note:(note||"").trim() };
     setAssets(prev=>prev.map(a=>a.id!==id?a:{...a, request:req, history:[assetHistEntry(mode==="transfer"?"Transfer requested":"Assignment requested", mode==="transfer"?`To ${engineer.trim()}`:"Requested by engineer"),...(a.history||[])]}));
-    // best-effort bell notification; engineers are gated out of the workflow category (the in-app banner is the reliable signal)
-    try{ notify({type:"info",category:"workflow",title:"Asset request awaiting approval",body:`${nameFor(myEmail)} requested ${a0?a0.name:"an asset"}`,meta:{kind:"asset_request",assetId:id}}); }catch{}
+    // Notify managers/buyers via the validated server endpoint (an engineer can't emit
+    // a managers-only category from the browser; the server does it after checking membership).
+    notifyEvent(mode==="transfer"?"asset_transfer":"asset_request", { actor:nameFor(myEmail), asset:a0?a0.name:"an asset", toEngineer: mode==="transfer"?engineer.trim():"", ref:id });
     try{logActivity("Asset request raised",a0?a0.name:"",{entity:"asset"});}catch{}
     showToast("Request submitted for approval"); setAssetPanel(null);
   };
@@ -4174,7 +4185,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
     for (const f of (files||[])) { try { const u = await uploadHirePhoto(f, assetId, "damage"); if (u) photos.push(u); } catch(e) {} }
     const report = { id:`DMG-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, status:"reported", description:description.trim(), photos, reportedBy:(myEmail||""), reportedAt:new Date().toISOString() };
     setAssets(prev=>prev.map(a=>a.id!==assetId?a:{...a, damageReports:[report,...(a.damageReports||[])], history:[assetHistEntry("Damage reported", description.trim().slice(0,80)),...(a.history||[])]}));
-    try{ notify({type:"warning",category:"workflow",title:"Damage reported",body:`${nameFor(myEmail)} reported damage to ${a0?a0.name:"an asset"}`,meta:{kind:"asset_damage",assetId}}); }catch{}
+    notifyEvent("asset_damage", { actor:nameFor(myEmail), asset:a0?a0.name:"an asset", ref:assetId });
     try{logActivity("Damage reported",a0?a0.name:"",{entity:"asset"});}catch{}
     showToast(photos.length?`Damage reported with ${photos.length} photo${photos.length>1?"s":""}`:"Damage reported");
     setDamagePanel(null);
