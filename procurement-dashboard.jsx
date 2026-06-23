@@ -74,6 +74,33 @@ const RETURN_STATUS_ORDER = ["awaiting","requested","returned","credit-outstandi
 const FLD_LABEL = {fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5};
 const FLD_INPUT = {width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"};
 
+// Phase 3 - stock-aware ordering. Detects when an item being ordered is already
+// in company stock, so the user can be prompted before buying more. Non-blocking.
+function stockNorm(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9]+/g," ").replace(/\s+/g," ").trim(); }
+function stockMatchesFor(name, stockArr){
+  const q = stockNorm(name);
+  if (q.length < 3 || !Array.isArray(stockArr) || !stockArr.length) return [];
+  const qt = q.split(" ").filter(w=>w.length>=2);
+  const out = [];
+  for (const it of stockArr){
+    if ((Number(it.qty)||0) <= 0) continue;           // only flag stock that's actually available
+    const s = stockNorm(it.name);
+    if (!s) continue;
+    let hit = false;
+    if (s===q || s.includes(q) || q.includes(s)) hit = true;
+    else {
+      const st = s.split(" ").filter(w=>w.length>=2);
+      const shared = qt.filter(w=>st.includes(w)).length;
+      const shorter = qt.length<=st.length ? qt : st;
+      const longer  = qt.length<=st.length ? st : qt;
+      const allIn = shorter.length>=2 && shorter.every(w=>longer.includes(w));
+      if (shared>=2 || allIn) hit = true;
+    }
+    if (hit) out.push(it);
+  }
+  return out;
+}
+
 // Per-tier MONTHLY allowances for the metered web-search features (the only
 // usage-variable costs). Everything else is unlimited. Catalogue online lookups
 // get their own line, separate from Measure and O&M (per Andy, Jun 2026).
@@ -6689,6 +6716,14 @@ Rules:
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>AI parsed {parsed.items?.length||0} items</div>
                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:14}}>Review and edit before sending - all fields are editable</div>
+                  {(()=>{ if(!stock.length||!parsed.items?.length) return null; const flagged=parsed.items.filter(it=>stockMatchesFor(it.description, stock).length>0); if(!flagged.length) return null; return (
+                    <div style={{background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:"var(--radius-md)",padding:"12px 16px",marginBottom:14,display:"flex",alignItems:"flex-start",gap:10}}>
+                      <div style={{flexShrink:0,marginTop:1}}><Icon name="package" size={16} color="var(--green-deep)"/></div>
+                      <div style={{fontSize:12.5,color:"var(--green-deep)",lineHeight:1.6}}>
+                        <strong>{flagged.length} of these {flagged.length===1?"items is":"items are"} already in your stock.</strong> Check the Stock tab before ordering - you may be able to use what you already have: {flagged.map(f=>f.description).filter(Boolean).slice(0,6).join(", ")}{flagged.length>6?"…":""}
+                      </div>
+                    </div>
+                  ); })()}
                   <div style={{overflowX:"auto"}}>
                     <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
                       <thead>
@@ -6710,6 +6745,9 @@ Rules:
                                   style={{...cellStyle,fontWeight:500}}
                                   onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
                                   onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}/>
+                                {(()=>{ const m=stockMatchesFor(item.description, stock); if(!m.length) return null; const tq=m.reduce((s,x)=>s+(Number(x.qty)||0),0); const locs=[...new Set(m.map(x=>(x.location||"").trim()).filter(Boolean))]; return (
+                                  <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:4,fontSize:10,fontWeight:700,color:"var(--green-deep)",background:"var(--green-light)",borderRadius:99,padding:"2px 8px",cursor:"default"}} title={`Already in company stock${locs.length?` at ${locs.join(", ")}`:""} - you may not need to order this`}><Icon name="package" size={10}/>In stock: {tq}{locs.length?` · ${locs.join(", ")}`:""}</div>
+                                ); })()}
                               </td>
                               <td style={{padding:"4px 6px",width:70}}>
                                 <input type="number" value={item.quantity||""} onChange={e=>updateItem("quantity",e.target.value)}
@@ -9909,6 +9947,7 @@ Rules:
           form={quickPO}
           setForm={setQuickPO}
           suppliers={suppliers}
+          stock={stock}
           isMobile={isMobile}
           onSubmit={handleQuickPO}
           onClose={()=>setQuickPO(null)}
@@ -10254,7 +10293,7 @@ Rules:
 }
 
 // --- Quick PO modal (emergency direct PO) ------------------------------------
-function QuickPOModal({ form, setForm, suppliers, isMobile, onSubmit, onClose, onAiFill, onScan }) {
+function QuickPOModal({ form, setForm, suppliers, isMobile, onSubmit, onClose, onAiFill, onScan, stock=[] }) {
   const upd = (patch) => setForm(f => ({ ...f, ...patch }));
   const items = form.items || [{ description:"", quantity:"", unit:"", unitPrice:"" }];
   const setItem = (idx, patch) => {
@@ -10388,6 +10427,9 @@ function QuickPOModal({ form, setForm, suppliers, isMobile, onSubmit, onClose, o
               <input value={it.unit||""} onChange={e=>setItem(idx,{unit:e.target.value})} placeholder="Unit" style={{...inputStyle,flex:1,minWidth:0,background:"var(--bg-card-solid)"}}/>
               <input value={it.unitPrice||""} onChange={e=>setItem(idx,{unitPrice:e.target.value})} placeholder="Price" style={{...inputStyle,flex:1,minWidth:0,background:"var(--bg-card-solid)"}}/>
             </div>
+            {(()=>{ const m=stockMatchesFor(it.description, stock); if(!m.length) return null; const tq=m.reduce((s,x)=>s+(Number(x.qty)||0),0); const locs=[...new Set(m.map(x=>(x.location||"").trim()).filter(Boolean))]; return (
+              <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:6,fontSize:10,fontWeight:700,color:"var(--green-deep)",background:"var(--green-light)",borderRadius:99,padding:"2px 8px"}} title={`Already in company stock${locs.length?` at ${locs.join(", ")}`:""} - you may not need to order this`}><Icon name="package" size={10}/>In stock: {tq}{locs.length?` · ${locs.join(", ")}`:""}</div>
+            ); })()}
           </div>
         ))}
         <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:2,marginBottom:10}}>Or just describe it below and enter a total - whichever is quicker.</div>
