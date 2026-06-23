@@ -2988,6 +2988,35 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
     const ok = await setActiveCompany(session.user.id, cid);
     if (ok) { try { window.location.reload(); } catch (e) {} }
   };
+  // Create another company (Step 5a). Hits the server endpoint, which mints a fresh
+  // isolated tenant owned by this user as Manager and points active_company at it;
+  // we then reload so the normal onboarding wizard runs for the new company.
+  const [newCoName, setNewCoName] = useState("");
+  const [creatingCo, setCreatingCo] = useState(false);
+  const createCompany = async () => {
+    const nm = (newCoName || "").trim();
+    if (!nm) { showToast("Enter a company name.", "warn"); return; }
+    if (!cloudEnabled || !supabase || !session) { showToast("You need to be signed in and online to create a company.", "warn"); return; }
+    setCreatingCo(true);
+    try {
+      const r = await fetch("/api/create-company", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ name: nm }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d && d.ok) {
+        showToast("Company created - opening setup...");
+        setTimeout(() => { try { window.location.reload(); } catch (e) {} }, 700);
+      } else {
+        setCreatingCo(false);
+        showToast((d && d.error) || "Could not create the company.", "warn");
+      }
+    } catch (e) {
+      setCreatingCo(false);
+      showToast("Could not reach the server. Please try again.", "warn");
+    }
+  };
   // Settings persisted to localStorage
   const [settings, setSettings] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
@@ -6301,6 +6330,10 @@ Rules:
             ))}
           </div>
           <div style={{padding:"14px 20px",borderTop:"1px solid var(--sidebar-border)"}}>
+            <button onClick={()=>handleNav("companies")} aria-label="Companies" title="Switch or add a company" style={{width:"100%",display:"flex",alignItems:"center",gap:8,background:"transparent",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8,color:"var(--sidebar-text)"}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V7l7-4v18M19 21V11l-7-4"/></svg>
+              <span style={{fontSize:13,fontWeight:600}}>Companies</span>
+            </button>
             <button onClick={()=>handleNav("contact")} aria-label="Send feedback" title="Send feedback" style={{width:"100%",display:"flex",alignItems:"center",gap:8,background:"transparent",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8,color:"var(--sidebar-text)"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
               <span style={{fontSize:13,fontWeight:600}}>Send feedback</span>
@@ -9938,6 +9971,43 @@ Rules:
           </div>
         )}
 
+        {view==="companies"&&(
+          <div className="stagger-in" style={{maxWidth:720}}>
+            <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Companies</h1>
+            <p style={{fontSize:14,color:"var(--text-secondary)",marginBottom:24}}>Switch between the companies you belong to, or set up a new one. Each company is completely separate - its data is never shared with the others.</p>
+            <div style={{display:"grid",gap:16}}>
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>{myCompanies.length>1?"Your companies":"Your company"}</div>
+                <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:14}}>{myCompanies.length>1?"Switching reloads ProQure with that company's data.":"You currently belong to one company. Create another below if you run more than one business."}</div>
+                <div style={{display:"grid",gap:8}}>
+                  {myCompanies.map(m=>{
+                    const isCurrent = m.company_id === cloudUserId;
+                    return (
+                      <button key={m.company_id} onClick={()=>{ if(!isCurrent) switchCompany(m.company_id); }} disabled={isCurrent}
+                        style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px 14px",border:"1px solid "+(isCurrent?"var(--green)":"var(--border)"),borderRadius:"var(--radius-md)",background:isCurrent?"var(--green-mint)":"var(--bg-subtle2)",cursor:isCurrent?"default":"pointer",textAlign:"left"}}>
+                        <span style={{display:"flex",flexDirection:"column",gap:2,minWidth:0}}>
+                          <span style={{fontSize:13.5,fontWeight:700,color:"var(--text-primary)",wordBreak:"break-word"}}>{m.company_name||m.company_id}</span>
+                          {m.role&&<span style={{fontSize:11,color:"var(--text-secondary)",textTransform:"capitalize"}}>{m.role}</span>}
+                        </span>
+                        <span style={{fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:99,background:isCurrent?"var(--green)":"var(--bg-subtle)",color:isCurrent?"#fff":"var(--text-secondary)",whiteSpace:"nowrap"}}>{isCurrent?"Current":"Switch"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Create another company</div>
+                <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:14}}>Sets up a brand-new, separate company that you'll manage, starting on a free trial. You'll go through a quick setup next. This is for running a second business - not for adding teammates to your current company.</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                  <input value={newCoName} onChange={e=>setNewCoName(e.target.value)} placeholder="New company name" disabled={creatingCo}
+                    onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); createCompany(); } }}
+                    style={{flex:"1 1 240px",minWidth:0,padding:"11px 13px",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:14,outline:"none"}}/>
+                  <Btn onClick={createCompany} disabled={creatingCo||!newCoName.trim()}>{creatingCo?"Creating...":"Create company"}</Btn>
+                </div>
+              </Card>
+            </div>
+          </div>
+        )}
         {view==="settings"&&(
           <div className="stagger-in" style={{maxWidth:720}}>
             <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",marginBottom:4,color:"var(--text-primary)"}}>Settings</h1>
@@ -10216,6 +10286,7 @@ Rules:
                     {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
                     {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
                     {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"mail"},
+                    {id:"companies",label:"Companies",        sub:"Switch or add a company",          icon:"building"},
                     {id:"settings", label:"Settings",         sub:"Company details and account",      icon:"settings", min:3},
                   ].filter(item=>(!item.min||roleRank(myRole)>=item.min)&&(!item.feature||featureAccess[item.feature])).map(item=>(
                     <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
