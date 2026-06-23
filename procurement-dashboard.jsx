@@ -185,32 +185,77 @@ async function cloudPush(userId, storeKey, valueObj) {
   if (error) { console.warn("cloudPush failed", storeKey, error); throw error; }
 }
 
-// Resolve the signed-in user to their COMPANY scope, so an entire team shares one
-// dataset instead of each person having a private silo. The first user of a brand-new
-// account becomes the Manager of a new company (company id = their own user id);
-// users invited by a Manager are pre-registered in `members` and join that company on
-// first sign-in. If the `members` table isn't set up yet (or the lookup fails) this
-// returns null and the caller falls back to per-user scope - so nothing breaks before
-// the database step is applied.
+// --- Multi-company foundation (Step 3c) -----------------------------------------
+// Admin-console identities must NEVER own or bootstrap a customer company. If one
+// ever signs into the customer app, resolveCompany returns {adminNoCompany:true} and
+// the app shows a notice instead of silently creating a tenant for them.
+const ADMIN_NO_BOOTSTRAP_EMAILS = ["admin@proqure.co.uk"];
+
+// The validated "which company am I acting as" record. The active_company table's own
+// row policy only accepts a company the caller is genuinely a member of, so this can
+// never be pointed at a tenant the user does not belong to.
+async function getActiveCompany(uid) {
+  try {
+    const { data, error } = await supabase.from("active_company").select("company_id").eq("user_id", uid).maybeSingle();
+    if (error) { console.warn("getActiveCompany failed", error.message); return null; }
+    return data ? data.company_id : null;
+  } catch (e) { console.warn("getActiveCompany failed", e); return null; }
+}
+async function setActiveCompany(uid, companyId) {
+  try {
+    const { error } = await supabase.from("active_company").upsert({ user_id: uid, company_id: companyId, set_at: new Date().toISOString() }, { onConflict: "user_id" });
+    if (error) { console.warn("setActiveCompany failed", error.message); return false; }
+    return true;
+  } catch (e) { console.warn("setActiveCompany failed", e); return false; }
+}
+
+// Resolve the signed-in user to the COMPANY scope they should act in, so an entire
+// team shares one dataset instead of each person having a private silo.
+//   * No membership + ordinary email -> bootstrap a new company (first Manager).
+//   * No membership + admin email     -> {adminNoCompany:true} (never bootstrap).
+//   * Exactly one membership          -> use it (and record it as the active company).
+//   * More than one membership         -> use the validated active_company if set,
+//                                         otherwise {needChoice:true} so the user picks.
+// If `members` isn't set up yet (or the lookup fails) this returns null and the caller
+// falls back to per-user scope - so nothing breaks before the database step is applied.
+// NOTE: while the members email primary key is still in place no user can hold more than
+// one membership, so the {needChoice} branch is dormant until that key is dropped (3b-3).
 async function resolveCompany(session) {
   if (!supabase || !session || !session.user) return null;
   const email = (session.user.email || "").toLowerCase();
   const uid = session.user.id;
   try {
-    const { data: rows, error } = await supabase.from("members").select("company_id,role,user_id").eq("email", email).limit(1);
+    const { data: rows, error } = await supabase.from("members").select("company_id,role,user_id").eq("email", email);
     if (error) { console.warn("resolveCompany: members lookup failed - falling back to per-user", error.message); return null; }
-    if (rows && rows.length && rows[0].company_id) {
-      // First sign-in: stamp their user id + join time so a Manager can see they're Active.
-      if (!rows[0].user_id) {
-        supabase.from("members").update({ user_id: uid, joined_at: new Date().toISOString() }).eq("email", email)
-          .then(({ error: uErr }) => { if (uErr) console.warn("resolveCompany: activate failed", uErr.message); });
-      }
-      return { companyId: rows[0].company_id, role: rows[0].role || "engineer" };
+    const memberships = (rows || []).filter(m => m && m.company_id);
+
+    // No membership yet.
+    if (memberships.length === 0) {
+      if (ADMIN_NO_BOOTSTRAP_EMAILS.includes(email)) return { adminNoCompany: true };
+      // Brand-new account = first Manager of a new company.
+      const { error: insErr } = await supabase.from("members").insert({ email, company_id: uid, role: "manager", user_id: uid });
+      if (insErr) { console.warn("resolveCompany: bootstrap insert failed - falling back", insErr.message); return null; }
+      return { companyId: uid, role: "manager", memberships: [{ company_id: uid, role: "manager" }] };
     }
-    // No membership yet: brand-new account = first Manager of a new company.
-    const { error: insErr } = await supabase.from("members").insert({ email, company_id: uid, role: "manager", user_id: uid });
-    if (insErr) { console.warn("resolveCompany: bootstrap insert failed - falling back", insErr.message); return null; }
-    return { companyId: uid, role: "manager" };
+
+    // First sign-in on any invited rows: stamp user id + join time so a Manager sees them Active.
+    if (memberships.some(m => !m.user_id)) {
+      supabase.from("members").update({ user_id: uid, joined_at: new Date().toISOString() }).eq("email", email).is("user_id", null)
+        .then(({ error: uErr }) => { if (uErr) console.warn("resolveCompany: activate failed", uErr.message); });
+    }
+
+    // Exactly one membership: use it, and remember it as the active company.
+    if (memberships.length === 1) {
+      const only = memberships[0];
+      setActiveCompany(uid, only.company_id);
+      return { companyId: only.company_id, role: only.role || "engineer", memberships };
+    }
+
+    // More than one membership: honour a valid prior choice, else ask.
+    const chosen = await getActiveCompany(uid);
+    const match = chosen ? memberships.find(m => m.company_id === chosen) : null;
+    if (match) return { companyId: match.company_id, role: match.role || "engineer", memberships };
+    return { needChoice: true, memberships };
   } catch (e) { console.warn("resolveCompany failed", e); return null; }
 }
 
@@ -10763,9 +10808,72 @@ function AppMfaScreen({ session, onDone }) {
   return <div style={wrap}><div style={card}>{Logo}{body}</div></div>;
 }
 
+// Shown when a user belongs to more than one company and hasn't a valid active choice.
+// Picking one writes the validated active_company record, then reloads so the normal
+// mount path hydrates that company's data. (Dormant until the members email key is
+// dropped in 3b-3, since no user can hold two memberships before then.)
+function CompanyChooser({ session, memberships, onPicked }) {
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState("");
+  async function signOut() { try { await supabase.auth.signOut(); } catch (e) {} }
+  async function pick(cid) {
+    if (busy) return; setErr(""); setBusy(cid);
+    const ok = await setActiveCompany(session.user.id, cid);
+    if (!ok) { setBusy(null); setErr("Could not switch to that company. Please try again."); return; }
+    onPicked(cid);
+  }
+  const wrap = { position:"fixed", inset:0, minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)", fontFamily:"'Plus Jakarta Sans',sans-serif", padding:20 };
+  const card = { background:"#fff", borderRadius:18, padding:"32px 30px", width:"100%", maxWidth:420, boxShadow:"0 24px 60px rgba(0,0,0,0.4)" };
+  const brand = { fontSize:13, fontWeight:800, letterSpacing:"0.02em", color:"#15824F", marginBottom:14 };
+  const title = { fontSize:19, fontWeight:800, color:"#15201A", margin:"0 0 6px" };
+  const sub = { fontSize:13.5, color:"#5C5B54", marginBottom:18, lineHeight:1.55 };
+  const row = { width:"100%", textAlign:"left", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, padding:"13px 15px", border:"1px solid #E2E0D9", borderRadius:12, background:"#FBFBF9", marginBottom:10, cursor: busy ? "default" : "pointer" };
+  const coName = { fontSize:14.5, fontWeight:700, color:"#1B2620", wordBreak:"break-word" };
+  const roleTag = { fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.04em", color:"#15824F", background:"#E8F3EC", padding:"3px 9px", borderRadius:999, whiteSpace:"nowrap" };
+  const linkBtn = { width:"100%", marginTop:10, padding:"8px", background:"transparent", color:"#5C5B54", border:"none", fontSize:13, cursor:"pointer" };
+  const list = memberships || [];
+  return (
+    <div style={wrap}><div style={card}>
+      <div style={brand}>ProQure</div>
+      <div style={title}>Choose a company</div>
+      <div style={sub}>Your account belongs to more than one company. Pick the one you want to work in &mdash; you can switch at any time.</div>
+      {list.map(m => (
+        <button key={m.company_id} style={row} onClick={() => pick(m.company_id)} disabled={!!busy}>
+          <span style={coName}>{m.company_name || m.company_id}</span>
+          <span style={roleTag}>{busy === m.company_id ? "Opening\u2026" : (m.role || "engineer")}</span>
+        </button>
+      ))}
+      {err ? <div style={{ fontSize:12.5, color:"#C0392B", marginTop:8 }}>{err}</div> : null}
+      <button onClick={signOut} style={linkBtn}>Sign out</button>
+    </div></div>
+  );
+}
+
+// Shown if a platform-admin identity ever signs into the customer app. We never create
+// a tenant for them; we point them at the Admin Centre instead.
+function AdminNoCompanyNotice() {
+  async function signOut() { try { await supabase.auth.signOut(); } catch (e) {} }
+  const wrap = { position:"fixed", inset:0, minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)", fontFamily:"'Plus Jakarta Sans',sans-serif", padding:20 };
+  const card = { background:"#fff", borderRadius:18, padding:"32px 30px", width:"100%", maxWidth:400, boxShadow:"0 24px 60px rgba(0,0,0,0.4)" };
+  const brand = { fontSize:13, fontWeight:800, letterSpacing:"0.02em", color:"#15824F", marginBottom:14 };
+  const title = { fontSize:19, fontWeight:800, color:"#15201A", margin:"0 0 6px" };
+  const sub = { fontSize:13.5, color:"#5C5B54", marginBottom:18, lineHeight:1.55 };
+  const linkBtn = { width:"100%", marginTop:6, padding:"10px", background:"linear-gradient(135deg,#1E9E63,#15824F)", color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:700, cursor:"pointer" };
+  return (
+    <div style={wrap}><div style={card}>
+      <div style={brand}>ProQure</div>
+      <div style={title}>Admin account</div>
+      <div style={sub}>This is a platform admin account and isn&rsquo;t a member of any company, so there&rsquo;s nothing to open here. Please use the Admin Centre at <b>/admin.html</b> instead.</div>
+      <button onClick={signOut} style={linkBtn}>Sign out</button>
+    </div></div>
+  );
+}
+
 function AppInner() {
   const [session, setSession] = useState(null);
   const [companyId, setCompanyId] = useState(null);
+  const [chooser, setChooser] = useState(null);          // memberships[] when a company choice is required
+  const [adminNotice, setAdminNotice] = useState(false); // admin identity signed into the app with no tenant
   const [needPassword, setNeedPassword] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
@@ -10819,6 +10927,10 @@ function AppInner() {
       setReady(false);
       (async () => {
         const co = await resolveCompany(session);
+        // Multi-company: an admin identity with no tenant, or a user who must choose.
+        if (co && co.adminNoCompany) { if (active) { setAdminNotice(true); setChooser(null); setMfaRole("_unknown"); setReady(false); } return; }
+        if (co && co.needChoice) { if (active) { setChooser(co.memberships || []); setAdminNotice(false); setMfaRole("_unknown"); setReady(false); } return; }
+        if (active) { setChooser(null); setAdminNotice(false); }
         const resolved = !!(co && co.companyId);
         if (active) setMfaRole(co && co.role ? co.role : "_unknown");
         const scope = (co && co.companyId) || session.user.id; // fallback: per-user scope
@@ -10840,7 +10952,7 @@ function AppInner() {
         if (active) setReady(true);
       })();
     } else {
-      setReady(false); setCompanyId(null); setMfaRole(null);
+      setReady(false); setCompanyId(null); setMfaRole(null); setChooser(null); setAdminNotice(false);
     }
     return () => { active = false; };
   }, [session]);
@@ -10874,6 +10986,8 @@ function AppInner() {
   }
   if (!session) return <LoginScreen onLoggedIn={setSession} />;
   if (needPassword) return <SetPassword onDone={() => { setNeedPassword(false); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} }} />;
+  if (adminNotice) return <AdminNoCompanyNotice />;
+  if (chooser) return <CompanyChooser session={session} memberships={chooser} onPicked={() => { try { window.location.reload(); } catch (e) { setChooser(null); } }} />;
   if (!ready) {
     return <div style={loadStyle}>Syncing your data...</div>;
   }
