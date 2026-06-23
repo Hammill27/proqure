@@ -85,6 +85,17 @@ const ASSET_STATUS = {
 const ASSET_STATUS_ORDER = ["available","assigned","in-storage","in-transit","under-repair","damaged","lost","written-off"];
 const ASSET_CATEGORIES = ["Access equipment","Test equipment","Power tools","Hand tools","Plant & machinery","IT / electronics","Other"];
 const ASSET_LOCKED = ["lost","written-off"]; // not assignable or requestable
+// Damage reports (Phase 5). Six statuses from the spec.
+const DAMAGE_STATUS = {
+  "reported":        {label:"Reported",       bg:"var(--red-light)",   col:"var(--red)"},
+  "under-review":    {label:"Under review",   bg:"var(--amber-light)", col:"var(--amber)"},
+  "awaiting-repair": {label:"Awaiting repair",bg:"var(--amber-light)", col:"var(--amber)"},
+  "repaired":        {label:"Repaired",       bg:"var(--green-light)", col:"var(--green-deep)"},
+  "replaced":        {label:"Replaced",       bg:"var(--green-light)", col:"var(--green-deep)"},
+  "written-off":     {label:"Written off",    bg:"var(--bg-subtle2)",  col:"var(--text-tertiary)"},
+};
+const DAMAGE_STATUS_ORDER = ["reported","under-review","awaiting-repair","repaired","replaced","written-off"];
+const DAMAGE_OPEN = (d) => !["repaired","replaced","written-off"].includes(d && d.status);
 // Shared form field styles (used by the Returns form; theme-aware so selects render correctly).
 const FLD_LABEL = {fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5};
 const FLD_INPUT = {width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"};
@@ -3069,6 +3080,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
   const [assetDel,  setAssetDel]  = useState(null); // id pending remove-confirm
   const [assetPanel, setAssetPanel] = useState(null); // {id, mode:"assign"|"request"|"transfer", engineer, note}
   const [assetHistOpen, setAssetHistOpen] = useState(null); // id whose movement history is expanded
+  const [damagePanel, setDamagePanel] = useState(null); // {assetId, description, files:[File], busy}
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
   // Usage metering: quiet per-instance counters for the future admin dashboard. Invisible to users.
@@ -4121,8 +4133,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
     if (!can.manageAssets(myRole)) { showToast("Only a Buyer or Manager can change status.","warn"); return; }
     setAssets(prev=>prev.map(a=>{
       if (a.id!==id) return a;
-      const patch={ status, history:[assetHistEntry("Status changed",`→ ${ASSET_STATUS[status]?.label||status}`),...(a.history||[])] };
+      const patch={ status, history:[assetHistEntry("Status changed",`→ ${ASSET_STATUS[status]?.label||status}${status==="lost"&&a.assignedTo?` (last with ${a.assignedTo})`:""}`),...(a.history||[])] };
       if (status==="available"||status==="in-storage") patch.assignedTo=""; // freed; lost/written-off keep who held it
+      if (status==="lost") { patch.lostFrom = a.assignedTo || a.lostFrom || ""; patch.lostAt = new Date().toISOString(); }
       return {...a, ...patch};
     }));
     try{logActivity("Asset status changed",`→ ${ASSET_STATUS[status]?.label||status}`,{entity:"asset"});}catch{}
@@ -4152,6 +4165,24 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
     if (!can.manageAssets(myRole)) { showToast("Only a Buyer or Manager can reject.","warn"); return; }
     setAssets(prev=>prev.map(a=>a.id!==id||!a.request?a:{...a, request:null, history:[assetHistEntry("Request rejected",`Rejected by ${nameFor(myEmail)}`),...(a.history||[])]}));
     showToast("Request rejected");
+  };
+  const submitDamageReport = async (assetId, description, files) => {
+    const a0 = assets.find(x=>x.id===assetId);
+    if (!description || !description.trim()) { showToast("Add a short description of the damage.","warn"); return; }
+    setDamagePanel(p=> (p && p.assetId===assetId) ? {...p, busy:true} : p);
+    const photos = [];
+    for (const f of (files||[])) { try { const u = await uploadHirePhoto(f, assetId, "damage"); if (u) photos.push(u); } catch(e) {} }
+    const report = { id:`DMG-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, status:"reported", description:description.trim(), photos, reportedBy:(myEmail||""), reportedAt:new Date().toISOString() };
+    setAssets(prev=>prev.map(a=>a.id!==assetId?a:{...a, damageReports:[report,...(a.damageReports||[])], history:[assetHistEntry("Damage reported", description.trim().slice(0,80)),...(a.history||[])]}));
+    try{ notify({type:"warning",category:"workflow",title:"Damage reported",body:`${nameFor(myEmail)} reported damage to ${a0?a0.name:"an asset"}`,meta:{kind:"asset_damage",assetId}}); }catch{}
+    try{logActivity("Damage reported",a0?a0.name:"",{entity:"asset"});}catch{}
+    showToast(photos.length?`Damage reported with ${photos.length} photo${photos.length>1?"s":""}`:"Damage reported");
+    setDamagePanel(null);
+  };
+  const damageStatus = (assetId, reportId, status) => {
+    if (!can.manageAssets(myRole)) { showToast("Only a Buyer or Manager can update damage reports.","warn"); return; }
+    setAssets(prev=>prev.map(a=>a.id!==assetId?a:{...a, damageReports:(a.damageReports||[]).map(d=>d.id===reportId?{...d,status}:d), history:[assetHistEntry("Damage report updated",`→ ${DAMAGE_STATUS[status]?.label||status}`),...(a.history||[])]}));
+    try{logActivity("Damage report updated",`→ ${DAMAGE_STATUS[status]?.label||status}`,{entity:"asset"});}catch{}
   };
 
   async function addCollectionPhoto(id, file) {
@@ -7651,10 +7682,17 @@ Rules:
             </div>
 
             {/* Manager approval banner */}
-            {can.manageAssets(myRole)&&(()=>{ const pend=assets.filter(a=>a.request); if(!pend.length) return null; return (
+            {can.manageAssets(myRole)&&(()=>{
+              const pend = assets.filter(a=>a.request).length;
+              const openDmg = assets.reduce((n,a)=>n+((a.damageReports||[]).filter(DAMAGE_OPEN).length),0);
+              if (!pend && !openDmg) return null;
+              const parts=[];
+              if (pend) parts.push(`${pend} asset ${pend===1?"request":"requests"} awaiting approval`);
+              if (openDmg) parts.push(`${openDmg} open damage ${openDmg===1?"report":"reports"}`);
+              return (
               <div style={{background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",padding:"12px 16px",marginBottom:14,marginTop:14,display:"flex",alignItems:"center",gap:10}}>
                 <Icon name="flag" size={16} color="var(--amber)"/>
-                <div style={{fontSize:12.5,color:"var(--amber)",fontWeight:700}}>{pend.length} asset {pend.length===1?"request is":"requests are"} awaiting your approval.</div>
+                <div style={{fontSize:12.5,color:"var(--amber)",fontWeight:700}}>{parts.join(" · ")}.</div>
               </div>
             ); })()}
 
@@ -7686,6 +7724,7 @@ Rules:
                   <div><label style={FLD_LABEL}>Purchase date</label><input type="date" value={assetForm.purchaseDate||""} onChange={e=>setAssetForm(p=>({...p,purchaseDate:e.target.value}))} style={FLD_INPUT}/></div>
                   <div><label style={FLD_LABEL}>Assigned to (optional)</label><input list="pq_engineers" value={assetForm.assignedTo||""} onChange={e=>setAssetForm(p=>({...p,assignedTo:e.target.value}))} placeholder="engineer name" style={FLD_INPUT}/></div>
                   <div style={{gridColumn:isMobile?"auto":"1 / -1"}}><label style={FLD_LABEL}>Notes</label><textarea value={assetForm.notes||""} onChange={e=>setAssetForm(p=>({...p,notes:e.target.value}))} placeholder="optional notes" rows={2} style={{...FLD_INPUT,resize:"vertical"}}/></div>
+                  {assetForm.status==="lost"&&(<div style={{gridColumn:isMobile?"auto":"1 / -1"}}><label style={FLD_LABEL}>Recovery action / charge (lost asset)</label><input value={assetForm.recoveryNote||""} onChange={e=>setAssetForm(p=>({...p,recoveryNote:e.target.value}))} placeholder="e.g. charge to job, order replacement, write off" style={FLD_INPUT}/></div>)}
                 </div>
                 <div style={{display:"flex",gap:8,marginTop:14}}>
                   <button onClick={()=>{
@@ -7696,7 +7735,7 @@ Rules:
                       showToast("Asset updated");
                     } else {
                       const st=assetForm.status||"available";
-                      const rec={ id:`AST-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, name, category:(assetForm.category||"").trim(), assetId:(assetForm.assetId||"").trim(), serial:(assetForm.serial||"").trim(), status:st, location:(assetForm.location||"").trim(), assignedTo:(assetForm.assignedTo||"").trim(), assignedAt:(assetForm.assignedTo||"").trim()?new Date().toISOString():"", purchaseDate:assetForm.purchaseDate||"", notes:(assetForm.notes||"").trim(), request:null, addedBy:myEmail||"", dateAdded:new Date().toISOString(), history:[assetHistEntry("Added to register",`Status: ${ASSET_STATUS[st]?.label||st}${(assetForm.assignedTo||"").trim()?` · assigned to ${(assetForm.assignedTo||"").trim()}`:""}`)] };
+                      const rec={ id:`AST-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, name, category:(assetForm.category||"").trim(), assetId:(assetForm.assetId||"").trim(), serial:(assetForm.serial||"").trim(), status:st, location:(assetForm.location||"").trim(), assignedTo:(assetForm.assignedTo||"").trim(), assignedAt:(assetForm.assignedTo||"").trim()?new Date().toISOString():"", purchaseDate:assetForm.purchaseDate||"", notes:(assetForm.notes||"").trim(), request:null, addedBy:myEmail||"", dateAdded:new Date().toISOString(), recoveryNote:(assetForm.recoveryNote||"").trim(), history:[assetHistEntry("Added to register",`Status: ${ASSET_STATUS[st]?.label||st}${(assetForm.assignedTo||"").trim()?` · assigned to ${(assetForm.assignedTo||"").trim()}`:""}`)] };
                       setAssets(prev=>[rec,...prev]);
                       try{logActivity("Asset added",name,{entity:"asset"});}catch{}
                       showToast("Asset added");
@@ -7722,6 +7761,7 @@ Rules:
                   const locked = ASSET_LOCKED.includes(a.status);
                   const canRequest = !locked && !a.request && !mine;
                   const panelOpen = assetPanel&&assetPanel.id===a.id;
+                  const damageOpen = damagePanel&&damagePanel.assetId===a.id;
                   return (
                     <div key={a.id} style={{background:"var(--bg-card-solid)",border:`1px solid ${a.request?"var(--amber)":"var(--border)"}`,borderRadius:"var(--radius-md)",padding:"16px 18px",boxShadow:"var(--shadow-sm)"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
@@ -7735,6 +7775,7 @@ Rules:
                             {a.category||"Uncategorised"}{a.assetId?` · ${a.assetId}`:""}{a.serial?` · S/N ${a.serial}`:""}{a.location?` · ${a.location}`:""}
                           </div>
                           {a.assignedTo&&<div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>{locked?"Was with":"With"} <strong>{a.assignedTo}</strong>{a.assignedAt?` since ${new Date(a.assignedAt).toLocaleDateString("en-GB")}`:""}</div>}
+                          {a.status==="lost"&&<div style={{fontSize:12,color:"var(--red)",fontWeight:600,marginTop:2}}>Reported lost{a.lostAt?` on ${new Date(a.lostAt).toLocaleDateString("en-GB")}`:""}{(a.lostFrom||a.assignedTo)?` · last with ${a.lostFrom||a.assignedTo}`:""}{a.recoveryNote?` · ${a.recoveryNote}`:""}</div>}
                           {a.purchaseDate&&<div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:2}}>Purchased {new Date(a.purchaseDate).toLocaleDateString("en-GB")}</div>}
                           {a.notes&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:4,padding:"6px 10px",background:"var(--bg-subtle2)",borderRadius:6,borderLeft:"3px solid #15824F"}}>{a.notes}</div>}
                           {a.request&&(
@@ -7750,6 +7791,34 @@ Rules:
                           )}
                         </div>
                       </div>
+
+                      {/* Damage reports */}
+                      {(a.damageReports&&a.damageReports.length>0)&&(
+                        <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)",display:"flex",flexDirection:"column",gap:8}}>
+                          {a.damageReports.map(d=>{ const ds=DAMAGE_STATUS[d.status]||DAMAGE_STATUS["reported"]; return (
+                            <div key={d.id} style={{background:"var(--bg-subtle2)",borderRadius:8,padding:"10px 12px"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                                <span style={{fontSize:11,fontWeight:700,color:"var(--red)"}}>Damage</span>
+                                <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:ds.bg,color:ds.col,textTransform:"uppercase",letterSpacing:"0.03em"}}>{ds.label}</span>
+                              </div>
+                              <div style={{fontSize:12.5,color:"var(--text-primary)",lineHeight:1.6}}>{d.description}</div>
+                              {d.photos&&d.photos.length>0&&(
+                                <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+                                  {d.photos.map((u,pi)=><a key={pi} href={u} target="_blank" rel="noreferrer"><img src={u} alt="damage" style={{width:54,height:54,objectFit:"cover",borderRadius:8,border:"1px solid var(--border)"}}/></a>)}
+                                </div>
+                              )}
+                              <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:6}}>Reported by {nameFor(d.reportedBy)} · {new Date(d.reportedAt).toLocaleDateString("en-GB")} {new Date(d.reportedAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}</div>
+                              {can.manageAssets(myRole)&&(
+                                <div style={{marginTop:8}}>
+                                  <select value={d.status||"reported"} onChange={e=>damageStatus(a.id,d.id,e.target.value)} style={{fontSize:12,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"6px 10px",cursor:"pointer"}}>
+                                    {DAMAGE_STATUS_ORDER.map(s=><option key={s} value={s}>{DAMAGE_STATUS[s].label}</option>)}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          ); })}
+                        </div>
+                      )}
 
                       {/* Action panel (assign / request / transfer) */}
                       {panelOpen&&(
@@ -7773,9 +7842,34 @@ Rules:
                         </div>
                       )}
 
+                      {/* Damage report panel */}
+                      {damageOpen&&(
+                        <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                          <label style={FLD_LABEL}>Describe the damage</label>
+                          <textarea value={damagePanel.description||""} onChange={e=>setDamagePanel(p=>({...p,description:e.target.value}))} placeholder="what's wrong, and how it happened" rows={2} style={{...FLD_INPUT,resize:"vertical"}}/>
+                          <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                            <label style={{fontSize:12.5,fontWeight:600,color:"#15824F",background:"var(--green-light)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}>
+                              <Icon name="paperclip" size={12}/>Add photos
+                              <input type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{ const fs=Array.from(e.target.files||[]); setDamagePanel(p=>({...p,files:[...((p&&p.files)||[]),...fs]})); e.target.value=""; }}/>
+                            </label>
+                            {damagePanel.files&&damagePanel.files.length>0&&<span style={{fontSize:12,color:"var(--text-secondary)"}}>{damagePanel.files.length} photo{damagePanel.files.length>1?"s":""} ready</span>}
+                          </div>
+                          {damagePanel.files&&damagePanel.files.length>0&&(
+                            <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                              {damagePanel.files.map((f,fi)=><img key={fi} src={URL.createObjectURL(f)} alt="preview" style={{width:48,height:48,objectFit:"cover",borderRadius:6,border:"1px solid var(--border)"}}/>)}
+                            </div>
+                          )}
+                          <div style={{display:"flex",gap:8,marginTop:12}}>
+                            <button disabled={damagePanel.busy} onClick={()=>submitDamageReport(a.id, damagePanel.description, damagePanel.files)} style={{fontSize:12.5,fontWeight:700,color:"#fff",background:damagePanel.busy?"var(--border)":"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 16px",cursor:damagePanel.busy?"wait":"pointer"}}>{damagePanel.busy?"Submitting…":"Submit report"}</button>
+                            <button onClick={()=>setDamagePanel(null)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 16px",cursor:"pointer"}}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Actions row */}
-                      {!panelOpen&&(
+                      {!panelOpen&&!damageOpen&&(
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                          {!ASSET_LOCKED.includes(a.status)&&<button onClick={()=>setDamagePanel({assetId:a.id,description:"",files:[]})} style={{fontSize:12.5,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}><Icon name="flag" size={12}/>Report damage</button>}
                           {can.manageAssets(myRole)?(<>
                             <select value={a.status||"available"} onChange={e=>assetStatus(a.id, e.target.value)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer"}}>
                               {ASSET_STATUS_ORDER.map(s=><option key={s} value={s}>{ASSET_STATUS[s].label}</option>)}
