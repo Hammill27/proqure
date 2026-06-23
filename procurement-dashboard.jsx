@@ -57,6 +57,7 @@ const can = {
   viewAllJobs: (role) => roleRank(role) >= 2,   // buyer and above see all jobs; engineers see only their own
   manageSuppliers:(role)=> roleRank(role) >= 2, // buyer and above add/edit suppliers (remove stays manager-only)
   manageStock: (role) => roleRank(role) >= 2,    // buyer and above edit/remove stock; engineers can add + view
+  manageAssets:(role) => roleRank(role) >= 2,    // buyer and above add/assign/approve assets; engineers request + view
 };
 
 // Returns lifecycle (Phase 2). The six statuses from the spec, in order.
@@ -70,6 +71,20 @@ const RETURN_STATUS = {
   "closed":             {label:"Closed",               bg:"var(--bg-subtle2)",   col:"var(--text-secondary)"},
 };
 const RETURN_STATUS_ORDER = ["awaiting","requested","returned","credit-outstanding","credit-received","closed"];
+// Tool & Asset Register (Phase 4). Eight statuses from the spec.
+const ASSET_STATUS = {
+  "available":    {label:"Available",   bg:"var(--green-light)",  col:"var(--green-deep)"},
+  "assigned":     {label:"Assigned",    bg:"var(--indigo-light)", col:"var(--indigo)"},
+  "in-storage":   {label:"In storage",  bg:"var(--bg-subtle2)",   col:"var(--text-secondary)"},
+  "in-transit":   {label:"In transit",  bg:"var(--amber-light)",  col:"var(--amber)"},
+  "under-repair": {label:"Under repair",bg:"var(--amber-light)",  col:"var(--amber)"},
+  "damaged":      {label:"Damaged",     bg:"var(--red-light)",    col:"var(--red)"},
+  "lost":         {label:"Lost",        bg:"var(--red-light)",    col:"var(--red)"},
+  "written-off":  {label:"Written off", bg:"var(--bg-subtle2)",   col:"var(--text-tertiary)"},
+};
+const ASSET_STATUS_ORDER = ["available","assigned","in-storage","in-transit","under-repair","damaged","lost","written-off"];
+const ASSET_CATEGORIES = ["Access equipment","Test equipment","Power tools","Hand tools","Plant & machinery","IT / electronics","Other"];
+const ASSET_LOCKED = ["lost","written-off"]; // not assignable or requestable
 // Shared form field styles (used by the Returns form; theme-aware so selects render correctly).
 const FLD_LABEL = {fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5};
 const FLD_INPUT = {width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"};
@@ -156,7 +171,7 @@ const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", busines
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices","piq_stock","piq_returns"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices","piq_stock","piq_returns","piq_assets"];
 // Pure money/price keys an engineer has no operational need for. The real gate is
 // server-side RLS (proqure_security_migration.sql); the client mirrors it so an
 // engineer never caches or echoes this data. KEEP IN SYNC WITH THE SQL POLICY.
@@ -2670,6 +2685,7 @@ const ICON_PATHS = {
   mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0M12 17v4"/>',
   search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>',
   package: '<path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3.3 7L12 12l8.7-5M12 12v10"/>',
+  wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
   building: '<rect x="4" y="3" width="16" height="18" rx="1"/><line x1="9" y1="7" x2="9" y2="7.01"/><line x1="15" y1="7" x2="15" y2="7.01"/><line x1="9" y1="11" x2="9" y2="11.01"/><line x1="15" y1="11" x2="15" y2="11.01"/><line x1="9" y1="15" x2="15" y2="15"/>',
   paperclip: '<path d="M21 11l-8.5 8.5a5 5 0 01-7-7L14 4a3.3 3.3 0 014.7 4.7l-8.5 8.5a1.7 1.7 0 01-2.4-2.4l7.8-7.8"/>',
   send: '<line x1="21" y1="3" x2="10" y2="14"/><polygon points="21 3 14 21 10 14 3 10 21 3"/>',
@@ -3048,6 +3064,11 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
   const [returns,   setReturns]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_returns")||"[]")}catch{return []} });
   const [returnForm, setReturnForm] = useState(null); // null | {} (new) | {id,...} (edit)
   const [returnDel,  setReturnDel]  = useState(null); // id pending remove-confirm
+  const [assets,    setAssets]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_assets")||"[]")}catch{return []} });
+  const [assetForm, setAssetForm] = useState(null); // null | {} (new) | {id,...} (edit)
+  const [assetDel,  setAssetDel]  = useState(null); // id pending remove-confirm
+  const [assetPanel, setAssetPanel] = useState(null); // {id, mode:"assign"|"request"|"transfer", engineer, note}
+  const [assetHistOpen, setAssetHistOpen] = useState(null); // id whose movement history is expanded
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
   // Usage metering: quiet per-instance counters for the future admin dashboard. Invisible to users.
@@ -4078,6 +4099,60 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
       showToast("Return email may not have sent; record updated anyway.","warn");
     }
   }
+
+  // ---- Tool & Asset Register (Phase 4) -------------------------------------
+  const nameFor = (who) => { const m=team.find(t=>(t.email||"").toLowerCase()===String(who||"").toLowerCase()); return (m&&m.name)||who||"Unknown"; };
+  const assetHistEntry = (action, detail) => ({ at:new Date().toISOString(), action, detail:detail||"", by:(myEmail||"") });
+
+  const assetAssign = (id, engineer) => {
+    if (!can.manageAssets(myRole)) { showToast("Only a Buyer or Manager can assign assets.","warn"); return; }
+    if (!engineer || !engineer.trim()) { showToast("Pick an engineer first.","warn"); return; }
+    const eng = engineer.trim();
+    setAssets(prev=>prev.map(a=>a.id!==id?a:{...a, assignedTo:eng, assignedAt:new Date().toISOString(), status:"assigned", request:null, history:[assetHistEntry("Assigned",`Assigned to ${eng}`),...(a.history||[])]}));
+    try{logActivity("Asset assigned",eng,{entity:"asset"});}catch{}
+    showToast(`Assigned to ${eng}`); setAssetPanel(null);
+  };
+  const assetReturn = (id, where) => {
+    setAssets(prev=>prev.map(a=>a.id!==id?a:{...a, status:"in-storage", location:where||a.location||"Storage", assignedTo:"", request:null, history:[assetHistEntry("Returned",`Returned to ${where||"storage"}`),...(a.history||[])]}));
+    try{logActivity("Asset returned",where||"storage",{entity:"asset"});}catch{}
+    showToast(`Returned to ${where||"storage"}`); setAssetPanel(null);
+  };
+  const assetStatus = (id, status) => {
+    if (!can.manageAssets(myRole)) { showToast("Only a Buyer or Manager can change status.","warn"); return; }
+    setAssets(prev=>prev.map(a=>{
+      if (a.id!==id) return a;
+      const patch={ status, history:[assetHistEntry("Status changed",`→ ${ASSET_STATUS[status]?.label||status}`),...(a.history||[])] };
+      if (status==="available"||status==="in-storage") patch.assignedTo=""; // freed; lost/written-off keep who held it
+      return {...a, ...patch};
+    }));
+    try{logActivity("Asset status changed",`→ ${ASSET_STATUS[status]?.label||status}`,{entity:"asset"});}catch{}
+  };
+  const assetSubmitRequest = (id, mode, engineer, note) => {
+    const a0 = assets.find(x=>x.id===id);
+    if (a0 && ASSET_LOCKED.includes(a0.status)) { showToast("That asset is locked and can't be requested.","warn"); return; }
+    if (mode==="transfer" && (!engineer||!engineer.trim())) { showToast("Pick who to transfer it to.","warn"); return; }
+    const req = { type: mode==="transfer"?"transfer":"assign", toEngineer: mode==="transfer"?engineer.trim():"", by:(myEmail||""), at:new Date().toISOString(), note:(note||"").trim() };
+    setAssets(prev=>prev.map(a=>a.id!==id?a:{...a, request:req, history:[assetHistEntry(mode==="transfer"?"Transfer requested":"Assignment requested", mode==="transfer"?`To ${engineer.trim()}`:"Requested by engineer"),...(a.history||[])]}));
+    // best-effort bell notification; engineers are gated out of the workflow category (the in-app banner is the reliable signal)
+    try{ notify({type:"info",category:"workflow",title:"Asset request awaiting approval",body:`${nameFor(myEmail)} requested ${a0?a0.name:"an asset"}`,meta:{kind:"asset_request",assetId:id}}); }catch{}
+    try{logActivity("Asset request raised",a0?a0.name:"",{entity:"asset"});}catch{}
+    showToast("Request submitted for approval"); setAssetPanel(null);
+  };
+  const assetApprove = (id) => {
+    if (!can.manageAssets(myRole)) { showToast("Only a Buyer or Manager can approve.","warn"); return; }
+    setAssets(prev=>prev.map(a=>{
+      if (a.id!==id||!a.request) return a;
+      const r=a.request; const target = r.type==="transfer" ? r.toEngineer : nameFor(r.by);
+      return {...a, assignedTo:target, assignedAt:new Date().toISOString(), status:"assigned", request:null, history:[assetHistEntry("Request approved",`Assigned to ${target} (approved by ${nameFor(myEmail)})`),...(a.history||[])]};
+    }));
+    try{logActivity("Asset request approved","",{entity:"asset"});}catch{}
+    showToast("Approved & assigned");
+  };
+  const assetReject = (id) => {
+    if (!can.manageAssets(myRole)) { showToast("Only a Buyer or Manager can reject.","warn"); return; }
+    setAssets(prev=>prev.map(a=>a.id!==id||!a.request?a:{...a, request:null, history:[assetHistEntry("Request rejected",`Rejected by ${nameFor(myEmail)}`),...(a.history||[])]}));
+    showToast("Request rejected");
+  };
 
   async function addCollectionPhoto(id, file) {
     if (!file) return;
@@ -5149,6 +5224,7 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_hires",JSON.stringify(hires))}catch{} },[hires]);
   useEffect(()=>{ try{localStorage.setItem("piq_stock",JSON.stringify(stock))}catch{} },[stock]);
   useEffect(()=>{ try{localStorage.setItem("piq_returns",JSON.stringify(returns))}catch{} },[returns]);
+  useEffect(()=>{ try{localStorage.setItem("piq_assets",JSON.stringify(assets))}catch{} },[assets]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
   useEffect(()=>{ try{localStorage.setItem("piq_usage",JSON.stringify(usage))}catch{} },[usage]);
@@ -5193,6 +5269,7 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_stock", stock); }, [stock, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_returns", returns); }, [returns, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_assets", assets); }, [assets, queueCloudPush]);
   // Compute hire-vs-buy suggestions (only for cost-viewers, only with enough history)
   useEffect(()=>{
     if (!can.viewCosts(myRole)) { setHireBuyTips([]); return; }
@@ -5559,6 +5636,7 @@ ${settings.company||""}`;
           {id:"hire",     label:"Hire", feature:"hire", d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
           {id:"stock",    label:"Stock", d:"M12 2l9 5v10l-9 5-9-5V7zM3.3 7L12 12l8.7-5M12 12v10"},
           {id:"returns",  label:"Returns", d:"M3 7v6h6M3 13a9 9 0 109-9 9 9 0 00-6.4 2.6L3 13"},
+          {id:"assets",   label:"Assets", d:"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"},
           {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
           {id:"library",  label:"Library",        min:2, d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
@@ -7552,6 +7630,195 @@ Rules:
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {view==="assets"&&(
+          <div className="stagger-in" style={{maxWidth:980}}>
+            <datalist id="pq_engineers">{team.map(m=><option key={m.email||m.name} value={m.name||m.email}/>)}</datalist>
+            <datalist id="pq_asset_locations"><option value="Office"/><option value="Storage unit"/><option value="Lockup"/><option value="Warehouse"/><option value="Engineer vehicle"/><option value="On site"/></datalist>
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:12}}>
+              <div>
+                <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Tools &amp; assets</h1>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Company-owned tools, plant &amp; equipment - who has what, where it is, and its full movement history</p>
+              </div>
+              {can.manageAssets(myRole)&&(
+                <button onClick={()=>setAssetForm(assetForm?null:{status:"available"})} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:14,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer",fontWeight:700}}>
+                  <Icon name="wrench" size={14} style={{verticalAlign:"-2px"}}/>{assetForm?"Close":"Add asset"}
+                </button>
+              )}
+            </div>
+
+            {/* Manager approval banner */}
+            {can.manageAssets(myRole)&&(()=>{ const pend=assets.filter(a=>a.request); if(!pend.length) return null; return (
+              <div style={{background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-md)",padding:"12px 16px",marginBottom:14,marginTop:14,display:"flex",alignItems:"center",gap:10}}>
+                <Icon name="flag" size={16} color="var(--amber)"/>
+                <div style={{fontSize:12.5,color:"var(--amber)",fontWeight:700}}>{pend.length} asset {pend.length===1?"request is":"requests are"} awaiting your approval.</div>
+              </div>
+            ); })()}
+
+            {assets.length>0&&(()=>{
+              const assigned = assets.filter(a=>a.status==="assigned").length;
+              const avail = assets.filter(a=>a.status==="available").length;
+              const issues = assets.filter(a=>["under-repair","damaged","lost"].includes(a.status)).length;
+              return (
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:22,marginTop:14}}>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{assets.length}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>asset{assets.length!==1?"s":""}</div></div>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--indigo)"}}>{assigned}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>out with engineers</div></div>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--green-deep)"}}>{avail}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>available</div></div>
+                  <div style={{background:issues?"var(--red-light)":"var(--bg-card-solid)",border:`1px solid ${issues?"var(--red)":"var(--border)"}`,borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:issues?"var(--red)":"var(--text-primary)"}}>{issues}</div><div style={{fontSize:12,color:issues?"var(--red)":"var(--text-secondary)"}}>need attention</div></div>
+                </div>
+              );
+            })()}
+
+            {/* Add / edit form (managers) */}
+            {assetForm&&can.manageAssets(myRole)&&(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"18px 20px",marginBottom:20,marginTop:assets.length?0:14,boxShadow:"var(--shadow-sm)"}}>
+                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:14}}>{assetForm.id?"Edit asset":"Add an asset"}</div>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
+                  <div><label style={FLD_LABEL}>Asset name</label><input value={assetForm.name||""} onChange={e=>setAssetForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Megger MFT1741 tester" style={FLD_INPUT}/></div>
+                  <div><label style={FLD_LABEL}>Category</label><select value={assetForm.category||""} onChange={e=>setAssetForm(p=>({...p,category:e.target.value}))} style={FLD_INPUT}><option value="">Select...</option>{ASSET_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+                  <div><label style={FLD_LABEL}>Asset ID / tag</label><input value={assetForm.assetId||""} onChange={e=>setAssetForm(p=>({...p,assetId:e.target.value}))} placeholder="your label, e.g. TOOL-014" style={FLD_INPUT}/></div>
+                  <div><label style={FLD_LABEL}>Serial number</label><input value={assetForm.serial||""} onChange={e=>setAssetForm(p=>({...p,serial:e.target.value}))} placeholder="if applicable" style={FLD_INPUT}/></div>
+                  <div><label style={FLD_LABEL}>Current location</label><input list="pq_asset_locations" value={assetForm.location||""} onChange={e=>setAssetForm(p=>({...p,location:e.target.value}))} placeholder="Office, storage, van..." style={FLD_INPUT}/></div>
+                  <div><label style={FLD_LABEL}>Status</label><select value={assetForm.status||"available"} onChange={e=>setAssetForm(p=>({...p,status:e.target.value}))} style={FLD_INPUT}>{ASSET_STATUS_ORDER.map(s=><option key={s} value={s}>{ASSET_STATUS[s].label}</option>)}</select></div>
+                  <div><label style={FLD_LABEL}>Purchase date</label><input type="date" value={assetForm.purchaseDate||""} onChange={e=>setAssetForm(p=>({...p,purchaseDate:e.target.value}))} style={FLD_INPUT}/></div>
+                  <div><label style={FLD_LABEL}>Assigned to (optional)</label><input list="pq_engineers" value={assetForm.assignedTo||""} onChange={e=>setAssetForm(p=>({...p,assignedTo:e.target.value}))} placeholder="engineer name" style={FLD_INPUT}/></div>
+                  <div style={{gridColumn:isMobile?"auto":"1 / -1"}}><label style={FLD_LABEL}>Notes</label><textarea value={assetForm.notes||""} onChange={e=>setAssetForm(p=>({...p,notes:e.target.value}))} placeholder="optional notes" rows={2} style={{...FLD_INPUT,resize:"vertical"}}/></div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:14}}>
+                  <button onClick={()=>{
+                    const name=(assetForm.name||"").trim();
+                    if(!name){ showToast("Asset name is required.","warn"); return; }
+                    if(assetForm.id){
+                      setAssets(prev=>prev.map(a=>a.id===assetForm.id?{...a,...assetForm,name,history:[assetHistEntry("Edited","Asset details updated"),...(a.history||[])]}:a));
+                      showToast("Asset updated");
+                    } else {
+                      const st=assetForm.status||"available";
+                      const rec={ id:`AST-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, name, category:(assetForm.category||"").trim(), assetId:(assetForm.assetId||"").trim(), serial:(assetForm.serial||"").trim(), status:st, location:(assetForm.location||"").trim(), assignedTo:(assetForm.assignedTo||"").trim(), assignedAt:(assetForm.assignedTo||"").trim()?new Date().toISOString():"", purchaseDate:assetForm.purchaseDate||"", notes:(assetForm.notes||"").trim(), request:null, addedBy:myEmail||"", dateAdded:new Date().toISOString(), history:[assetHistEntry("Added to register",`Status: ${ASSET_STATUS[st]?.label||st}${(assetForm.assignedTo||"").trim()?` · assigned to ${(assetForm.assignedTo||"").trim()}`:""}`)] };
+                      setAssets(prev=>[rec,...prev]);
+                      try{logActivity("Asset added",name,{entity:"asset"});}catch{}
+                      showToast("Asset added");
+                    }
+                    setAssetForm(null);
+                  }} style={{fontSize:13,fontWeight:700,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>{assetForm.id?"Save changes":"Add asset"}</button>
+                  <button onClick={()=>setAssetForm(null)} style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {assets.length===0&&!assetForm?(
+              <div style={{textAlign:"center",padding:"60px 20px",color:"var(--text-secondary)"}}>
+                <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="wrench" size={40} color="var(--text-tertiary)"/></div>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>No assets yet</div>
+                <div style={{fontSize:13}}>{can.manageAssets(myRole)?"Add your tools, testers and plant to track who has them and where they are.":"No company tools or equipment have been added to the register yet."}</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {assets.map(a=>{
+                  const st=ASSET_STATUS[a.status]||ASSET_STATUS["available"];
+                  const mine = !!a.assignedTo && (String(a.assignedTo)===String(myEmail) || String(a.assignedTo)===nameFor(myEmail));
+                  const locked = ASSET_LOCKED.includes(a.status);
+                  const canRequest = !locked && !a.request && !mine;
+                  const panelOpen = assetPanel&&assetPanel.id===a.id;
+                  return (
+                    <div key={a.id} style={{background:"var(--bg-card-solid)",border:`1px solid ${a.request?"var(--amber)":"var(--border)"}`,borderRadius:"var(--radius-md)",padding:"16px 18px",boxShadow:"var(--shadow-sm)"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+                        <div style={{flex:1,minWidth:200}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                            <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{a.name}</span>
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:st.bg,color:st.col,textTransform:"uppercase",letterSpacing:"0.03em"}}>{st.label}</span>
+                            {locked&&<span title="Locked" style={{fontSize:10,fontWeight:700,color:"var(--red)"}}>🔒</span>}
+                          </div>
+                          <div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>
+                            {a.category||"Uncategorised"}{a.assetId?` · ${a.assetId}`:""}{a.serial?` · S/N ${a.serial}`:""}{a.location?` · ${a.location}`:""}
+                          </div>
+                          {a.assignedTo&&<div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>{locked?"Was with":"With"} <strong>{a.assignedTo}</strong>{a.assignedAt?` since ${new Date(a.assignedAt).toLocaleDateString("en-GB")}`:""}</div>}
+                          {a.purchaseDate&&<div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:2}}>Purchased {new Date(a.purchaseDate).toLocaleDateString("en-GB")}</div>}
+                          {a.notes&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:4,padding:"6px 10px",background:"var(--bg-subtle2)",borderRadius:6,borderLeft:"3px solid #15824F"}}>{a.notes}</div>}
+                          {a.request&&(
+                            <div style={{fontSize:12,color:"var(--amber)",marginTop:8,padding:"8px 12px",background:"var(--amber-light)",borderRadius:8}}>
+                              <strong>Awaiting approval:</strong> {a.request.type==="transfer"?`${nameFor(a.request.by)} wants to transfer this to ${a.request.toEngineer}`:`${nameFor(a.request.by)} has requested this asset`}{a.request.note?` - "${a.request.note}"`:""}
+                              {can.manageAssets(myRole)&&(
+                                <div style={{display:"flex",gap:8,marginTop:8}}>
+                                  <button onClick={()=>assetApprove(a.id)} style={{fontSize:12,fontWeight:700,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"6px 14px",cursor:"pointer"}}>Approve</button>
+                                  <button onClick={()=>assetReject(a.id)} style={{fontSize:12,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"6px 14px",cursor:"pointer"}}>Reject</button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action panel (assign / request / transfer) */}
+                      {panelOpen&&(
+                        <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                          {(assetPanel.mode==="assign"||assetPanel.mode==="transfer")&&(
+                            <div style={{marginBottom:8}}>
+                              <label style={FLD_LABEL}>{assetPanel.mode==="assign"?"Assign to engineer":"Transfer to engineer"}</label>
+                              <input list="pq_engineers" value={assetPanel.engineer||""} onChange={e=>setAssetPanel(p=>({...p,engineer:e.target.value}))} placeholder="engineer name" style={FLD_INPUT}/>
+                            </div>
+                          )}
+                          <div style={{marginBottom:8}}>
+                            <label style={FLD_LABEL}>Note (optional)</label>
+                            <input value={assetPanel.note||""} onChange={e=>setAssetPanel(p=>({...p,note:e.target.value}))} placeholder={assetPanel.mode==="assign"?"reason / job":"why you need it"} style={FLD_INPUT}/>
+                          </div>
+                          <div style={{display:"flex",gap:8}}>
+                            {assetPanel.mode==="assign"
+                              ? <button onClick={()=>assetAssign(a.id, assetPanel.engineer)} style={{fontSize:12.5,fontWeight:700,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 16px",cursor:"pointer"}}>Assign</button>
+                              : <button onClick={()=>assetSubmitRequest(a.id, assetPanel.mode, assetPanel.engineer, assetPanel.note)} style={{fontSize:12.5,fontWeight:700,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 16px",cursor:"pointer"}}>Submit request</button>}
+                            <button onClick={()=>setAssetPanel(null)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 16px",cursor:"pointer"}}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Actions row */}
+                      {!panelOpen&&(
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                          {can.manageAssets(myRole)?(<>
+                            <select value={a.status||"available"} onChange={e=>assetStatus(a.id, e.target.value)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer"}}>
+                              {ASSET_STATUS_ORDER.map(s=><option key={s} value={s}>{ASSET_STATUS[s].label}</option>)}
+                            </select>
+                            {!locked&&<button onClick={()=>setAssetPanel({id:a.id,mode:"assign",engineer:"",note:""})} style={{fontSize:12.5,fontWeight:600,color:"#15824F",background:"var(--green-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Assign</button>}
+                            {a.assignedTo&&!locked&&<button onClick={()=>assetReturn(a.id,"Storage")} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Return to storage</button>}
+                            {assetDel===a.id?(<>
+                              <button onClick={()=>{ setAssets(prev=>prev.filter(x=>x.id!==a.id)); setAssetDel(null); showToast("Asset removed"); }} style={{fontSize:12.5,fontWeight:700,color:"#fff",background:"var(--red)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Confirm remove</button>
+                              <button onClick={()=>setAssetDel(null)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Cancel</button>
+                            </>):(<>
+                              <button onClick={()=>setAssetForm(a)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Edit</button>
+                              <button onClick={()=>setAssetDel(a.id)} style={{fontSize:12.5,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Remove</button>
+                            </>)}
+                          </>):(<>
+                            {mine&&!locked&&(<>
+                              <button onClick={()=>assetReturn(a.id,"Storage")} style={{fontSize:12.5,fontWeight:600,color:"#15824F",background:"var(--green-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Return to storage</button>
+                              <button onClick={()=>assetReturn(a.id,"Office")} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Return to office</button>
+                              <button onClick={()=>setAssetPanel({id:a.id,mode:"transfer",engineer:"",note:""})} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Request transfer</button>
+                            </>)}
+                            {canRequest&&<button onClick={()=>setAssetPanel({id:a.id,mode:"request",engineer:"",note:""})} style={{fontSize:12.5,fontWeight:600,color:"#15824F",background:"var(--green-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Request this asset</button>}
+                            {a.request&&!mine&&<span style={{fontSize:12,color:"var(--amber)",fontWeight:600}}>Request pending</span>}
+                            {locked&&<span style={{fontSize:12,color:"var(--text-tertiary)"}}>This asset is locked</span>}
+                          </>)}
+                          {(a.history&&a.history.length>0)&&<button onClick={()=>setAssetHistOpen(assetHistOpen===a.id?null:a.id)} style={{fontSize:12,fontWeight:600,color:"var(--text-tertiary)",background:"none",border:"none",cursor:"pointer",marginLeft:"auto"}}>{assetHistOpen===a.id?"Hide history":`History (${a.history.length})`}</button>}
+                        </div>
+                      )}
+
+                      {/* Movement history */}
+                      {assetHistOpen===a.id&&a.history&&(
+                        <div style={{marginTop:10,paddingTop:10,borderTop:"1px dashed var(--border)"}}>
+                          {a.history.map((h,i)=>(
+                            <div key={i} style={{display:"flex",gap:10,fontSize:11.5,color:"var(--text-secondary)",padding:"4px 0",borderBottom:i<a.history.length-1?"1px solid var(--bg-subtle2)":"none"}}>
+                              <span style={{flexShrink:0,color:"var(--text-tertiary)",fontFamily:"'JetBrains Mono',monospace",fontSize:10.5}}>{new Date(h.at).toLocaleDateString("en-GB")} {new Date(h.at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}</span>
+                              <span style={{flex:1}}><strong style={{color:"var(--text-primary)"}}>{h.action}</strong>{h.detail?` — ${h.detail}`:""}{h.by?` · ${nameFor(h.by)}`:""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -9833,6 +10100,7 @@ Rules:
                     {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck", feature:"hire"},
                     {id:"stock",    label:"Stock",           sub:"Returned materials kept as stock", icon:"package"},
                     {id:"returns",  label:"Returns",         sub:"Supplier returns, credits & faults", icon:"undo"},
+                    {id:"assets",   label:"Tools & assets",  sub:"Company tools, plant & equipment", icon:"wrench"},
                     {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2, feature:"om_generator"},
                     {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2, feature:"advanced_reporting"},
                     {id:"costs",    label:"Project costs",   sub:"Cost tracking per project",        icon:"coins", min:2},
