@@ -59,6 +59,21 @@ const can = {
   manageStock: (role) => roleRank(role) >= 2,    // buyer and above edit/remove stock; engineers can add + view
 };
 
+// Returns lifecycle (Phase 2). The six statuses from the spec, in order.
+const RETURN_REASONS = ["Over-ordered","Faulty / damaged","Wrong item supplied","No longer needed","Other"];
+const RETURN_STATUS = {
+  "awaiting":           {label:"Awaiting return",      bg:"var(--bg-subtle2)",   col:"var(--text-secondary)"},
+  "requested":          {label:"Return requested",     bg:"var(--amber-light)",  col:"var(--amber)"},
+  "returned":           {label:"Returned to supplier", bg:"var(--indigo-light)", col:"var(--indigo)"},
+  "credit-outstanding": {label:"Credit outstanding",   bg:"var(--amber-light)",  col:"var(--amber)"},
+  "credit-received":    {label:"Credit received",      bg:"var(--green-light)",  col:"var(--green-deep)"},
+  "closed":             {label:"Closed",               bg:"var(--bg-subtle2)",   col:"var(--text-secondary)"},
+};
+const RETURN_STATUS_ORDER = ["awaiting","requested","returned","credit-outstanding","credit-received","closed"];
+// Shared form field styles (used by the Returns form; theme-aware so selects render correctly).
+const FLD_LABEL = {fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5};
+const FLD_INPUT = {width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",background:"var(--bg-card-solid)",color:"var(--text-primary)"};
+
 // Per-tier MONTHLY allowances for the metered web-search features (the only
 // usage-variable costs). Everything else is unlimited. Catalogue online lookups
 // get their own line, separate from Measure and O&M (per Andy, Jun 2026).
@@ -114,7 +129,7 @@ const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", busines
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices","piq_stock"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices","piq_stock","piq_returns"];
 // Pure money/price keys an engineer has no operational need for. The real gate is
 // server-side RLS (proqure_security_migration.sql); the client mirrors it so an
 // engineer never caches or echoes this data. KEEP IN SYNC WITH THE SQL POLICY.
@@ -3003,6 +3018,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
   const [stock,    setStock]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_stock")||"[]")}catch{return []} });
   const [stockForm, setStockForm] = useState(null); // null | {} (new) | {id,...} (edit)
   const [stockDel,  setStockDel]  = useState(null); // id pending remove-confirm
+  const [returns,   setReturns]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_returns")||"[]")}catch{return []} });
+  const [returnForm, setReturnForm] = useState(null); // null | {} (new) | {id,...} (edit)
+  const [returnDel,  setReturnDel]  = useState(null); // id pending remove-confirm
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
   // Usage metering: quiet per-instance counters for the future admin dashboard. Invisible to users.
@@ -4013,6 +4031,25 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
     }, { action:"Off-hire requested", detail:`Collection requested for ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}${h.supplierEmail?` - emailed ${h.supplier}`:""}` });
     logActivity("Off-hire requested", `${id} - collection ${collectionDate?new Date(collectionDate).toLocaleDateString("en-GB"):"ASAP"}`, { entity:"hire" });
     showToast("Off-hire requested" + (h.supplierEmail?` - emailed ${h.supplier}`:""));
+  }
+
+  // Email a supplier a return request (over-order or faulty). Same send path as off-hire.
+  async function sendReturnEmail(r) {
+    if (!can.manageStock(myRole)) { showToast("Only a Buyer or Manager can email suppliers.","warn"); return; }
+    if (!r.supplierEmail) { showToast("Add the supplier's email on the return first.","warn"); return; }
+    if (!EMAIL_VIA_SERVER && !settings.resendKey) { showToast("Email is temporarily unavailable. Please try again shortly.","warn"); return; }
+    const qtyN = Number(r.qty)||0;
+    const subject = `Return request - ${r.item}${r.orderRef?` - order ${r.orderRef}`:""}`;
+    const body = `Hello ${r.supplier||""}\n\nWe would like to return the following item${qtyN===1?"":"s"}:\n\nItem: ${r.item}\nQuantity: ${r.qty||"-"}\nReason for return: ${r.reason||"-"}\n${r.orderRef?`Original order reference: ${r.orderRef}\n`:""}${r.jobRef?`Job reference: ${r.jobRef}\n`:""}${r.faultDetails?`\nFault / issue details:\n${r.faultDetails}\n`:""}${r.notes?`\nNotes:\n${r.notes}\n`:""}\nPlease confirm you can accept this return, advise of any restocking charge, and provide a returns reference and a credit note once processed.\n\nKind regards\n${settings.contactName||settings.company||"The Procurement Team"}\n${settings.company||""}`;
+    try {
+      await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json", ...(await authHeaders())}, body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), company_id: cloudUserId, to:[r.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings) }) });
+      setReturns(prev=>prev.map(x=>x.id===r.id?{...x, status:(!x.status||x.status==="awaiting")?"requested":x.status, emailedAt:new Date().toISOString()}:x));
+      try { logActivity("Return requested", `${r.item} - emailed ${r.supplier||"supplier"}`, { entity:"return" }); } catch {}
+      showToast(`Return request emailed to ${r.supplier||"supplier"}`);
+    } catch(e) {
+      setReturns(prev=>prev.map(x=>x.id===r.id?{...x, emailedAt:new Date().toISOString()}:x));
+      showToast("Return email may not have sent; record updated anyway.","warn");
+    }
   }
 
   async function addCollectionPhoto(id, file) {
@@ -5084,6 +5121,7 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_suppliers",JSON.stringify(suppliers))}catch{} },[suppliers]);
   useEffect(()=>{ try{localStorage.setItem("piq_hires",JSON.stringify(hires))}catch{} },[hires]);
   useEffect(()=>{ try{localStorage.setItem("piq_stock",JSON.stringify(stock))}catch{} },[stock]);
+  useEffect(()=>{ try{localStorage.setItem("piq_returns",JSON.stringify(returns))}catch{} },[returns]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
   useEffect(()=>{ try{localStorage.setItem("piq_usage",JSON.stringify(usage))}catch{} },[usage]);
@@ -5127,6 +5165,7 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_projects", projects); }, [projects, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_stock", stock); }, [stock, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_returns", returns); }, [returns, queueCloudPush]);
   // Compute hire-vs-buy suggestions (only for cost-viewers, only with enough history)
   useEffect(()=>{
     if (!can.viewCosts(myRole)) { setHireBuyTips([]); return; }
@@ -5492,6 +5531,7 @@ ${settings.company||""}`;
           {id:"catalogues",label:"Catalogues", feature:"catalogues", d:"M4 5a1 1 0 011-1h5v16H5a1 1 0 01-1-1zM14 4h5a1 1 0 011 1v13a1 1 0 01-1 1h-5z"},
           {id:"hire",     label:"Hire", feature:"hire", d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
           {id:"stock",    label:"Stock", d:"M12 2l9 5v10l-9 5-9-5V7zM3.3 7L12 12l8.7-5M12 12v10"},
+          {id:"returns",  label:"Returns", d:"M3 7v6h6M3 13a9 9 0 109-9 9 9 0 00-6.4 2.6L3 13"},
           {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
           {id:"library",  label:"Library",        min:2, d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
@@ -7474,6 +7514,193 @@ Rules:
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {view==="returns"&&(
+          <div className="stagger-in" style={{maxWidth:980}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:12}}>
+              <div>
+                <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Returns</h1>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Send materials back to suppliers, report faulty items, and track restocking charges &amp; credits</p>
+              </div>
+              <button onClick={()=>setReturnForm(returnForm?null:{status:"awaiting"})} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:14,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer",fontWeight:700}}>
+                <Icon name="undo" size={14} style={{verticalAlign:"-2px"}}/>{returnForm?"Close":"Raise a return"}
+              </button>
+            </div>
+
+            {returns.length>0&&(()=>{
+              const open = returns.filter(r=>r.status!=="closed");
+              const outstanding = returns.reduce((s,r)=>{ if(r.status==="closed")return s; const ov=Number(r.orderValue)||0; const fee=r.restockType==="fixed"?Math.min(Number(r.restockValue)||0,ov):r.restockType==="percent"?ov*(Number(r.restockValue)||0)/100:0; const exp=Math.max(0,ov-fee); return s+Math.max(0,exp-(Number(r.creditReceived)||0)); },0);
+              const received = returns.reduce((s,r)=>s+(Number(r.creditReceived)||0),0);
+              return (
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(3,1fr)",gap:12,marginBottom:22,marginTop:14}}>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{open.length}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>open return{open.length!==1?"s":""}</div></div>
+                  {can.viewCosts(myRole)?(<>
+                    <div style={{background:outstanding>0?"var(--amber-light)":"var(--bg-card-solid)",border:`1px solid ${outstanding>0?"var(--amber)":"var(--border)"}`,borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:outstanding>0?"var(--amber)":"var(--text-primary)"}}>£{outstanding.toFixed(2)}</div><div style={{fontSize:12,color:outstanding>0?"var(--amber)":"var(--text-secondary)"}}>credit outstanding</div></div>
+                    <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--green-deep)"}}>£{received.toFixed(2)}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>credit received</div></div>
+                  </>):(
+                    <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{returns.filter(r=>r.status==="credit-received"||r.status==="closed").length}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>completed</div></div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {returnForm&&(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"18px 20px",marginBottom:20,marginTop:returns.length?0:14,boxShadow:"var(--shadow-sm)"}}>
+                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:14}}>{returnForm.id?"Edit return":"Raise a return"}</div>
+                <datalist id="pq_return_suppliers">{suppliers.map(s=><option key={s.id} value={s.name}/>)}</datalist>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
+                  <div>
+                    <label style={FLD_LABEL}>Item</label>
+                    <input value={returnForm.item||""} onChange={e=>setReturnForm(p=>({...p,item:e.target.value}))} placeholder="e.g. 3-port valve" style={FLD_INPUT}/>
+                  </div>
+                  <div>
+                    <label style={FLD_LABEL}>Quantity</label>
+                    <input type="number" value={returnForm.qty||""} onChange={e=>setReturnForm(p=>({...p,qty:e.target.value}))} placeholder="e.g. 2" style={FLD_INPUT}/>
+                  </div>
+                  <div>
+                    <label style={FLD_LABEL}>Reason for return</label>
+                    <select value={returnForm.reason||""} onChange={e=>setReturnForm(p=>({...p,reason:e.target.value}))} style={FLD_INPUT}>
+                      <option value="">Select...</option>
+                      {RETURN_REASONS.map(rr=><option key={rr} value={rr}>{rr}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={FLD_LABEL}>Original supplier</label>
+                    <input list="pq_return_suppliers" value={returnForm.supplier||""} onChange={e=>{ const v=e.target.value; setReturnForm(p=>{ const m=suppliers.find(s=>(s.name||"").toLowerCase()===v.toLowerCase()); return {...p,supplier:v,supplierEmail:(!p.supplierEmail&&m&&m.email)?m.email:p.supplierEmail}; }); }} placeholder="who it came from" style={FLD_INPUT}/>
+                  </div>
+                  <div>
+                    <label style={FLD_LABEL}>Supplier email (for the return request)</label>
+                    <input type="email" value={returnForm.supplierEmail||""} onChange={e=>setReturnForm(p=>({...p,supplierEmail:e.target.value}))} placeholder="returns@supplier.co.uk" style={FLD_INPUT}/>
+                  </div>
+                  <div>
+                    <label style={FLD_LABEL}>Original order / PO reference</label>
+                    <input value={returnForm.orderRef||""} onChange={e=>setReturnForm(p=>({...p,orderRef:e.target.value}))} placeholder="e.g. PO-1042" style={FLD_INPUT}/>
+                  </div>
+                  <div>
+                    <label style={FLD_LABEL}>Job reference</label>
+                    <input value={returnForm.jobRef||""} onChange={e=>setReturnForm(p=>({...p,jobRef:e.target.value}))} placeholder="site / job" style={FLD_INPUT}/>
+                  </div>
+                  <div style={{gridColumn:isMobile?"auto":"1 / -1"}}>
+                    <label style={FLD_LABEL}>Fault / issue details {returnForm.reason==="Faulty / damaged"?"":"(if any)"}</label>
+                    <textarea value={returnForm.faultDetails||""} onChange={e=>setReturnForm(p=>({...p,faultDetails:e.target.value}))} placeholder="describe the fault or why it's going back" rows={2} style={{...FLD_INPUT,resize:"vertical"}}/>
+                  </div>
+                  <div style={{gridColumn:isMobile?"auto":"1 / -1"}}>
+                    <label style={FLD_LABEL}>Notes</label>
+                    <textarea value={returnForm.notes||""} onChange={e=>setReturnForm(p=>({...p,notes:e.target.value}))} placeholder="optional notes" rows={2} style={{...FLD_INPUT,resize:"vertical"}}/>
+                  </div>
+                  {can.viewCosts(myRole)&&(<>
+                    <div style={{gridColumn:isMobile?"auto":"1 / -1",borderTop:"1px solid var(--border)",paddingTop:12,marginTop:2,fontSize:11,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Accounting</div>
+                    <div>
+                      <label style={FLD_LABEL}>Original order value (£)</label>
+                      <input type="number" value={returnForm.orderValue||""} onChange={e=>setReturnForm(p=>({...p,orderValue:e.target.value}))} placeholder="value of the returned items" style={FLD_INPUT}/>
+                    </div>
+                    <div>
+                      <label style={FLD_LABEL}>Restocking charge</label>
+                      <div style={{display:"flex",gap:8}}>
+                        <select value={returnForm.restockType||"none"} onChange={e=>setReturnForm(p=>({...p,restockType:e.target.value}))} style={{...FLD_INPUT,flex:"0 0 auto",width:"auto"}}>
+                          <option value="none">None</option>
+                          <option value="fixed">Fixed £</option>
+                          <option value="percent">% of order</option>
+                        </select>
+                        {returnForm.restockType&&returnForm.restockType!=="none"&&(
+                          <input type="number" value={returnForm.restockValue||""} onChange={e=>setReturnForm(p=>({...p,restockValue:e.target.value}))} placeholder={returnForm.restockType==="percent"?"%":"£"} style={FLD_INPUT}/>
+                        )}
+                      </div>
+                    </div>
+                    {Number(returnForm.orderValue)>0&&(()=>{ const ov=Number(returnForm.orderValue)||0; const fee=returnForm.restockType==="fixed"?Math.min(Number(returnForm.restockValue)||0,ov):returnForm.restockType==="percent"?ov*(Number(returnForm.restockValue)||0)/100:0; const exp=Math.max(0,ov-fee); return (
+                      <div style={{gridColumn:isMobile?"auto":"1 / -1",fontSize:12.5,color:"var(--text-secondary)",background:"var(--bg-subtle2)",borderRadius:8,padding:"8px 12px"}}>Expected credit after restocking: <strong style={{color:"var(--green-deep)"}}>£{exp.toFixed(2)}</strong>{fee>0?` (£${fee.toFixed(2)} restocking deducted)`:""}</div>
+                    ); })()}
+                    <div>
+                      <label style={FLD_LABEL}>Credit received so far (£)</label>
+                      <input type="number" value={returnForm.creditReceived||""} onChange={e=>setReturnForm(p=>({...p,creditReceived:e.target.value}))} placeholder="0.00" style={FLD_INPUT}/>
+                    </div>
+                    <div>
+                      <label style={FLD_LABEL}>Credit note reference</label>
+                      <input value={returnForm.creditRef||""} onChange={e=>setReturnForm(p=>({...p,creditRef:e.target.value}))} placeholder="supplier credit note no." style={FLD_INPUT}/>
+                    </div>
+                  </>)}
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:14}}>
+                  <button onClick={()=>{
+                    const item=(returnForm.item||"").trim();
+                    if(!item){ showToast("Item is required.","warn"); return; }
+                    const base={ ...returnForm, item };
+                    if(returnForm.id){
+                      setReturns(prev=>prev.map(x=>x.id===returnForm.id?{...x,...base}:x));
+                      showToast("Return updated");
+                    } else {
+                      const rec={ id:`RET-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, status:"awaiting", ...base, raisedBy:settings.contactName||session?.user?.email||"You", dateRaised:new Date().toISOString() };
+                      setReturns(prev=>[rec,...prev]);
+                      try{logActivity("Return raised",`${item}${rec.supplier?` - ${rec.supplier}`:""}`,{entity:"return"});}catch{}
+                      showToast("Return logged");
+                    }
+                    setReturnForm(null);
+                  }} style={{fontSize:13,fontWeight:700,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>{returnForm.id?"Save changes":"Log return"}</button>
+                  <button onClick={()=>setReturnForm(null)} style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {returns.length===0&&!returnForm?(
+              <div style={{textAlign:"center",padding:"60px 20px",color:"var(--text-secondary)"}}>
+                <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="undo" size={40} color="var(--text-tertiary)"/></div>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>No returns yet</div>
+                <div style={{fontSize:13}}>Over-ordered or got a faulty item? Raise a return to send it back, email the supplier, and track the credit.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {returns.map(r=>{
+                  const st=RETURN_STATUS[r.status]||RETURN_STATUS["awaiting"];
+                  const ov=Number(r.orderValue)||0;
+                  const fee=r.restockType==="fixed"?Math.min(Number(r.restockValue)||0,ov):r.restockType==="percent"?ov*(Number(r.restockValue)||0)/100:0;
+                  const exp=Math.max(0,ov-fee);
+                  const out=Math.max(0,exp-(Number(r.creditReceived)||0));
+                  return (
+                    <div key={r.id} style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px 18px",boxShadow:"var(--shadow-sm)"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+                        <div style={{flex:1,minWidth:200}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                            <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{r.item}</span>
+                            {r.qty!==""&&r.qty!=null&&<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--bg-subtle2)",color:"var(--text-secondary)"}}>Qty {r.qty}</span>}
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:st.bg,color:st.col,textTransform:"uppercase",letterSpacing:"0.03em"}}>{st.label}</span>
+                          </div>
+                          <div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>
+                            {r.reason||"Return"}{r.supplier?` · ${r.supplier}`:""}{r.orderRef?` · ${r.orderRef}`:""}{r.jobRef?` · ${r.jobRef}`:""}
+                          </div>
+                          {r.faultDetails&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:4,padding:"6px 10px",background:"var(--amber-light)",borderRadius:6,borderLeft:"3px solid var(--amber)"}}><span style={{fontWeight:700,color:"var(--amber)"}}>Issue:</span> {r.faultDetails}</div>}
+                          {can.viewCosts(myRole)&&ov>0&&(
+                            <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:6}}>
+                              Order £{ov.toFixed(2)}{fee>0?` · restock £${fee.toFixed(2)}`:""} · expected credit <strong style={{color:"var(--green-deep)"}}>£{exp.toFixed(2)}</strong>{(Number(r.creditReceived)||0)>0?` · received £${Number(r.creditReceived).toFixed(2)}`:""}{out>0&&r.status!=="closed"?` · outstanding £${out.toFixed(2)}`:""}{r.creditRef?` · ref ${r.creditRef}`:""}
+                            </div>
+                          )}
+                          <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:4}}>Raised by {r.raisedBy||"-"}{r.dateRaised?` · ${new Date(r.dateRaised).toLocaleDateString("en-GB")}`:""}{r.emailedAt?` · supplier emailed ${new Date(r.emailedAt).toLocaleDateString("en-GB")}`:""}</div>
+                          {r.notes&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:4}}>{r.notes}</div>}
+                        </div>
+                      </div>
+                      {can.manageStock(myRole)&&(
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                          <select value={r.status||"awaiting"} onChange={e=>{ const ns=e.target.value; setReturns(prev=>prev.map(x=>x.id===r.id?{...x,status:ns}:x)); try{logActivity("Return status changed",`${r.item} → ${RETURN_STATUS[ns]?.label||ns}`,{entity:"return"});}catch{} }} style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 10px",cursor:"pointer"}}>
+                            {RETURN_STATUS_ORDER.map(s=><option key={s} value={s}>{RETURN_STATUS[s].label}</option>)}
+                          </select>
+                          {r.supplierEmail&&r.status!=="closed"&&(
+                            <button onClick={()=>sendReturnEmail(r)} style={{fontSize:12.5,fontWeight:600,color:"#15824F",background:"var(--green-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}><Icon name="mail" size={12}/>{r.emailedAt?"Re-send to supplier":"Email supplier"}</button>
+                          )}
+                          {returnDel===r.id?(<>
+                            <button onClick={()=>{ setReturns(prev=>prev.filter(x=>x.id!==r.id)); setReturnDel(null); showToast("Return removed"); }} style={{fontSize:12.5,fontWeight:700,color:"#fff",background:"var(--red)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Confirm remove</button>
+                            <button onClick={()=>setReturnDel(null)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Cancel</button>
+                          </>):(<>
+                            <button onClick={()=>setReturnForm(r)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Edit</button>
+                            <button onClick={()=>setReturnDel(r.id)} style={{fontSize:12.5,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 13px",cursor:"pointer"}}>Remove</button>
+                          </>)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -9567,6 +9794,7 @@ Rules:
                     {id:"invoices", label:"Invoices",       sub:"Match supplier invoices to POs",   icon:"receipt", min:2},
                     {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck", feature:"hire"},
                     {id:"stock",    label:"Stock",           sub:"Returned materials kept as stock", icon:"package"},
+                    {id:"returns",  label:"Returns",         sub:"Supplier returns, credits & faults", icon:"undo"},
                     {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2, feature:"om_generator"},
                     {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2, feature:"advanced_reporting"},
                     {id:"costs",    label:"Project costs",   sub:"Cost tracking per project",        icon:"coins", min:2},
