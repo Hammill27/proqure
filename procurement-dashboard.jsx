@@ -56,6 +56,7 @@ const can = {
   viewCosts:   (role) => roleRank(role) >= 2,   // buyer and above see quote prices and spend
   viewAllJobs: (role) => roleRank(role) >= 2,   // buyer and above see all jobs; engineers see only their own
   manageSuppliers:(role)=> roleRank(role) >= 2, // buyer and above add/edit suppliers (remove stays manager-only)
+  manageStock: (role) => roleRank(role) >= 2,    // buyer and above edit/remove stock; engineers can add + view
 };
 
 // Per-tier MONTHLY allowances for the metered web-search features (the only
@@ -113,7 +114,7 @@ const PLAN_LABELS = { trial: "Trial", sole: "Sole Trader", team: "Team", busines
 const supabase = cloudEnabled ? createClient(SB_URL, SB_KEY) : null;
 
 // The localStorage keys we mirror to the cloud
-const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices"];
+const SYNC_KEYS = ["piq_requests","piq_orders","piq_hires","piq_suppliers","piq_settings","piq_quote_library","piq_templates","piq_quote_sets","piq_activity","piq_team","piq_usage","piq_catalogues","piq_costs","piq_projects","piq_invoices","piq_stock"];
 // Pure money/price keys an engineer has no operational need for. The real gate is
 // server-side RLS (proqure_security_migration.sql); the client mirrors it so an
 // engineer never caches or echoes this data. KEEP IN SYNC WITH THE SQL POLICY.
@@ -2999,6 +3000,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
   const [mDrawError, setMDrawError] = useState("");
   const [mDragOver, setMDragOver] = useState(false); // desktop drag-and-drop highlight for the drawing upload zone
   const [hires,    setHires]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_hires")||"[]")}catch{return []} });
+  const [stock,    setStock]    = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_stock")||"[]")}catch{return []} });
+  const [stockForm, setStockForm] = useState(null); // null | {} (new) | {id,...} (edit)
+  const [stockDel,  setStockDel]  = useState(null); // id pending remove-confirm
   const [activityLog, setActivityLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_activity")||"[]")}catch{return []} });
   const [savedQuoteSets, setSavedQuoteSets] = useState(()=>{ try{return JSON.parse(localStorage.getItem("piq_quote_sets")||"[]")}catch{return []} });
   // Usage metering: quiet per-instance counters for the future admin dashboard. Invisible to users.
@@ -5079,6 +5083,7 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_orders",JSON.stringify(orders))}catch{} },[orders]);
   useEffect(()=>{ try{localStorage.setItem("piq_suppliers",JSON.stringify(suppliers))}catch{} },[suppliers]);
   useEffect(()=>{ try{localStorage.setItem("piq_hires",JSON.stringify(hires))}catch{} },[hires]);
+  useEffect(()=>{ try{localStorage.setItem("piq_stock",JSON.stringify(stock))}catch{} },[stock]);
   useEffect(()=>{ try{localStorage.setItem("piq_activity",JSON.stringify(activityLog.slice(0,500)))}catch{} },[activityLog]);
   useEffect(()=>{ try{localStorage.setItem("piq_quote_sets",JSON.stringify(savedQuoteSets.slice(0,100)))}catch{} },[savedQuoteSets]);
   useEffect(()=>{ try{localStorage.setItem("piq_usage",JSON.stringify(usage))}catch{} },[usage]);
@@ -5121,6 +5126,7 @@ ${settings.company||""}`;
   useEffect(()=>{ try{localStorage.setItem("piq_projects",JSON.stringify(projects))}catch{} },[projects]);
   useEffect(()=>{ queueCloudPush("piq_projects", projects); }, [projects, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_hires", hires); }, [hires, queueCloudPush]);
+  useEffect(()=>{ queueCloudPush("piq_stock", stock); }, [stock, queueCloudPush]);
   // Compute hire-vs-buy suggestions (only for cost-viewers, only with enough history)
   useEffect(()=>{
     if (!can.viewCosts(myRole)) { setHireBuyTips([]); return; }
@@ -5485,6 +5491,7 @@ ${settings.company||""}`;
           {id:"measure",  label:"Measure", feature:"measure", d:"M3 7l4-4 14 14-4 4zM7 7l2 2M11 11l2 2M15 15l2 2"},
           {id:"catalogues",label:"Catalogues", feature:"catalogues", d:"M4 5a1 1 0 011-1h5v16H5a1 1 0 01-1-1zM14 4h5a1 1 0 011 1v13a1 1 0 01-1 1h-5z"},
           {id:"hire",     label:"Hire", feature:"hire", d:"M3 9l1-5h16l1 5M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM8 13h8"},
+          {id:"stock",    label:"Stock", d:"M12 2l9 5v10l-9 5-9-5V7zM3.3 7L12 12l8.7-5M12 12v10"},
           {id:"suppliers",label:"Suppliers",      min:2, d:"M17 20h-2a4 4 0 00-8 0H5m7-10a3 3 0 100-6 3 3 0 000 6z"},
           {id:"team",     label:"Team",           min:3, d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"},
           {id:"library",  label:"Library",        min:2, d:"M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12M4 19.5V21"},
@@ -7470,6 +7477,116 @@ Rules:
           </div>
         )}
 
+        {view==="stock"&&(
+          <div className="stagger-in" style={{maxWidth:980}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:12}}>
+              <div>
+                <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Stock</h1>
+                <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Materials returned from site and kept as company stock - logged with where they're stored, so the team can reuse them</p>
+              </div>
+              <button onClick={()=>setStockForm(stockForm?null:{})} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:14,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer",fontWeight:700}}>
+                <Icon name="package" size={14} style={{verticalAlign:"-2px"}}/>{stockForm?"Close":"Add to stock"}
+              </button>
+            </div>
+
+            {stock.length>0&&(()=>{
+              const totalQty = stock.reduce((s,i)=>s+(Number(i.qty)||0),0);
+              const locs = new Set(stock.map(i=>(i.location||"").trim()).filter(Boolean));
+              return (
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(3,1fr)",gap:12,marginBottom:22,marginTop:14}}>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{stock.length}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>stock line{stock.length!==1?"s":""}</div></div>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{totalQty}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>items in stock</div></div>
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}><div style={{fontSize:24,fontWeight:800,color:"var(--text-primary)"}}>{locs.size}</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>location{locs.size!==1?"s":""}</div></div>
+                </div>
+              );
+            })()}
+
+            {stockForm&&(
+              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"18px 20px",marginBottom:20,marginTop:stock.length?0:14,boxShadow:"var(--shadow-sm)"}}>
+                <div style={{fontSize:15,fontWeight:700,color:"var(--text-primary)",marginBottom:14}}>{stockForm.id?"Edit stock item":"Add returned materials to stock"}</div>
+                <datalist id="pq_stock_locations">
+                  <option value="Office"/><option value="Storage unit"/><option value="Lockup"/><option value="Warehouse"/><option value="Engineer vehicle"/>
+                </datalist>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
+                  {[
+                    {k:"name",label:"Item name",ph:"e.g. 22mm copper pipe"},
+                    {k:"qty",label:"Quantity",ph:"e.g. 5",type:"number"},
+                    {k:"location",label:"Storage location",ph:"Office, van, lockup...",list:"pq_stock_locations"},
+                    {k:"supplier",label:"Original supplier",ph:"e.g. City Plumbing"},
+                    {k:"jobRef",label:"Original job reference",ph:"e.g. job/site name or PO"},
+                    {k:"description",label:"Description",ph:"optional detail"},
+                  ].map(f=>(
+                    <div key={f.k}>
+                      <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5}}>{f.label}</label>
+                      <input type={f.type||"text"} list={f.list||undefined} value={stockForm[f.k]||""} onChange={e=>setStockForm(p=>({...p,[f.k]:e.target.value}))} placeholder={f.ph} style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                    </div>
+                  ))}
+                  <div style={{gridColumn:isMobile?"auto":"1 / -1"}}>
+                    <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Notes</label>
+                    <textarea value={stockForm.notes||""} onChange={e=>setStockForm(p=>({...p,notes:e.target.value}))} placeholder="optional notes" rows={2} style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical"}}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:14}}>
+                  <button onClick={()=>{
+                    const name=(stockForm.name||"").trim();
+                    if(!name){ showToast("Item name is required.","warn"); return; }
+                    const qty=Number(stockForm.qty)||0;
+                    if(stockForm.id){
+                      setStock(prev=>prev.map(it=>it.id===stockForm.id?{...it,...stockForm,name,qty}:it));
+                      showToast("Stock item updated");
+                    } else {
+                      const item={ id:`STK-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, name, description:(stockForm.description||"").trim(), qty, location:(stockForm.location||"").trim(), supplier:(stockForm.supplier||"").trim(), jobRef:(stockForm.jobRef||"").trim(), notes:(stockForm.notes||"").trim(), addedBy:settings.contactName||session?.user?.email||"You", dateAdded:new Date().toISOString() };
+                      setStock(prev=>[item,...prev]);
+                      showToast("Added to stock");
+                    }
+                    setStockForm(null);
+                  }} style={{fontSize:13,fontWeight:700,color:"#fff",background:"#15824F",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>{stockForm.id?"Save changes":"Add to stock"}</button>
+                  <button onClick={()=>setStockForm(null)} style={{fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"9px 18px",cursor:"pointer"}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {stock.length===0&&!stockForm?(
+              <div style={{textAlign:"center",padding:"60px 20px",color:"var(--text-secondary)"}}>
+                <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="package" size={40} color="var(--text-tertiary)"/></div>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>No stock yet</div>
+                <div style={{fontSize:13}}>When a job leaves you with usable materials, add them here with where they're stored so the team can reuse them.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {stock.map(it=>(
+                  <div key={it.id} style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px 18px",boxShadow:"var(--shadow-sm)"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+                      <div style={{flex:1,minWidth:200}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                          <span style={{fontSize:15,fontWeight:700,color:"var(--text-primary)"}}>{it.name}</span>
+                          <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)",textTransform:"uppercase",letterSpacing:"0.03em"}}>Qty {it.qty}</span>
+                          {it.location&&<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>{it.location}</span>}
+                        </div>
+                        {it.description&&<div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>{it.description}</div>}
+                        {(it.supplier||it.jobRef)&&<div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.7}}>{it.supplier?`From ${it.supplier}`:""}{it.supplier&&it.jobRef?" · ":""}{it.jobRef?`Job ${it.jobRef}`:""}</div>}
+                        <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:2}}>Added by {it.addedBy||"-"}{it.dateAdded?` · ${new Date(it.dateAdded).toLocaleDateString("en-GB")}`:""}</div>
+                        {it.notes&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:4,padding:"6px 10px",background:"var(--bg-subtle2)",borderRadius:6,borderLeft:"3px solid #15824F"}}>{it.notes}</div>}
+                      </div>
+                      {can.manageStock(myRole)&&(
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {stockDel===it.id?(<>
+                            <button onClick={()=>{ setStock(prev=>prev.filter(x=>x.id!==it.id)); setStockDel(null); showToast("Removed from stock"); }} style={{fontSize:12.5,fontWeight:700,color:"#fff",background:"var(--red)",border:"none",borderRadius:"var(--radius-sm)",padding:"6px 12px",cursor:"pointer"}}>Confirm remove</button>
+                            <button onClick={()=>setStockDel(null)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"6px 12px",cursor:"pointer"}}>Cancel</button>
+                          </>):(<>
+                            <button onClick={()=>setStockForm(it)} style={{fontSize:12.5,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"6px 12px",cursor:"pointer"}}>Edit</button>
+                            <button onClick={()=>setStockDel(it.id)} style={{fontSize:12.5,fontWeight:600,color:"var(--red)",background:"var(--red-light)",border:"none",borderRadius:"var(--radius-sm)",padding:"6px 12px",cursor:"pointer"}}>Remove</button>
+                          </>)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {view==="hire"&&(
           <div className="stagger-in" style={{maxWidth:980}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:12}}>
@@ -9449,6 +9566,7 @@ Rules:
                     {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
                     {id:"invoices", label:"Invoices",       sub:"Match supplier invoices to POs",   icon:"receipt", min:2},
                     {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck", feature:"hire"},
+                    {id:"stock",    label:"Stock",           sub:"Returned materials kept as stock", icon:"package"},
                     {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2, feature:"om_generator"},
                     {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2, feature:"advanced_reporting"},
                     {id:"costs",    label:"Project costs",   sub:"Cost tracking per project",        icon:"coins", min:2},
