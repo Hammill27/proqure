@@ -225,7 +225,7 @@ async function resolveCompany(session) {
   const email = (session.user.email || "").toLowerCase();
   const uid = session.user.id;
   try {
-    const { data: rows, error } = await supabase.from("members").select("company_id,role,user_id").eq("email", email);
+    const { data: rows, error } = await supabase.from("members").select("company_id,role,user_id,company_name").eq("email", email);
     if (error) { console.warn("resolveCompany: members lookup failed - falling back to per-user", error.message); return null; }
     const memberships = (rows || []).filter(m => m && m.company_id);
 
@@ -2904,11 +2904,20 @@ function invBestOrder(inv, orders) {
   return best || null;
 }
 
-function ProQureApp({ session, companyId, onNeedMfa }) {
+function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
   // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
   // user id (sole trader / pre-migration fallback). Declared up here because effects
   // and handlers below reference it - a const can't be used before its declaration.
   const cloudUserId = companyId || session?.user?.id || null;
+  // Switch which company this user is acting in: record the validated choice, then
+  // reload so the normal mount path hydrates that company's data. Inert unless the
+  // user belongs to more than one company.
+  const myCompanies = Array.isArray(memberships) ? memberships : [];
+  const switchCompany = async (cid) => {
+    if (!cid || cid === cloudUserId) return;
+    const ok = await setActiveCompany(session.user.id, cid);
+    if (ok) { try { window.location.reload(); } catch (e) {} }
+  };
   // Settings persisted to localStorage
   const [settings, setSettings] = useState(() => {
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
@@ -9197,6 +9206,24 @@ Rules:
               </div>
             )}
             <div style={{display:"grid",gap:16}}>
+              {myCompanies.length > 1 && (
+              <Card>
+                <div style={{fontSize:15,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Your companies</div>
+                <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:14}}>You belong to {myCompanies.length} companies. Switching reloads ProQure with that company&rsquo;s data.</div>
+                <div style={{display:"grid",gap:8}}>
+                  {myCompanies.map(m=>{
+                    const isCurrent = m.company_id === cloudUserId;
+                    return (
+                      <button key={m.company_id} onClick={()=>{ if(!isCurrent) switchCompany(m.company_id); }} disabled={isCurrent}
+                        style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px 14px",border:"1px solid "+(isCurrent?"var(--green)":"var(--border)"),borderRadius:"var(--radius-md)",background:isCurrent?"var(--green-mint)":"var(--bg-subtle2)",cursor:isCurrent?"default":"pointer",textAlign:"left"}}>
+                        <span style={{fontSize:13.5,fontWeight:700,color:"var(--text-primary)",wordBreak:"break-word"}}>{m.company_name||m.company_id}</span>
+                        <span style={{fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:99,background:isCurrent?"var(--green)":"var(--bg-subtle)",color:isCurrent?"#fff":"var(--text-secondary)",whiteSpace:"nowrap"}}>{isCurrent?"Current":"Switch"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+              )}
               {roleRank(myRole) >= 3 && (
               <Card>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",flexWrap:"wrap",gap:8}}>
@@ -10874,6 +10901,7 @@ function AppInner() {
   const [companyId, setCompanyId] = useState(null);
   const [chooser, setChooser] = useState(null);          // memberships[] when a company choice is required
   const [adminNotice, setAdminNotice] = useState(false); // admin identity signed into the app with no tenant
+  const [memberships, setMemberships] = useState([]);     // all companies this user belongs to (for the switcher)
   const [needPassword, setNeedPassword] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
@@ -10930,7 +10958,7 @@ function AppInner() {
         // Multi-company: an admin identity with no tenant, or a user who must choose.
         if (co && co.adminNoCompany) { if (active) { setAdminNotice(true); setChooser(null); setMfaRole("_unknown"); setReady(false); } return; }
         if (co && co.needChoice) { if (active) { setChooser(co.memberships || []); setAdminNotice(false); setMfaRole("_unknown"); setReady(false); } return; }
-        if (active) { setChooser(null); setAdminNotice(false); }
+        if (active) { setChooser(null); setAdminNotice(false); setMemberships((co && co.memberships) || []); }
         const resolved = !!(co && co.companyId);
         if (active) setMfaRole(co && co.role ? co.role : "_unknown");
         const scope = (co && co.companyId) || session.user.id; // fallback: per-user scope
@@ -10997,7 +11025,7 @@ function AppInner() {
   if (mfaGate === "need") {
     return <AppMfaScreen session={session} onDone={() => setMfaGate("pass")} />;
   }
-  return <ProQureApp session={session} companyId={companyId} onNeedMfa={() => setMfaGate("need")} />;
+  return <ProQureApp session={session} companyId={companyId} memberships={memberships} onNeedMfa={() => setMfaGate("need")} />;
 }
 
 // --- Light haptic tap (Android/where supported; a safe no-op on iOS Safari) ---
