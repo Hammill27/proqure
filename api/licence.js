@@ -36,6 +36,7 @@
 //                                 (sent as `turnstileToken`) is required.
 //
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/, "");
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -126,6 +127,53 @@ async function turnstileOk(token, ip) {
   }
 }
 
+// An existing identity buying ANOTHER company. Identity is independent of any company,
+// so we provision a brand-new, fully isolated tenant they own as Manager and let them
+// sign in with their existing account to set it up - we do NOT create a second auth user.
+// resolveCompany matches memberships by email, so the new company shows up for them on
+// next sign-in; pointing active_company at it lands them straight in onboarding.
+const MAX_OWNED_COMPANIES = 25;
+async function provisionCompanyForExisting(email, company) {
+  // Find their existing user id from any already-bound membership (e.g. their first company).
+  let uid = null;
+  try {
+    const { data } = await admin.from("members")
+      .select("user_id").eq("email", email).not("user_id", "is", null).limit(1).maybeSingle();
+    uid = (data && data.user_id) || null;
+  } catch (e) { /* fall through - an email-bound membership still resolves on sign-in */ }
+
+  // Soft cap so one account can't mint unlimited trial tenants.
+  if (uid) {
+    try {
+      const { count } = await admin.from("members")
+        .select("company_id", { count: "exact", head: true })
+        .eq("user_id", uid).eq("role", "manager");
+      if (typeof count === "number" && count >= MAX_OWNED_COMPANIES) {
+        return { status: 429, error: "You've reached the limit on companies for one account. Contact support if you need more." };
+      }
+    } catch (e) { /* fail-open on the count */ }
+  }
+
+  const newId = randomUUID();
+  try {
+    const { error: mErr } = await admin.from("members").insert({
+      email, company_id: newId, role: "manager", user_id: uid, company_name: company,
+    });
+    if (mErr) return { status: 500, error: "Could not create your company: " + mErr.message };
+  } catch (e) { return { status: 500, error: "Could not create your company just now - please try again." }; }
+
+  // Point their validated active company at the new one so signing in lands straight in
+  // its onboarding wizard (we deliberately write no piq_settings, so onboarding runs).
+  if (uid) {
+    try {
+      await admin.from("active_company").upsert(
+        { user_id: uid, company_id: newId, set_at: new Date().toISOString() },
+        { onConflict: "user_id" });
+    } catch (e) { /* non-fatal: the chooser will still offer the new company */ }
+  }
+  return { company_id: newId };
+}
+
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") { cors(res); return res.status(200).end(); }
   cors(res);
@@ -182,9 +230,12 @@ export default async function handler(req, res) {
     if (error) {
       const msg = (error.message || "").toLowerCase();
       if (msg.includes("already") || msg.includes("registered") || msg.includes("exists")) {
-        // Already has an account: send a sign-in/reset link so they can still get in.
-        try { await admin.auth.resetPasswordForEmail(email, { redirectTo }); } catch (e) {}
-        return res.status(200).json({ ok: true, note: "existing-user" });
+        // Existing identity buying another company: provision a new tenant they own and
+        // let them sign in with their existing account to set it up (no new auth user,
+        // no confusing password-reset email).
+        const made = await provisionCompanyForExisting(email, company);
+        if (made.error) return res.status(made.status || 500).json({ error: made.error });
+        return res.status(200).json({ ok: true, existing: true, company_id: made.company_id });
       }
       return res.status(500).json({ error: "Could not send your setup email: " + error.message });
     }
