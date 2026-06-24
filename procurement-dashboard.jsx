@@ -275,16 +275,6 @@ async function setActiveCompany(uid, companyId) {
   } catch (e) { console.warn("setActiveCompany failed", e); return false; }
 }
 
-// Drop the remembered company selection so the next resolve falls through to the chooser
-// (used by the MFA gate's "use a different company" escape for multi-company identities).
-async function clearActiveCompany(uid) {
-  try {
-    const { error } = await supabase.from("active_company").delete().eq("user_id", uid);
-    if (error) { console.warn("clearActiveCompany failed", error.message); return false; }
-    return true;
-  } catch (e) { console.warn("clearActiveCompany failed", e); return false; }
-}
-
 // Resolve the signed-in user to the COMPANY scope they should act in, so an entire
 // team shares one dataset instead of each person having a private silo.
 //   * No membership + ordinary email -> bootstrap a new company (first Manager).
@@ -327,8 +317,12 @@ async function resolveCompany(session) {
       return { companyId: only.company_id, role: only.role || "engineer", memberships };
     }
 
-    // More than one membership: honour a valid prior choice, else ask.
-    const chosen = await getActiveCompany(uid);
+    // More than one membership: honour a valid prior choice, else ask. A one-shot
+    // "re-choose" signal (set by the MFA gate's "use a different company" escape) forces
+    // the chooser even when a valid choice exists; it's cleared when a company is picked.
+    let forcePick = false;
+    try { forcePick = (typeof sessionStorage !== "undefined" && sessionStorage.getItem("pq_pick_company") === "1"); } catch (e) {}
+    const chosen = forcePick ? null : await getActiveCompany(uid);
     const match = chosen ? memberships.find(m => m.company_id === chosen) : null;
     if (match) return { companyId: match.company_id, role: match.role || "engineer", memberships };
     return { needChoice: true, memberships };
@@ -11639,6 +11633,7 @@ function CompanyChooser({ session, memberships, onPicked }) {
     if (busy) return; setErr(""); setBusy(cid);
     const ok = await setActiveCompany(session.user.id, cid);
     if (!ok) { setBusy(null); setErr("Could not switch to that company. Please try again."); return; }
+    try { sessionStorage.removeItem("pq_pick_company"); } catch (e) {} // re-choose signal consumed
     onPicked(cid);
   }
   const wrap = { position:"fixed", inset:0, minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)", fontFamily:"'Plus Jakarta Sans',sans-serif", padding:20 };
@@ -11843,7 +11838,7 @@ function AppInner() {
   }
   if (mfaGate === "need") {
     return <AppMfaScreen session={session} memberships={memberships} onDone={() => setMfaGate("pass")}
-      onUseDifferentCompany={async () => { try { await clearActiveCompany(session.user.id); } catch (e) {} try { window.location.reload(); } catch (e) {} }} />;
+      onUseDifferentCompany={() => { try { sessionStorage.setItem("pq_pick_company", "1"); } catch (e) {} try { window.location.reload(); } catch (e) {} }} />;
   }
   return <ProQureApp session={session} companyId={companyId} memberships={memberships} onNeedMfa={() => setMfaGate("need")} />;
 }
