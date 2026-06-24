@@ -71,7 +71,7 @@ async function sendSystemEmail(to, subject, html) {
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-      body: JSON.stringify({ from: "ProQure <support@proqure.co.uk>", to: [to], subject, html }),
+      body: JSON.stringify({ from: "ProQure <accounts@proqure.co.uk>", to: [to], subject, html }),
     });
     return r.ok;
   } catch (e) { return false; }
