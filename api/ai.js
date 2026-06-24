@@ -28,12 +28,13 @@ const sb = (SB_URL && SB_SERVICE) ? createClient(SB_URL, SB_SERVICE, { auth: { p
 const sbAnon = (SB_URL && SB_ANON) ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 const aiPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 
-// Verify the caller is a signed-in ProQure user and resolve their REAL company id
-// from the members table (never trusted from the request body, so one tenant can
-// neither drain another tenant's AI budget nor dodge their own). If auth can't be
-// verified server-side (anon key not configured), behaviour falls back to the
-// previous open mode so nothing breaks — but with the env set, no token = no AI.
-async function verifyCaller(req) {
+// Verify the caller is a signed-in ProQure user and resolve the company they are ACTING
+// IN. The client passes its active company; we trust it only after confirming the caller
+// is a member of it - so a multi-company identity meters/charges the RIGHT tenant, and no
+// one can target a company they don't belong to. If no company is passed (older client),
+// we fall back to their first membership. If auth can't be verified server-side (anon key
+// not configured), behaviour falls back to the previous open mode so nothing breaks.
+async function verifyCaller(req, requestedCompanyId) {
   if (!sbAnon) return { mode: "open" }; // verification not configured: legacy behaviour
   const h = req.headers.authorization || req.headers.Authorization || "";
   const token = h.startsWith("Bearer ") ? h.slice(7).trim() : null;
@@ -42,12 +43,23 @@ async function verifyCaller(req) {
     const { data, error } = await sbAnon.auth.getUser(token);
     if (error || !data || !data.user) return { mode: "deny" };
     const uid = data.user.id;
-    let companyId = uid; // a brand-new signup is their own company
+    const want = (requestedCompanyId && typeof requestedCompanyId === "string") ? requestedCompanyId.trim() : "";
+    let companyId = uid; // a brand-new signup is their own company (company_id = uid)
     if (sb) {
-      try {
-        const { data: m } = await sb.from("members").select("company_id").eq("user_id", uid).limit(1).maybeSingle();
-        if (m && m.company_id) companyId = m.company_id;
-      } catch (e) { /* fall back to uid */ }
+      if (want && want !== uid) {
+        // Acting in a specific company: confirm membership before trusting it.
+        try {
+          const { data: m } = await sb.from("members").select("company_id").eq("user_id", uid).eq("company_id", want).limit(1).maybeSingle();
+          if (m && m.company_id) companyId = want;
+          else return { mode: "deny" };
+        } catch (e) { /* fall back to uid */ }
+      } else if (!want) {
+        // No company specified (older client): fall back to the caller's membership.
+        try {
+          const { data: m } = await sb.from("members").select("company_id").eq("user_id", uid).limit(1).maybeSingle();
+          if (m && m.company_id) companyId = m.company_id;
+        } catch (e) { /* fall back to uid */ }
+      }
     }
     return { mode: "ok", companyId };
   } catch (e) { return { mode: "deny" }; }
@@ -158,8 +170,9 @@ export default async function handler(req, res) {
     const maxTokens = Math.min(Math.max(parseInt(req.body && req.body.max_tokens, 10) || 4000, 1), 8000);
 
     // Caller verification (closes the open-proxy hole): a valid signed-in session
-    // is required, and the company is resolved SERVER-SIDE from membership.
-    const who = await verifyCaller(req);
+    // is required, and the company is the active one the client passes, validated
+    // against membership server-side.
+    const who = await verifyCaller(req, companyId);
     if (who.mode === "deny") {
       return res.status(401).json({ error: "Please sign in to use AI features." });
     }
