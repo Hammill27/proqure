@@ -275,6 +275,16 @@ async function setActiveCompany(uid, companyId) {
   } catch (e) { console.warn("setActiveCompany failed", e); return false; }
 }
 
+// Drop the remembered company selection so the next resolve falls through to the chooser
+// (used by the MFA gate's "use a different company" escape for multi-company identities).
+async function clearActiveCompany(uid) {
+  try {
+    const { error } = await supabase.from("active_company").delete().eq("user_id", uid);
+    if (error) { console.warn("clearActiveCompany failed", error.message); return false; }
+    return true;
+  } catch (e) { console.warn("clearActiveCompany failed", e); return false; }
+}
+
 // Resolve the signed-in user to the COMPANY scope they should act in, so an entire
 // team shares one dataset instead of each person having a private silo.
 //   * No membership + ordinary email -> bootstrap a new company (first Manager).
@@ -3225,7 +3235,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
             const res = await fetch("/api/admin", {
               method: "POST",
               headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
-              body: JSON.stringify({ action: "invite", email, name: inviteName.trim(), role: inviteRole, employment: inviteEmployment }),
+              body: JSON.stringify({ action: "invite", company_id: cloudUserId, email, name: inviteName.trim(), role: inviteRole, employment: inviteEmployment }),
             });
             const d = await res.json().catch(() => ({}));
             if (res.ok && d.ok) { emailed = true; showToast(d.message || `Invite emailed to ${email}.`); }
@@ -11487,7 +11497,7 @@ function SetPassword({ onDone }) {
 // Engineers never see this. Mirrors the admin console: enrol (QR) the first time,
 // then a 6-digit challenge on each fresh sign-in. UI only in this phase - the
 // server-side aal2 enforcement is added separately so there is no lockout window.
-function AppMfaScreen({ session, onDone }) {
+function AppMfaScreen({ session, memberships, onDone, onUseDifferentCompany }) {
   const [mode, setMode] = useState("loading"); // loading|enrolIntro|enrolScan|enrolCode|challenge
   const [factorId, setFactorId] = useState(null);
   const [secret, setSecret] = useState("");
@@ -11558,7 +11568,9 @@ function AppMfaScreen({ session, onDone }) {
   const linkBtn = { width: "100%", marginTop: 12, padding: "8px", background: "transparent", color: "#5C5B54", border: "none", fontSize: 13, cursor: "pointer" };
   const h = { fontSize: 19, fontWeight: 800, color: "#101013", marginBottom: 6 };
   const sub = { fontSize: 13.5, color: "#5C5B54", marginBottom: 18, lineHeight: 1.55 };
+  const multiCompany = Array.isArray(memberships) && memberships.length > 1;
   const errBox = err ? <div style={{ fontSize: 12.5, color: "#C0392B", marginTop: 10 }}>{err}</div> : null;
+  const switchBtn = multiCompany ? <button onClick={onUseDifferentCompany} style={linkBtn}>Use a different company</button> : null;
   const Logo = (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
       <div style={{ width: 40, height: 40, background: "linear-gradient(135deg,#1E9E63,#15824F)", borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -11577,6 +11589,7 @@ function AppMfaScreen({ session, onDone }) {
       <div style={sub}>Your role can see pricing and manage your team, so ProQure asks managers and buyers to add a second step at sign-in. It takes about a minute with an authenticator app (Google Authenticator, Microsoft Authenticator, Authy or 1Password).</div>
       <button onClick={startEnroll} disabled={busy} style={primaryBtn}>{busy ? "Starting..." : "Get started"}</button>
       {errBox}
+      {switchBtn}
       <button onClick={signOut} style={linkBtn}>Sign out</button>
     </>);
   } else if (mode === "enrolScan") {
@@ -11587,6 +11600,7 @@ function AppMfaScreen({ session, onDone }) {
       <div style={{ fontSize: 12, color: "#5C5B54", marginBottom: 16, wordBreak: "break-all", textAlign: "center" }}>Can&rsquo;t scan? Enter this key manually:<br /><b style={{ fontFamily: "monospace", fontSize: 12.5 }}>{secret}</b></div>
       <button onClick={() => { setErr(""); setCode(""); setMode("enrolCode"); }} style={primaryBtn}>I&rsquo;ve scanned it &ndash; continue</button>
       {errBox}
+      {switchBtn}
       <button onClick={signOut} style={linkBtn}>Sign out</button>
     </>);
   } else if (mode === "enrolCode") {
@@ -11605,6 +11619,7 @@ function AppMfaScreen({ session, onDone }) {
       <input style={inp} value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={e => { if (e.key === "Enter") verifyCode(); }} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" autoFocus />
       <button onClick={verifyCode} disabled={busy} style={primaryBtn}>{busy ? "Verifying..." : "Verify"}</button>
       {errBox}
+      {switchBtn}
       <button onClick={signOut} style={linkBtn}>Sign out</button>
     </>);
   }
@@ -11827,7 +11842,8 @@ function AppInner() {
     return <div style={loadStyle}>Checking security...</div>;
   }
   if (mfaGate === "need") {
-    return <AppMfaScreen session={session} onDone={() => setMfaGate("pass")} />;
+    return <AppMfaScreen session={session} memberships={memberships} onDone={() => setMfaGate("pass")}
+      onUseDifferentCompany={async () => { try { await clearActiveCompany(session.user.id); } catch (e) {} try { window.location.reload(); } catch (e) {} }} />;
   }
   return <ProQureApp session={session} companyId={companyId} memberships={memberships} onNeedMfa={() => setMfaGate("need")} />;
 }
