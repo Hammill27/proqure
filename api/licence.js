@@ -222,7 +222,7 @@ export default async function handler(req, res) {
 
   const redirectTo = APP_URL || undefined;
   try {
-    const { error } = await admin.auth.admin.inviteUserByEmail(email, {
+    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
       redirectTo,
       // name + company ride along so the in-app onboarding wizard pre-fills them.
       data: { name, company, is_owner: true, plan: "trial" },
@@ -238,6 +238,22 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, existing: true, company_id: made.company_id });
       }
       return res.status(500).json({ error: "Could not send your setup email: " + error.message });
+    }
+    // New owner: create their company explicitly and server-side, now (at purchase) - a
+    // company exists because it was bought, not because of a later login. The founder's
+    // Manager membership is bound to the freshly-invited auth user; company_id = that uid
+    // to match existing data. We deliberately write no piq_settings, so the in-app
+    // onboarding wizard runs on first sign-in. resolveCompany no longer bootstraps, so this
+    // is the single source of a new company - hence we surface a failure rather than leave
+    // a half-provisioned account that would land in the No-Company state after verifying.
+    const newUser = data && data.user;
+    if (newUser && newUser.id) {
+      const { error: mErr } = await admin.from("members").insert({
+        email, company_id: newUser.id, role: "manager", user_id: newUser.id, company_name: company,
+      });
+      if (mErr) {
+        return res.status(500).json({ error: "Could not finish setting up your company - please try again or contact support." });
+      }
     }
   } catch (e) {
     return res.status(500).json({ error: "Could not send your setup email just now - please try again." });
