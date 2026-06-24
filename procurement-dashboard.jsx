@@ -298,13 +298,13 @@ async function resolveCompany(session) {
     if (error) { console.warn("resolveCompany: members lookup failed - falling back to per-user", error.message); return null; }
     const memberships = (rows || []).filter(m => m && m.company_id);
 
-    // No membership yet.
+    // No membership. We do NOT provision here - companies are created explicitly through
+    // the purchase flow (server-side), never as a side-effect of signing in. A platform
+    // admin gets its own notice; every other identity lands in the explicit No-Company
+    // holding state. Zero memberships is a first-class state, not an error and not a trigger.
     if (memberships.length === 0) {
       if (ADMIN_NO_BOOTSTRAP_EMAILS.includes(email)) return { adminNoCompany: true };
-      // Brand-new account = first Manager of a new company.
-      const { error: insErr } = await supabase.from("members").insert({ email, company_id: uid, role: "manager", user_id: uid });
-      if (insErr) { console.warn("resolveCompany: bootstrap insert failed - falling back", insErr.message); return null; }
-      return { companyId: uid, role: "manager", memberships: [{ company_id: uid, role: "manager" }] };
+      return { noCompany: true };
     }
 
     // First sign-in on any invited rows: stamp user id + join time so a Manager sees them Active.
@@ -11689,11 +11689,36 @@ function AdminNoCompanyNotice() {
   );
 }
 
+// Holding state for an authenticated identity that currently belongs to no company - e.g.
+// after being removed from their last one. We never auto-provision; companies are created
+// only through the purchase flow. They can be invited, or buy their own, then "Check again".
+function NoCompanyState() {
+  async function signOut() { try { await supabase.auth.signOut(); } catch (e) {} }
+  function checkAgain() { try { window.location.reload(); } catch (e) {} }
+  const wrap = { position:"fixed", inset:0, minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)", fontFamily:"'Plus Jakarta Sans',sans-serif", padding:20 };
+  const card = { background:"#fff", borderRadius:18, padding:"32px 30px", width:"100%", maxWidth:400, boxShadow:"0 24px 60px rgba(0,0,0,0.4)" };
+  const brand = { fontSize:13, fontWeight:800, letterSpacing:"0.02em", color:"#15824F", marginBottom:14 };
+  const title = { fontSize:19, fontWeight:800, color:"#15201A", margin:"0 0 6px" };
+  const sub = { fontSize:13.5, color:"#5C5B54", marginBottom:18, lineHeight:1.55 };
+  const primary = { width:"100%", marginTop:6, padding:"10px", background:"linear-gradient(135deg,#1E9E63,#15824F)", color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:700, cursor:"pointer" };
+  const ghost = { width:"100%", marginTop:8, padding:"10px", background:"transparent", color:"#5C5B54", border:"1px solid #E3E2DC", borderRadius:10, fontSize:13.5, fontWeight:600, cursor:"pointer" };
+  return (
+    <div style={wrap}><div style={card}>
+      <div style={brand}>ProQure</div>
+      <div style={title}>Your account has no companies</div>
+      <div style={sub}>This account isn't currently associated with any ProQure companies. To get access, ask a company administrator to invite you, or set up your own company at <b>proqure.co.uk</b>. Once you've been added, select Check again.</div>
+      <button onClick={checkAgain} style={primary}>Check again</button>
+      <button onClick={signOut} style={ghost}>Sign out</button>
+    </div></div>
+  );
+}
+
 function AppInner() {
   const [session, setSession] = useState(null);
   const [companyId, setCompanyId] = useState(null);
   const [chooser, setChooser] = useState(null);          // memberships[] when a company choice is required
   const [adminNotice, setAdminNotice] = useState(false); // admin identity signed into the app with no tenant
+  const [noCompany, setNoCompany] = useState(false); // non-admin identity with zero memberships (holding state)
   const [memberships, setMemberships] = useState([]);     // all companies this user belongs to (for the switcher)
   const [needPassword, setNeedPassword] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -11749,9 +11774,10 @@ function AppInner() {
       (async () => {
         const co = await resolveCompany(session);
         // Multi-company: an admin identity with no tenant, or a user who must choose.
-        if (co && co.adminNoCompany) { if (active) { setAdminNotice(true); setChooser(null); setMfaRole("_unknown"); setReady(false); } return; }
-        if (co && co.needChoice) { if (active) { setChooser(co.memberships || []); setAdminNotice(false); setMfaRole("_unknown"); setReady(false); } return; }
-        if (active) { setChooser(null); setAdminNotice(false); setMemberships((co && co.memberships) || []); }
+        if (co && co.adminNoCompany) { if (active) { setAdminNotice(true); setNoCompany(false); setChooser(null); setMfaRole("_unknown"); setReady(false); } return; }
+        if (co && co.needChoice) { if (active) { setChooser(co.memberships || []); setAdminNotice(false); setNoCompany(false); setMfaRole("_unknown"); setReady(false); } return; }
+        if (co && co.noCompany) { if (active) { setNoCompany(true); setAdminNotice(false); setChooser(null); setMfaRole("_unknown"); setReady(false); } return; }
+        if (active) { setChooser(null); setAdminNotice(false); setNoCompany(false); setMemberships((co && co.memberships) || []); }
         const resolved = !!(co && co.companyId);
         if (active) setMfaRole(co && co.role ? co.role : "_unknown");
         const scope = (co && co.companyId) || session.user.id; // fallback: per-user scope
@@ -11773,7 +11799,7 @@ function AppInner() {
         if (active) setReady(true);
       })();
     } else {
-      setReady(false); setCompanyId(null); setMfaRole(null); setChooser(null); setAdminNotice(false);
+      setReady(false); setCompanyId(null); setMfaRole(null); setChooser(null); setAdminNotice(false); setNoCompany(false);
     }
     return () => { active = false; };
   }, [session]);
@@ -11808,6 +11834,7 @@ function AppInner() {
   if (!session) return <LoginScreen onLoggedIn={setSession} />;
   if (needPassword) return <SetPassword onDone={() => { setNeedPassword(false); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} }} />;
   if (adminNotice) return <AdminNoCompanyNotice />;
+  if (noCompany) return <NoCompanyState />;
   if (chooser) return <CompanyChooser session={session} memberships={chooser} onPicked={() => { try { window.location.reload(); } catch (e) { setChooser(null); } }} />;
   if (!ready) {
     return <div style={loadStyle}>Syncing your data...</div>;
