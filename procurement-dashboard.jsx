@@ -14,9 +14,6 @@ const cloudEnabled = !!(SB_URL && SB_KEY);
 // an invite or password-reset link and needs to set a password.
 const INITIAL_HASH = (typeof window !== "undefined" ? (window.location.hash || "") : "");
 const INITIAL_SEARCH = (typeof window !== "undefined" ? (window.location.search || "") : "");
-// Arriving from the marketing site's "Start free trial" (app.proqure.co.uk/?signup=1):
-// open straight on the signup screen and let them past the private-preview gate.
-const INITIAL_WANTS_SIGNUP = /[?&]signup\b/.test(INITIAL_SEARCH) || /(^|[#&])signup\b/.test(INITIAL_HASH);
 // Arriving on a genuine Supabase auth link (email confirmation, invite, password reset,
 // magic link): also let them past the gate so they can finish, without the access code.
 const INITIAL_AUTH_CALLBACK = /(access_token|token_hash|[?&]code=|type=(signup|recovery|invite|magiclink|email_change))/.test(INITIAL_HASH + INITIAL_SEARCH);
@@ -3271,16 +3268,32 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
     logActivity("Role changed", `${email} is now ${ROLES[newRole]?.label||newRole}`, { entity:"team" });
     showToast("Role updated.");
   }
-  function handleRemoveMember(email) {
+  async function handleRemoveMember(email) {
     if (!can.manageTeam(myRole)) { showToast("Only a Manager can remove members.","warn"); return; }
     const target = (email||"").toLowerCase();
     const managers = team.filter(m => m.role === "manager");
     if (managers.length === 1 && (managers[0].email||"").toLowerCase() === target) {
       showToast("You can't remove the only Manager.","warn"); return;
     }
-    setTeam(prev => prev.filter(m => (m.email||"").toLowerCase() !== target));
-    logActivity("Team member removed", `${email} removed from the team`, { entity:"team" });
-    showToast("Member removed.");
+    if (!cloudEnabled || !supabase || !cloudUserId) { showToast("You need to be online to remove members.","warn"); return; }
+    // Revoke authoritatively on the server first - deleting the membership row is the only
+    // thing that actually removes access (RLS keys on it). Only reflect it in the display
+    // list once the server confirms, so the UI can never claim someone is gone while they
+    // still have access.
+    try {
+      const r = await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ action: "remove", company_id: cloudUserId, email: target }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d || !d.ok) { showToast((d && d.error) || "Could not remove member.","warn"); return; }
+      setTeam(prev => prev.filter(m => (m.email||"").toLowerCase() !== target));
+      logActivity("Team member removed", `${email} removed from the team`, { entity:"team" });
+      showToast("Member removed.");
+    } catch (e) {
+      showToast("Could not reach the server. Please try again.","warn");
+    }
   }
 
   // Wizard state
@@ -11150,9 +11163,7 @@ function SignatureEditor({ value, onChange }) {
 function LoginScreen({ onLoggedIn }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [company, setCompany] = useState("");
-  const [screen, setScreen] = useState(INITIAL_WANTS_SIGNUP ? "signup" : "signin"); // signin | signup | sent
+  const [screen, setScreen] = useState("signin"); // sign-in only - self-serve company creation is retired; companies are created server-side via the purchase flow (/api/licence)
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [showForgot, setShowForgot] = useState(false);
@@ -11190,26 +11201,8 @@ function LoginScreen({ onLoggedIn }) {
     } catch (e) { setMsg("Something went wrong. Please try again."); }
     setBusy(false);
   };
-  // Self-serve company creation. The new user becomes the first Manager of a brand-new,
-  // isolated company (resolveCompany bootstraps that on first sign-in). Name + company
-  // ride along in user_metadata so the in-app onboarding can pre-fill them.
-  const submitSignup = async () => {
-    if (!name.trim() || !company.trim()) { setMsg("Enter your name and your company name."); return; }
-    if (!email.trim() || !password) { setMsg("Enter an email and a password."); return; }
-    if (password.length < 6) { setMsg("Use a password of at least 6 characters."); return; }
-    setBusy(true); setMsg("");
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(), password,
-        options: { data: { name: name.trim(), company: company.trim(), is_owner: true }, emailRedirectTo: window.location.origin },
-      });
-      if (error) { setMsg(error.message); setBusy(false); return; }
-      // If email confirmation is ON there's no session yet - point them to their inbox.
-      if (data?.session) { onLoggedIn(data.session); return; }
-      setScreen("sent");
-    } catch (e) { setMsg("Something went wrong. Please try again."); }
-    setBusy(false);
-  };
+  // (Self-serve company creation has been retired. Companies are created explicitly and
+  // server-side through the purchase flow - never from inside the app.)
 
   // Theme-aware palette
   const t = dark ? {
@@ -11257,8 +11250,8 @@ function LoginScreen({ onLoggedIn }) {
           </div>
           <span style={{fontSize:22,fontWeight:800,color:t.title,letterSpacing:"-0.02em"}}>Pro<span style={{color:dark?"#3DD68C":"#15824F"}}>Qure</span></span>
         </div>
-        <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>{screen==="signup"?"Set up your company":screen==="sent"?"Check your email":"Welcome back"}</div>
-        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>{screen==="signup"?"Create your ProQure workspace - it only takes a minute.":screen==="sent"?"One quick step to verify it's you.":"Sign in to access your procurement dashboard."}</div>
+        <div style={{fontSize:18,fontWeight:800,color:t.title,marginBottom:4}}>Welcome back</div>
+        <div style={{fontSize:13,color:t.sub,marginBottom:20}}>Sign in to access your procurement dashboard.</div>
 
         {screen === "sent" ? (
           <div>
@@ -11272,29 +11265,20 @@ function LoginScreen({ onLoggedIn }) {
             </button>
           </div>
         ) : (<>
-        {screen === "signup" && (<>
-          <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Your name</label>
-          <input type="text" value={name} onChange={e=>setName(e.target.value)} autoComplete="name" placeholder="Jane Smith"
-            style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
-          <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Company name</label>
-          <input type="text" value={company} onChange={e=>setCompany(e.target.value)} autoComplete="organization" placeholder="Your company Ltd"
-            style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
-        </>)}
-
         <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Email</label>
         <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" placeholder="you@company.co.uk"
           style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:14,outline:"none"}}/>
 
         <label style={{fontSize:11,fontWeight:600,color:t.label,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Password</label>
-        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete={screen==="signup"?"new-password":"current-password"} placeholder={screen==="signup"?"Create a password":"Your password"}
-          onKeyDown={e=>{ if(e.key==="Enter") (screen==="signup"?submitSignup:submit)(); }}
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" placeholder="Your password"
+          onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
           style={{width:"100%",boxSizing:"border-box",padding:"11px 13px",border:`1px solid ${t.inputBorder}`,background:t.inputBg,color:t.inputText,borderRadius:10,fontSize:14,marginBottom:18,outline:"none"}}/>
 
         {msg && <div style={{fontSize:12.5,color:"#9A5B16",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:8,padding:"9px 12px",marginBottom:14}}>{msg}</div>}
 
-        <button onClick={screen==="signup"?submitSignup:submit} disabled={busy}
+        <button onClick={submit} disabled={busy}
           style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?0.7:1,marginBottom:14}}>
-          {busy ? "Please wait..." : (screen==="signup"?"Create company":"Sign in")}
+          {busy ? "Please wait..." : "Sign in"}
         </button>
         {screen==="signin" && !showForgot && (
           <div style={{textAlign:"center",marginBottom:12}}>
@@ -11727,9 +11711,9 @@ function AppInner() {
   const [mfaGate, setMfaGate] = useState("checking"); // checking | pass | need
   const [gateOk, setGateOk] = useState(() => {
     if (!SITE_GATE_PASSWORD) return true;
-    // Trial signups (from the website) and anyone on a real auth link skip the gate,
-    // so the signup -> email -> onboarding flow works without sharing the access code.
-    if (INITIAL_WANTS_SIGNUP || INITIAL_AUTH_CALLBACK) return true;
+    // Anyone arriving on a real auth link (invite / recovery / magic link) skips the gate,
+    // so the purchase -> setup-email -> onboarding flow works without sharing the access code.
+    if (INITIAL_AUTH_CALLBACK) return true;
     try { return sessionStorage.getItem("pq_gate_ok") === "1"; } catch { return false; }
   });
 
