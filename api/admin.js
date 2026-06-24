@@ -119,15 +119,6 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "Two-factor authentication is required for this action.", code: "mfa_required" });
   }
 
-  // Look up the caller's membership (company + role).
-  let callerCompany = null, callerRole = null;
-  try {
-    const { data: rows } = await admin.from("members").select("company_id,role").eq("email", callerEmail).limit(1);
-    if (rows && rows.length) { callerCompany = rows[0].company_id; callerRole = rows[0].role; }
-  } catch (e) { /* ignore */ }
-  // A brand-new manager bootstrapping their own company: company id = their user id.
-  if (!callerCompany) { callerCompany = caller.id; callerRole = callerRole || "manager"; }
-
   const body = req.body || {};
   const action = body.action || "invite";
 
@@ -136,17 +127,26 @@ export default async function handler(req, res) {
     const role = ["engineer", "buyer", "manager"].includes(body.role) ? body.role : "engineer";
     const employment = body.employment === "internal" ? "internal" : (body.employment === "subcontractor" ? "subcontractor" : "");
     const name = String(body.name || "").trim();
-    // A caller can only ever invite into their OWN company.
-    const companyId = callerCompany;
+    // Invite into the company the caller is ACTING IN (passed by the client), after
+    // confirming they are a Manager of THAT company. Resolving from the active company
+    // rather than the caller's first membership means a multi-company manager invites into
+    // the right tenant, and the membership check stops anyone adding to a company they
+    // don't manage. company_id = the owner's uid for owner-keyed companies.
+    const companyId = String(body.company_id || "").trim() || caller.id;
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address" });
-    // Only Managers can create accounts.
+    // Confirm the caller is a Manager of THIS company before letting them add to it.
+    let callerRole = null;
+    try {
+      const { data: me } = await admin.from("members").select("role").eq("company_id", companyId).eq("email", callerEmail).maybeSingle();
+      callerRole = me && me.role;
+    } catch (e) { /* treated as not-a-manager below */ }
     if (callerRole !== "manager") {
-      await writeSecurityEvent(admin, { email: callerEmail, action: "invite-DENIED", detail: "caller is not a manager", req });
-      return res.status(403).json({ error: "Only a Manager can create accounts" });
+      await writeSecurityEvent(admin, { email: callerEmail, action: "invite-DENIED", detail: `not a manager of ${companyId}`, req });
+      return res.status(403).json({ error: "Only a Manager of this company can add members" });
     }
     // You cannot grant a role above your own.
-    if (ROLE_RANK[role] > ROLE_RANK[callerRole || "engineer"]) {
+    if (ROLE_RANK[role] > ROLE_RANK[callerRole]) {
       await writeSecurityEvent(admin, { email: callerEmail, action: "invite-DENIED", detail: `attempted role ${role} above own level`, req });
       return res.status(403).json({ error: "You can only assign roles up to your own level" });
     }
