@@ -159,5 +159,69 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, message: `Invite sent to ${email}` });
   }
 
+  if (action === "remove") {
+    // Revoke a member's access. The membership row is the ONLY thing that grants access to
+    // a company's data (RLS keys on proqure_member_rank, which reads `members`), so removal
+    // MUST delete that row - editing the display list alone leaves full access intact.
+    // The caller must be a Manager of the SAME company; we resolve that company from the
+    // request and validate it, rather than assuming the caller's first membership (which is
+    // wrong for a multi-company identity).
+    const email = String(body.email || "").trim().toLowerCase();
+    const companyId = String(body.company_id || "").trim();
+    if (!email) return res.status(400).json({ error: "No member specified" });
+    if (!companyId) return res.status(400).json({ error: "No company specified" });
+
+    // Authorise: the caller must be a Manager of THIS company.
+    let actingRole = null;
+    try {
+      const { data: me } = await admin.from("members").select("role").eq("company_id", companyId).eq("email", callerEmail).maybeSingle();
+      actingRole = me && me.role;
+    } catch (e) { /* treated as not-a-member below */ }
+    if (actingRole !== "manager") {
+      await writeSecurityEvent(admin, { email: callerEmail, action: "remove-DENIED", detail: `not a manager of ${companyId}`, req });
+      return res.status(403).json({ error: "Only a Manager of this company can remove members" });
+    }
+
+    // Find the target's membership in this company - we need their user id (to clear their
+    // active-company pointer) and their role (for the last-Manager guard).
+    let target;
+    try {
+      const { data: t } = await admin.from("members").select("user_id,role").eq("company_id", companyId).eq("email", email).maybeSingle();
+      target = t || null;
+    } catch (e) { target = null; }
+    if (!target) {
+      // Already gone - nothing to revoke. Idempotent success.
+      return res.status(200).json({ ok: true, message: "Member is not part of this company." });
+    }
+
+    // Last-Manager protection: never leave a company with no Manager.
+    if (target.role === "manager") {
+      try {
+        const { data: mgrs } = await admin.from("members").select("email").eq("company_id", companyId).eq("role", "manager");
+        if ((mgrs || []).length <= 1) {
+          return res.status(409).json({ error: "There must be at least one Manager. Promote someone else first." });
+        }
+      } catch (e) { return res.status(500).json({ error: "Could not verify Managers" }); }
+    }
+
+    // Revoke: delete the authoritative membership row.
+    try {
+      const { error: dErr } = await admin.from("members").delete().eq("company_id", companyId).eq("email", email);
+      if (dErr) return res.status(500).json({ error: "Could not remove member: " + dErr.message });
+    } catch (e) { return res.status(500).json({ error: "Could not remove member" }); }
+
+    // Clear their active-company pointer if it named this company, so they don't try to
+    // resume into a tenancy they're no longer in. resolveCompany would re-route them anyway,
+    // but this keeps the pointer honest. Scoped by company_id so other selections are untouched.
+    if (target.user_id) {
+      try {
+        await admin.from("active_company").delete().eq("user_id", target.user_id).eq("company_id", companyId);
+      } catch (e) { /* non-fatal */ }
+    }
+
+    await writeSecurityEvent(admin, { email: callerEmail, action: "remove-member", detail: `${email} from company ${companyId}`, req });
+    return res.status(200).json({ ok: true, message: `${email} removed.` });
+  }
+
   return res.status(400).json({ error: "Unknown action" });
 }
