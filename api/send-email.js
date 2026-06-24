@@ -26,7 +26,7 @@ const sbAdmin = (SB_URL && SB_SERVICE) ? createClient(SB_URL, SB_SERVICE, { auth
 // Only these envelope addresses may ever be used in "from".
 const ALLOWED_FROM = ["quotes@proqure.co.uk", "orders@proqure.co.uk", "support@proqure.co.uk"];
 
-async function verifyCaller(req) {
+async function verifyCaller(req, requestedCompanyId) {
   if (!sbAnon) return { mode: "open" };
   const h = req.headers.authorization || req.headers.Authorization || "";
   const token = h.startsWith("Bearer ") ? h.slice(7).trim() : null;
@@ -35,12 +35,24 @@ async function verifyCaller(req) {
     const { data, error } = await sbAnon.auth.getUser(token);
     if (error || !data || !data.user) return { mode: "deny" };
     const uid = data.user.id;
+    // Attribute the send to the company the caller is ACTING IN (passed by the client),
+    // confirmed against membership - so a multi-company identity's email usage lands on the
+    // right tenant. Fall back to their first membership if none is passed (older client).
+    const want = (requestedCompanyId && typeof requestedCompanyId === "string") ? requestedCompanyId.trim() : "";
     let companyId = uid;
     if (sbAdmin) {
-      try {
-        const { data: m } = await sbAdmin.from("members").select("company_id").eq("user_id", uid).limit(1).maybeSingle();
-        if (m && m.company_id) companyId = m.company_id;
-      } catch (e) { /* fall back to uid */ }
+      if (want && want !== uid) {
+        try {
+          const { data: m } = await sbAdmin.from("members").select("company_id").eq("user_id", uid).eq("company_id", want).limit(1).maybeSingle();
+          if (m && m.company_id) companyId = want;
+          else return { mode: "deny" };
+        } catch (e) { /* fall back to uid */ }
+      } else if (!want) {
+        try {
+          const { data: m } = await sbAdmin.from("members").select("company_id").eq("user_id", uid).limit(1).maybeSingle();
+          if (m && m.company_id) companyId = m.company_id;
+        } catch (e) { /* fall back to uid */ }
+      }
     }
     return { mode: "ok", companyId };
   } catch (e) { return { mode: "deny" }; }
@@ -68,7 +80,7 @@ export default async function handler(req, res) {
   //    reputation-critical domain, so unlike the AI proxy it FAILS CLOSED: if
   //    verification isn't configured (no anon key), we refuse rather than revert
   //    to an open relay.
-  const who = await verifyCaller(req);
+  const who = await verifyCaller(req, company_id);
   if (who.mode !== "ok") {
     res.setHeader("Access-Control-Allow-Origin", "*");
     const msg = who.mode === "open"
