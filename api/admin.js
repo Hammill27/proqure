@@ -56,6 +56,40 @@ async function writeSecurityEvent(svc, { email, action, detail, req }) {
   } catch { /* never block on logging */ }
 }
 
+// --- Transactional system email (membership/account events) via Resend ----------
+// Server-initiated notices sent from ProQure's verified domain. These are deliberately
+// NOT password-reset emails - membership changes get their own clear, factual wording.
+function systemEmailHtml(heading, lines, ctaText) {
+  const link = APP_URL || "https://app.proqure.co.uk";
+  const body = (lines || []).map(p => `<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#3a3a37">${p}</p>`).join("");
+  const cta = ctaText ? `<a href="${link}" style="display:inline-block;margin-top:4px;padding:11px 20px;background:#15824F;color:#fff;text-decoration:none;border-radius:9px;font-size:14px;font-weight:700">${ctaText}</a>` : "";
+  return `<div style="font-family:'Plus Jakarta Sans',Arial,sans-serif;max-width:480px;margin:0 auto;padding:8px"><div style="font-size:20px;font-weight:800;color:#15824F;margin-bottom:18px">ProQure</div><div style="font-size:17px;font-weight:800;color:#1a1a17;margin-bottom:14px">${heading}</div>${body}${cta}<div style="margin-top:26px;font-size:11.5px;color:#9a9a93;line-height:1.5">You received this because your email is linked to a ProQure account.</div></div>`;
+}
+async function sendSystemEmail(to, subject, html) {
+  if (!process.env.RESEND_API_KEY || !to) return false;
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+      body: JSON.stringify({ from: "ProQure <support@proqure.co.uk>", to: [to], subject, html }),
+    });
+    return r.ok;
+  } catch (e) { return false; }
+}
+// Best-effort display name for a company, used only in notices. Prefers the onboarded
+// settings name, falls back to the membership's stored name, then a neutral default.
+async function getCompanyName(companyId) {
+  try {
+    const { data: s } = await admin.from("proqure_data").select("value").eq("user_id", companyId).eq("store_key", "piq_settings").maybeSingle();
+    if (s && s.value && s.value.company) return String(s.value.company);
+  } catch (e) {}
+  try {
+    const { data: m } = await admin.from("members").select("company_name").eq("company_id", companyId).not("company_name", "is", null).limit(1).maybeSingle();
+    if (m && m.company_name) return String(m.company_name);
+  } catch (e) {}
+  return "your company";
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!admin) return res.status(500).json({ error: "Admin not configured (missing SUPABASE_URL / SERVICE_ROLE key)" });
@@ -146,10 +180,17 @@ export default async function handler(req, res) {
       if (iErr) {
         const msg = (iErr.message || "").toLowerCase();
         if (msg.includes("already") || msg.includes("registered") || msg.includes("exists")) {
-          // Existing user: send a recovery email so they can set/keep a password and sign in.
-          try { await admin.auth.resetPasswordForEmail(email, { redirectTo }); } catch (e) {}
+          // Existing identity: they already have an account, so there's nothing to set up -
+          // the membership row above is what grants access. Send a clear "you've been added"
+          // notice (NOT a password reset) and let them sign in with their existing account.
+          const companyName = await getCompanyName(companyId);
+          await sendSystemEmail(email, `You've been added to ${companyName} on ProQure`, systemEmailHtml(
+            `You've been added to ${companyName}`,
+            [`You've been given access to <b>${companyName}</b> on ProQure as a ${role}.`,
+             `Sign in with your existing ProQure account to start using it. If you've forgotten your password, use &ldquo;Forgot password&rdquo; on the sign-in screen.`],
+            "Open ProQure"));
           await writeSecurityEvent(admin, { email: callerEmail, action: "invite-account", detail: `${email} as ${role} (existing user, company ${companyId})`, req });
-          return res.status(200).json({ ok: true, note: "existing-user", message: "Account already exists - sent them a sign-in link." });
+          return res.status(200).json({ ok: true, note: "existing-user", message: "Account already exists - we've let them know they've been added." });
         }
         return res.status(500).json({ error: "Invite email failed: " + iErr.message });
       }
@@ -219,6 +260,12 @@ export default async function handler(req, res) {
       } catch (e) { /* non-fatal */ }
     }
 
+    const companyName = await getCompanyName(companyId);
+    await sendSystemEmail(email, `You've been removed from ${companyName} on ProQure`, systemEmailHtml(
+      `Your access to ${companyName} has been removed`,
+      [`Your access to <b>${companyName}</b> on ProQure has been removed.`,
+       `If you belong to other companies on ProQure, you can still sign in to those. If you think this was a mistake, please contact a manager at ${companyName}.`],
+      null));
     await writeSecurityEvent(admin, { email: callerEmail, action: "remove-member", detail: `${email} from company ${companyId}`, req });
     return res.status(200).json({ ok: true, message: `${email} removed.` });
   }
