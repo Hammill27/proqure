@@ -11818,6 +11818,14 @@ function AppInner() {
           }
         } catch (e) {}
         if (active) setCompanyId(scope);
+        // Commit-before-effect guard. Tenant hydration must never run on a choose-or-hold
+        // outcome: needChoice / noCompany / adminNoCompany each return above this point, so
+        // reaching here with one set would mean a future refactor broke that ordering and a
+        // tenant the user never chose is about to be pulled - fail loudly instead. A null `co`
+        // (offline / failed resolve) is the intended per-user fallback and must NOT trip this.
+        if (co && (co.needChoice || co.noCompany || co.adminNoCompany)) {
+          throw new Error("ProQure tenant-commit violation: hydration reached on a non-resolved outcome");
+        }
         await cloudPull(scope);
         if (active) setReady(true);
       })();
