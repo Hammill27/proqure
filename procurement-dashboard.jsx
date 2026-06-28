@@ -17,6 +17,17 @@ const INITIAL_SEARCH = (typeof window !== "undefined" ? (window.location.search 
 // Arriving on a genuine Supabase auth link (email confirmation, invite, password reset,
 // magic link): also let them past the gate so they can finish, without the access code.
 const INITIAL_AUTH_CALLBACK = /(access_token|token_hash|[?&]code=|type=(signup|recovery|invite|magiclink|email_change))/.test(INITIAL_HASH + INITIAL_SEARCH);
+// Fresh authentication vs continuation - DERIVED from the auth lifecycle, never persisted.
+// A page-load that began with auth tokens in the URL (invite / recovery / magic link) is a
+// fresh auth; a password sign-in marks it explicitly (see AppInner's onLoggedIn). A
+// continuation is a session rehydrated by getSession() with no such event. This value is a
+// plain module variable: it resets to its load-time value on every page-load, so it cannot
+// drift, accumulate, or go stale across reloads or tabs. It drives chooser-first sign-in:
+// a multi-company identity that has just authenticated is shown the company chooser; a
+// continuation (reload / navigation / token refresh / tab wake) resolves into the remembered
+// active company. No localStorage, no sessionStorage, no synced state.
+let freshAuth = INITIAL_AUTH_CALLBACK;
+function markFreshAuth() { freshAuth = true; }
 // Central AI: the OpenRouter key now lives in the /api/ai server function, so the
 // app no longer requires the user to supply one. We assume the server route is
 // available; callAI still falls back to a user key if present, and surfaces a
@@ -286,7 +297,7 @@ async function setActiveCompany(uid, companyId) {
 // falls back to per-user scope - so nothing breaks before the database step is applied.
 // NOTE: while the members email primary key is still in place no user can hold more than
 // one membership, so the {needChoice} branch is dormant until that key is dropped (3b-3).
-async function resolveCompany(session) {
+async function resolveCompany(session, fresh) {
   if (!supabase || !session || !session.user) return null;
   const email = (session.user.email || "").toLowerCase();
   const uid = session.user.id;
@@ -317,12 +328,16 @@ async function resolveCompany(session) {
       return { companyId: only.company_id, role: only.role || "engineer", memberships };
     }
 
-    // More than one membership: honour a valid prior choice, else ask. A one-shot
-    // "re-choose" signal (set by the MFA gate's "use a different company" escape) forces
-    // the chooser even when a valid choice exists; it's cleared when a company is picked.
-    let forcePick = false;
-    try { forcePick = (typeof sessionStorage !== "undefined" && sessionStorage.getItem("pq_pick_company") === "1"); } catch (e) {}
-    const chosen = forcePick ? null : await getActiveCompany(uid);
+    // More than one membership. The remembered active company is honoured only on a
+    // CONTINUATION (reload / navigation / token refresh / tab wake). On a FRESH
+    // authentication the chooser is shown instead, so the identity always makes an explicit
+    // tenancy choice when it signs in - everything downstream (role, MFA, onboarding, data)
+    // is then derived from that choice. A one-shot "re-choose" escape signal (set by the MFA
+    // gate and the onboarding screen's "choose a different company") simply show the chooser
+    // directly in-session - they don't pass through here and need no stored signal. The
+    // fresh-vs-continuation flag is derived purely from the auth lifecycle and never persisted
+    // (see `freshAuth`): nothing in this resolver reads localStorage or sessionStorage.
+    const chosen = fresh ? null : await getActiveCompany(uid);
     const match = chosen ? memberships.find(m => m.company_id === chosen) : null;
     if (match) return { companyId: match.company_id, role: match.role || "engineer", memberships };
     return { needChoice: true, memberships };
@@ -2975,7 +2990,7 @@ function invBestOrder(inv, orders) {
   return best || null;
 }
 
-function ProQureApp({ session, companyId, memberships, onNeedMfa }) {
+function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) {
   // Cloud scope: the COMPANY id (shared by the whole team) when resolved, else the
   // user id (sole trader / pre-migration fallback). Declared up here because effects
   // and handlers below reference it - a const can't be used before its declaration.
@@ -10596,7 +10611,7 @@ Rules:
       )}
 
       {needsOnboarding && (
-        <CompanyOnboarding session={session} initial={settings} onComplete={(vals)=>{ saveSettings(vals); }} />
+        <CompanyOnboarding session={session} initial={settings} multiCompany={myCompanies.length > 1} onChooseDifferent={onRechoose} onComplete={(vals)=>{ saveSettings(vals); }} />
       )}
 
       {!needsOnboarding && !settings.tourDone && tourStep>=0&&tourStep<tourSteps.length&&(
@@ -11322,8 +11337,17 @@ function LoginScreen({ onLoggedIn }) {
   );
 }
 
-function CompanyOnboarding({ session, initial, onComplete }) {
+function CompanyOnboarding({ session, initial, onComplete, multiCompany, onChooseDifferent }) {
   const meta = (session && session.user && session.user.user_metadata) || {};
+  // Escape hatch: a multi-company identity that landed here by choosing a company it manages
+  // that isn't set up yet can return to the chooser instead of being forced through setup.
+  // Same one-shot re-choose signal as the MFA gate (cleared when a company is picked).
+  function chooseDifferentCompany() {
+    // Show the chooser in place (no reload, no stored signal). The parent re-shows the company
+    // selector for this multi-company identity; picking one writes active_company and the normal
+    // continuation path then resolves into it - deriving role, MFA and onboarding from that choice.
+    if (typeof onChooseDifferent === "function") onChooseDifferent();
+  }
   const [f, setF] = useState({
     company: (initial && initial.company) || meta.company || "",
     contactName: (initial && initial.contactName) || meta.name || "",
@@ -11393,6 +11417,9 @@ function CompanyOnboarding({ session, initial, onComplete }) {
 
         <button onClick={finish} style={{ width: "100%", marginTop: 18, padding: "12px", background: "linear-gradient(135deg,#1E9E63,#15824F)", color: "white", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Create my workspace</button>
         <div style={{ fontSize: 11.5, color: "var(--text-muted)", textAlign: "center", marginTop: 10, lineHeight: 1.5 }}>You can change any of this later in Settings &rsaquo; Company.</div>
+        {multiCompany && (
+          <button onClick={chooseDifferentCompany} style={{ width: "100%", marginTop: 6, padding: "9px", background: "transparent", color: "var(--text-secondary)", border: "none", fontSize: 12.5, cursor: "pointer" }}>Wrong company? Choose a different one</button>
+        )}
       </div>
     </div>
   );
@@ -11633,7 +11660,6 @@ function CompanyChooser({ session, memberships, onPicked }) {
     if (busy) return; setErr(""); setBusy(cid);
     const ok = await setActiveCompany(session.user.id, cid);
     if (!ok) { setBusy(null); setErr("Could not switch to that company. Please try again."); return; }
-    try { sessionStorage.removeItem("pq_pick_company"); } catch (e) {} // re-choose signal consumed
     onPicked(cid);
   }
   const wrap = { position:"fixed", inset:0, minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(150deg,#0E1512,#101013 55%,#15211b)", fontFamily:"'Plus Jakarta Sans',sans-serif", padding:20 };
@@ -11766,7 +11792,10 @@ function AppInner() {
     if (session?.user?.id) {
       setReady(false);
       (async () => {
-        const co = await resolveCompany(session);
+        // Fresh-vs-continuation is derived from the auth lifecycle (see `freshAuth`): a fresh
+        // authentication shows the chooser for multi-company identities; a continuation
+        // resolves into the remembered active company. Every auth entry point converges here.
+        const co = await resolveCompany(session, freshAuth);
         // Multi-company: an admin identity with no tenant, or a user who must choose.
         if (co && co.adminNoCompany) { if (active) { setAdminNotice(true); setNoCompany(false); setChooser(null); setMfaRole("_unknown"); setReady(false); } return; }
         if (co && co.needChoice) { if (active) { setChooser(co.memberships || []); setAdminNotice(false); setNoCompany(false); setMfaRole("_unknown"); setReady(false); } return; }
@@ -11825,7 +11854,7 @@ function AppInner() {
   if (checking) {
     return <div style={loadStyle}>Loading...</div>;
   }
-  if (!session) return <LoginScreen onLoggedIn={setSession} />;
+  if (!session) return <LoginScreen onLoggedIn={(s) => { markFreshAuth(); setSession(s); }} />;
   if (needPassword) return <SetPassword onDone={() => { setNeedPassword(false); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {} }} />;
   if (adminNotice) return <AdminNoCompanyNotice />;
   if (noCompany) return <NoCompanyState />;
@@ -11838,9 +11867,9 @@ function AppInner() {
   }
   if (mfaGate === "need") {
     return <AppMfaScreen session={session} memberships={memberships} onDone={() => setMfaGate("pass")}
-      onUseDifferentCompany={() => { try { sessionStorage.setItem("pq_pick_company", "1"); } catch (e) {} try { window.location.reload(); } catch (e) {} }} />;
+      onUseDifferentCompany={() => setChooser(memberships)} />;
   }
-  return <ProQureApp session={session} companyId={companyId} memberships={memberships} onNeedMfa={() => setMfaGate("need")} />;
+  return <ProQureApp session={session} companyId={companyId} memberships={memberships} onNeedMfa={() => setMfaGate("need")} onRechoose={() => setChooser(memberships)} />;
 }
 
 // --- Light haptic tap (Android/where supported; a safe no-op on iOS Safari) ---
