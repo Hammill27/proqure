@@ -3426,6 +3426,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const [nrTradePicked, setNrTradePicked] = useState(false); // Whether the user explicitly tapped a trade chip
   const [cfgStep,  setCfgStep]  = useState(1);     // Step 2 (Review & configure) guided sub-step (1..4): items -> deadline -> delivery -> suppliers/send
   const [sendConfirm, setSendConfirm] = useState(false); // Final summary-confirmation modal before an RFQ is actually sent
+  const [successOverlay, setSuccessOverlay] = useState(null); // {message} – ProQure success animation shown after send/issue, then redirects
   const [rfqEmail, setRfqEmail] = useState("");
   const [rfqDocs,  setRfqDocs]  = useState([]); // supporting docs sent with the RFQ: {id,filename,content(base64),size,kind}
   const [selSup,   setSelSup]   = useState([]);
@@ -4375,9 +4376,8 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     setRequests(p=>[r,...p]);
     logActivity("List issued to buyer", `${r.jobRef} raised by ${myEmail}`, { entity:"request", reqId:newId });
     meter("requestsRaised");
-    resetNewRequest();
-    setView("requests");
-    showToast("Issued to your buyer - they'll request the quotes");
+    setSendConfirm(false);
+    setSuccessOverlay({ message:"Issued to your buyer", onReveal:()=>{ resetNewRequest(); setView("requests"); } });
   }
 
   async function handleSendEmails() {
@@ -4424,10 +4424,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
           sentTo: sentSuppliers,
           activity: [...(r.activity||[]), reviseEntry]
         } : r));
-        showToast(`v Revised RFQ re-sent to ${ok} supplier${ok!==1?"s":""}`);
         logActivity("RFQ revised & re-sent",`${jobRef||editingReqId} revised to v${rev}, re-sent to ${ok} supplier${ok!==1?"s":""}`,{entity:"request",reqId:editingReqId,jobRef});meter("rfqsSent");meter("emailsSent", ok);
-        setEmailRes(results);
-        setTimeout(()=>{ resetNewRequest(); setView("requests"); }, 1800);
+        setSendConfirm(false);
+        setSuccessOverlay({ message:`Re-sent to ${ok} supplier${ok!==1?"s":""}`, onReveal:()=>{ resetNewRequest(); setView("requests"); } });
         return;
       }
 
@@ -4450,10 +4449,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
         ]
       };
       setRequests(p=>[r,...p]);
-      // Show success state briefly then redirect and reset
-      showToast(`v ${ok} RFQ${ok!==1?"s":""} sent - ${newId} saved`);
       logActivity("RFQ sent",`${newId} (${jobRef||"job"}) sent to ${ok} supplier${ok!==1?"s":""}`,{entity:"request",reqId:newId,jobRef});meter("rfqsSent");meter("emailsSent", ok);meter("requestsRaised");
-      setTimeout(()=>{
+      setSendConfirm(false);
+      setSuccessOverlay({ message:`Sent to ${ok} supplier${ok!==1?"s":""}`, onReveal:()=>{
         // Full reset - ready for next request
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
@@ -4461,8 +4459,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
         setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
         setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
-      }, 1800);
-      setEmailRes(results); // show brief success UI
+      }});
     } else {
       setEmailRes(results);
       showToast(`Some emails could not be sent - check the supplier email addresses and try again`,"warn");
@@ -6525,6 +6522,9 @@ Rules:
         </div>
       )}
 
+      {/* ProQure success animation – plays after send/issue, then redirects */}
+      {successOverlay && <RequestSuccessOverlay message={successOverlay.message} onReveal={successOverlay.onReveal} onDone={()=>setSuccessOverlay(null)} />}
+
       {/* Desktop sidebar */}
       {!isMobile&&(
         <div style={{position:"fixed",top:0,left:0,bottom:0,width:240,background:"var(--sidebar-bg)",display:"flex",flexDirection:"column",zIndex:100,borderRight:"1px solid var(--sidebar-border)"}}>
@@ -7005,7 +7005,7 @@ Rules:
           <div className="stagger-in" style={{maxWidth:1120}}>
             <div style={{marginBottom:step===1?18:24}}>
               <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>New material request</h1>
-              {step===3&&<p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step 3 of 3 - Review and send</p>}
+              {step===3&&<p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step 8 of 8 - Review and send</p>}
             </div>
 
             {/* Step indicator (macro stage) - shown only on the final Send step; the guided micro-flows carry their own progress bar */}
@@ -7030,8 +7030,8 @@ Rules:
                   {nrStep>1
                     ? <button className="nr-back" aria-label="Back" onClick={()=>{setNrAc("");setNrStep(s=>Math.max(1,s-1));}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg></button>
                     : <div style={{width:34,height:34,flexShrink:0}}/>}
-                  <div className="nr-bar"><div className="nr-bar-fill" style={{width:(nrStep/3*100)+"%"}}/></div>
-                  <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {nrStep} of 3</div>
+                  <div className="nr-bar"><div className="nr-bar-fill" style={{width:(nrStep/(can.sendRFQ(myRole)?8:7)*100)+"%"}}/></div>
+                  <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {nrStep} of {can.sendRFQ(myRole)?8:7}</div>
                 </div>
 
                 {/* Two-pane guided body: framing left, interaction right (stacks on mobile) */}
@@ -7160,8 +7160,8 @@ Rules:
                 {/* Guided micro-flow progress (full width) */}
                 <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:isMobile?22:30,minHeight:34}}>
                   <button className="nr-back" aria-label="Back" onClick={()=>{ if(cfgStep>1) setCfgStep(cfgStep-1); else { setStep(1); setNrStep(3); } }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg></button>
-                  <div className="nr-bar"><div className="nr-bar-fill" style={{width:(cfgStep/4*100)+"%"}}/></div>
-                  <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {cfgStep} of 4</div>
+                  <div className="nr-bar"><div className="nr-bar-fill" style={{width:((3+cfgStep)/(can.sendRFQ(myRole)?8:7)*100)+"%"}}/></div>
+                  <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {3+cfgStep} of {can.sendRFQ(myRole)?8:7}</div>
                 </div>
 
                 <div className="nr-step" key={cfgStep} style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,0.82fr) minmax(0,1.1fr)",gap:isMobile?20:56,alignItems:"start"}}>
@@ -12336,6 +12336,58 @@ function LaunchOverlay() {
         <circle className="pl-dot" cx="16.5" cy="15.5" r="2" fill="#2BB873"/>
       </svg>
       <div className="pl-wm">Pro<b>Qure</b></div>
+    </div>
+  );
+}
+
+// --- Success overlay: replays the ProQure mark build, confirms the action with a
+// message, then hands back to the dashboard. Used after an RFQ is sent / a list is
+// issued, so the moment feels like a crisp app transition rather than a toast. ---
+function RequestSuccessOverlay({ message, onReveal, onDone }) {
+  const reduce = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [out, setOut] = useState(false);
+  const fired = useRef(false);
+  useEffect(() => {
+    const hold = reduce ? 650 : 1750;
+    const t1 = setTimeout(() => { setOut(true); if (!fired.current) { fired.current = true; onReveal && onReveal(); } }, hold);
+    const t2 = setTimeout(() => { onDone && onDone(); }, hold + 520);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className={"pq-success" + (out ? " pq-out" : "") + (reduce ? " pq-reduce" : "")} role="status" aria-live="polite">
+      <style>{`
+        .pq-success{position:fixed;inset:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:#0E0F0C;opacity:1;transition:opacity .5s ease,transform .5s ease;animation:pqsIn .35s ease;will-change:opacity,transform}
+        .pq-success.pq-out{opacity:0;transform:scale(1.05);pointer-events:none}
+        @keyframes pqsIn{from{opacity:0}to{opacity:1}}
+        .pq-success svg.pqs-mark{width:90px;height:90px;display:block;overflow:visible}
+        .pq-success .ps-1,.pq-success .ps-2,.pq-success .ps-3,.pq-success .ps-mid,.pq-success .ps-dot{transform-box:fill-box;transform-origin:center}
+        .pq-success .ps-mid{animation:psPop .55s cubic-bezier(.16,1,.3,1) .08s both}
+        .pq-success .ps-1{animation:psRise .55s cubic-bezier(.16,1,.3,1) .30s both}
+        .pq-success .ps-2{animation:psRise .55s cubic-bezier(.16,1,.3,1) .40s both}
+        .pq-success .ps-3{animation:psRise .55s cubic-bezier(.16,1,.3,1) .50s both}
+        .pq-success .ps-dot{animation:psDot .6s cubic-bezier(.16,1,.3,1) .66s both}
+        @keyframes psPop{from{opacity:0;transform:scale(.35)}to{opacity:1;transform:scale(1)}}
+        @keyframes psRise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes psDot{0%{opacity:0;transform:scale(0)}60%{opacity:1;transform:scale(1.3)}100%{opacity:1;transform:scale(1)}}
+        .pq-success .pqs-row{display:flex;align-items:center;gap:11px;animation:psFade .5s ease .95s both}
+        .pq-success .pqs-check{width:26px;height:26px;border-radius:50%;background:#2BB873;display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:psFade .4s ease .95s both,psPulse 1.5s ease-out 1.05s}
+        .pq-success .pqs-msg{font-family:'Plus Jakarta Sans','Helvetica Neue',sans-serif;font-weight:700;font-size:18px;letter-spacing:-.01em;color:#F3F3F1}
+        @keyframes psFade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes psPulse{0%{box-shadow:0 0 0 0 rgba(43,184,115,.55)}100%{box-shadow:0 0 0 15px rgba(43,184,115,0)}}
+        .pq-success.pq-reduce .ps-1,.pq-success.pq-reduce .ps-2,.pq-success.pq-reduce .ps-3,.pq-success.pq-reduce .ps-mid,.pq-success.pq-reduce .ps-dot,.pq-success.pq-reduce .pqs-row{animation:psFade .3s ease both}
+        .pq-success.pq-reduce .pqs-check{animation:psFade .3s ease both}
+      `}</style>
+      <svg className="pqs-mark" viewBox="0 0 20 20" fill="none" aria-label="ProQure">
+        <rect className="ps-1" x="3" y="3" width="3" height="14" rx="1.5" fill="#2BB873"/>
+        <rect className="ps-2" x="6" y="3" width="8" height="3" rx="1.5" fill="#2BB873"/>
+        <rect className="ps-3" x="14" y="3" width="3" height="8" rx="1.5" fill="#2BB873"/>
+        <rect className="ps-mid" x="6" y="10" width="8" height="3" rx="1.5" fill="#3DD68C"/>
+        <circle className="ps-dot" cx="16.5" cy="15.5" r="2" fill="#2BB873"/>
+      </svg>
+      <div className="pqs-row">
+        <span className="pqs-check"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+        <span className="pqs-msg">{message}</span>
+      </div>
     </div>
   );
 }
