@@ -11,6 +11,19 @@
 //
 // NOTE: the "from" domain (proqure.co.uk) must be verified in Resend to deliver.
 
+
+// --- Bounded fetch (timeout) --------------------------------------------------
+// Aborts a hung upstream before Vercel kills the function (which would surface as a
+// 504). On timeout this throws an AbortError, handled on each caller's existing
+// catch path (try next model / clean error / skip). Kept under the function
+// maxDuration set in vercel.json.
+async function fetchT(url, opts = {}, ms = 20000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+  finally { clearTimeout(t); }
+}
+
 import { createClient } from "@supabase/supabase-js";
 
 // Caller verification: this endpoint sends mail from ProQure's own domain with a
@@ -146,7 +159,7 @@ export default async function handler(req, res) {
       if (clean.length) payload.attachments = clean;
     }
 
-    const response = await fetch("https://api.resend.com/emails", {
+    const response = await fetchT("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
