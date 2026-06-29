@@ -2687,6 +2687,90 @@ const Spinner = () => (
   <span style={{ width:14, height:14, border:"2px solid white", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }}/>
 );
 
+// --- Request review summary --------------------------------------------------
+// An attractive, complete recap of a material request, shown before it's sent.
+// Used at the end of both paths: engineers review before issuing to their buyer
+// (toBuyer), buyers/managers review beside the RFQ email before sending.
+const RequestSummary = ({ jobRef, site, trade, items=[], notes, deadline, deliveryMethod, deliveryDate, altAddress, collectFrom, recipients=[], toBuyer=false }) => {
+  const fmtDate = (d) => { if(!d) return ""; try { return new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"}); } catch { return d; } };
+  const dmLabel = { direct:"Deliver to site", alternative:"Deliver to alternative address", collect:"Collect from supplier", tbc:"To be confirmed" }[deliveryMethod] || "Deliver to site";
+  const dmDetail = deliveryMethod==="alternative" ? (altAddress||"") : deliveryMethod==="collect" ? (collectFrom||"") : deliveryMethod==="direct" ? (site||"") : "";
+  const Row = ({ label, children, top=false }) => (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:top?"flex-start":"center",gap:16,padding:"11px 0",borderTop:"1px solid var(--border)"}}>
+      <span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0,paddingTop:top?2:0}}>{label}</span>
+      <span style={{fontSize:13.5,color:"var(--text-primary)",fontWeight:600,textAlign:"right",minWidth:0,overflowWrap:"anywhere"}}>{children}</span>
+    </div>
+  );
+  const sectionHead = (t) => (
+    <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:"var(--green-dark)",margin:"16px 0 8px"}}>{t}</div>
+  );
+  return (
+    <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)",overflow:"hidden"}}>
+      {/* header band */}
+      <div style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
+        <div style={{width:36,height:36,borderRadius:10,background:"rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+        </div>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:15,fontWeight:800,color:"#fff",letterSpacing:"-0.01em"}}>Request summary</div>
+          <div style={{fontSize:11.5,color:"rgba(255,255,255,0.85)"}}>{toBuyer?"Review before issuing to your buyer":"Review before sending to suppliers"}</div>
+        </div>
+      </div>
+      <div style={{padding:"5px 20px 18px"}}>
+        {/* Job details */}
+        <Row label="Job ref"><span style={{fontFamily:"'JetBrains Mono',monospace"}}>{jobRef||"—"}</span></Row>
+        <Row label="Site">{site||"—"}</Row>
+        <Row label="Trade"><span style={{display:"inline-block",fontSize:12,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:99,padding:"2px 11px"}}>{trade}</span></Row>
+
+        {/* Materials */}
+        {sectionHead(`Materials · ${items.length} item${items.length===1?"":"s"}`)}
+        <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-md)",overflow:"hidden",maxHeight:230,overflowY:"auto"}}>
+          {items.length===0&&<div style={{padding:"12px 14px",fontSize:13,color:"var(--text-tertiary)"}}>No items.</div>}
+          {items.map((it,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"baseline",gap:10,padding:"9px 14px",borderTop:i?"1px solid var(--border)":"none"}}>
+              <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0,minWidth:54}}>{it.quantity||"—"} {it.unit||""}</span>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13,color:"var(--text-primary)",fontWeight:500,overflowWrap:"anywhere"}}>{it.description||<span style={{color:"var(--text-tertiary)"}}>(no description)</span>}</div>
+                {it.notes&&<div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:1,overflowWrap:"anywhere"}}>{it.notes}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {notes&&notes.trim()&&(<>
+          {sectionHead("Notes for supplier")}
+          <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.6,background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"10px 13px"}}>{notes}</div>
+        </>)}
+
+        {/* Logistics */}
+        <Row label="Delivery" top>{dmLabel}{dmDetail?<div style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",marginTop:2}}>{dmDetail}</div>:null}</Row>
+        {deliveryDate&&<Row label="Required by">{fmtDate(deliveryDate)}</Row>}
+        {deadline&&<Row label="Respond by">{fmtDate(deadline)}</Row>}
+
+        {/* Recipients */}
+        {sectionHead(toBuyer?"Goes to":"Recipients")}
+        {toBuyer?(
+          <div style={{display:"flex",alignItems:"center",gap:11,padding:"11px 13px",background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:"var(--radius-md)"}}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green-deep)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+            <div><div style={{fontSize:13,fontWeight:700,color:"var(--green-deep)"}}>Your buyer</div><div style={{fontSize:11.5,color:"var(--green-deep)",opacity:0.85}}>They'll request quotes and handle pricing.</div></div>
+          </div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:7}}>
+            {recipients.length===0&&<div style={{fontSize:13,color:"var(--amber)"}}>No suppliers selected yet.</div>}
+            {recipients.map((r,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:9,padding:"9px 13px",background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)"}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:"var(--green)",flexShrink:0}}/>
+                <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",flexShrink:0}}>{r.name}</span>
+                {r.email&&<span style={{fontSize:12,color:"var(--text-tertiary)",overflowWrap:"anywhere",minWidth:0}}>· {r.email}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // Gently counts a number up from 0 on mount (respects reduced-motion)
 const CountUp = ({ value, duration=650 }) => {
   const [display, setDisplay] = useState(0);
@@ -6906,7 +6990,7 @@ Rules:
         )}
 
         {view==="new"&&(
-          <div className="stagger-in" style={{maxWidth:step===1?1120:860}}>
+          <div className="stagger-in" style={{maxWidth:1120}}>
             <div style={{marginBottom:step===1?18:24}}>
               <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>New material request</h1>
               {step===3&&<p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step 3 of 3 - Review and send</p>}
@@ -7060,29 +7144,41 @@ Rules:
             )}
 
             {step===2&&parsed&&(
-              <div style={{maxWidth:760}}>
-                {/* Guided micro-flow progress */}
-                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:isMobile?20:26,minHeight:34}}>
+              <div>
+                {/* Guided micro-flow progress (full width) */}
+                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:isMobile?22:30,minHeight:34}}>
                   <button className="nr-back" aria-label="Back" onClick={()=>{ if(cfgStep>1) setCfgStep(cfgStep-1); else { setStep(1); setNrStep(3); } }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg></button>
                   <div className="nr-bar"><div className="nr-bar-fill" style={{width:(cfgStep/4*100)+"%"}}/></div>
                   <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {cfgStep} of 4</div>
                 </div>
 
-                <div className="nr-step" key={cfgStep}>
-                  {/* Guided header */}
-                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>Review &amp; configure</div>
-                  <h2 style={{fontSize:isMobile?23:28,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 10px",color:"var(--text-primary)"}}>
-                    {cfgStep===1?"Check your items"
-                     :cfgStep===2?"Any response deadline?"
-                     :cfgStep===3?"Where should it go?"
-                     :can.sendRFQ(myRole)?"Who should we ask?":"Send to your buyer"}
-                  </h2>
-                  <p style={{fontSize:14.5,color:"var(--text-secondary)",lineHeight:1.6,margin:"0 0 22px",maxWidth:560}}>
-                    {cfgStep===1?"The AI pulled this list from your input. Tweak anything, add what's missing, and leave any notes for your supplier."
-                     :cfgStep===2?"Optionally ask suppliers to get their quotes back by a certain date. Skip if there's no rush."
-                     :cfgStep===3?"Tell suppliers how and where you need the materials."
-                     :can.sendRFQ(myRole)?`Pick who receives this RFQ. We've pre-selected suppliers tagged ${trade}.`:"You're all set - this list goes to your buyer, who'll request quotes and handle pricing."}
-                  </p>
+                <div className="nr-step" key={cfgStep} style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,0.82fr) minmax(0,1.1fr)",gap:isMobile?20:56,alignItems:"start"}}>
+                  {/* LEFT - framing */}
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>Review &amp; configure</div>
+                    <h2 style={{fontSize:isMobile?23:28,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 10px",color:"var(--text-primary)"}}>
+                      {cfgStep===1?"Check your items"
+                       :cfgStep===2?"Any response deadline?"
+                       :cfgStep===3?"Where should it go?"
+                       :can.sendRFQ(myRole)?"Who should we ask?":"Send to your buyer"}
+                    </h2>
+                    <p style={{fontSize:14.5,color:"var(--text-secondary)",lineHeight:1.6,margin:0,maxWidth:380}}>
+                      {cfgStep===1?"The AI pulled this list from your input. Tweak anything, add what's missing, and leave any notes for your supplier."
+                       :cfgStep===2?"Optionally ask suppliers to get their quotes back by a certain date. Skip if there's no rush."
+                       :cfgStep===3?"Tell suppliers how and where you need the materials."
+                       :can.sendRFQ(myRole)?`Pick who receives this RFQ. We've pre-selected suppliers tagged ${trade}.`:"You're all set - this list goes to your buyer, who'll request quotes and handle pricing."}
+                    </p>
+                    {jobRef&&(
+                      <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:20,padding:"7px 12px 7px 10px",background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:99}}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green-dark)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                        <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"0.01em"}}>{jobRef}</span>
+                        {site&&<span style={{fontSize:11.5,color:"var(--text-tertiary)",fontWeight:500}}>· {site}</span>}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* RIGHT - interaction */}
+                  <div>
 
                   {/* ---- Sub-step 1: Items + notes ---- */}
                   {cfgStep===1&&(
@@ -7286,23 +7382,7 @@ Rules:
                   )}
 
                   {cfgStep===4&&!can.sendRFQ(myRole)&&(
-                    <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"18px 20px"}}>
-                      <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:16}}>
-                        <div style={{width:42,height:42,borderRadius:"50%",background:"var(--green-light)",border:"1px solid var(--green-deep)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green-deep)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-                        </div>
-                        <div>
-                          <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:2}}>This goes to your buyer</div>
-                          <div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.6}}>As an engineer you don't pick suppliers - just raise the list and your buyer requests the quotes and handles pricing.</div>
-                        </div>
-                      </div>
-                      <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"4px 16px"}}>
-                        {jobRef&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 0",borderBottom:"1px solid var(--border)"}}><span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Job reference</span><span style={{fontSize:13,color:"var(--text-primary)",fontWeight:600}}>{jobRef}</span></div>}
-                        {site&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 0",borderBottom:"1px solid var(--border)",gap:16}}><span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0}}>Site</span><span style={{fontSize:13,color:"var(--text-primary)",fontWeight:600,textAlign:"right"}}>{site}</span></div>}
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 0",borderBottom:"1px solid var(--border)"}}><span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trade</span><span style={{fontSize:13,color:"var(--text-primary)",fontWeight:600}}>{trade}</span></div>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 0"}}><span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Items</span><span style={{fontSize:13,color:"var(--text-primary)",fontWeight:600}}>{parsed.items?.length||0}</span></div>
-                      </div>
-                    </div>
+                    <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} toBuyer/>
                   )}
 
                   {/* Footer */}
@@ -7314,12 +7394,17 @@ Rules:
                       ? <button className="nr-btn nr-btn-primary" disabled={cfgStep===1&&!(parsed.items&&parsed.items.length>0)} onClick={()=>setCfgStep(cfgStep+1)}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
                       : <button className="nr-btn nr-btn-primary" disabled={loading||(can.sendRFQ(myRole)&&selSup.length===0)} onClick={handleGenRFQ}>{loading?loadMsg:(can.sendRFQ(myRole)?<>Generate RFQ email <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>:<>Issue to buyer <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>)}</button>}
                   </div>
+                  </div>
                 </div>
               </div>
             )}
 
             {step===3&&(
-              <div>
+              <div style={{display:isMobile?"block":"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,0.82fr) minmax(0,1.1fr)",gap:isMobile?20:56,alignItems:"start"}}>
+                <div style={{marginBottom:isMobile?20:0}}>
+                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>Ready to send</div>
+                  <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed?.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} recipients={(suppliers||[]).filter(s=>selSup.includes(s.id)).map(s=>{ const c=(s.contacts||[]).find(c=>c.id===(contactSel[s.id]||s.contacts[0]?.id))||(s.contacts||[])[0]; return { name:s.name, email: c?c.email:(s.email||"") }; })}/>
+                </div>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Review RFQ email</div>
                   {editingReqId&&<div style={{fontSize:12,fontWeight:600,color:"var(--amber)",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",padding:"8px 12px",marginBottom:10}}>Revising {jobRef||editingReqId} - sending this will re-send to the selected suppliers and reset their quotes for this revision.</div>}
