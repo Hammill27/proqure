@@ -7393,7 +7393,7 @@ Rules:
                     <div style={{flex:1}}/>
                     {cfgStep<4
                       ? <button className="nr-btn nr-btn-primary" disabled={cfgStep===1&&!(parsed.items&&parsed.items.length>0)} onClick={()=>setCfgStep(cfgStep+1)}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-                      : <button className="nr-btn nr-btn-primary" disabled={loading||(can.sendRFQ(myRole)&&selSup.length===0)} onClick={handleGenRFQ}>{loading?loadMsg:(can.sendRFQ(myRole)?<>Generate RFQ email <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>:<>Issue to buyer <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>)}</button>}
+                      : <button className="nr-btn nr-btn-primary" disabled={loading||(can.sendRFQ(myRole)&&selSup.length===0)} onClick={()=>{ if(can.sendRFQ(myRole)) handleGenRFQ(); else setSendConfirm(true); }}>{loading?loadMsg:(can.sendRFQ(myRole)?<>Generate RFQ email <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>:<>Review &amp; issue to buyer <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>)}</button>}
                   </div>
                   </div>
                 </div>
@@ -10724,26 +10724,31 @@ Rules:
         </div>
       )}
 
-      {sendConfirm&&step===3&&parsed&&(
+      {sendConfirm&&parsed&&(step===3||(step===2&&cfgStep===4))&&(()=>{
+        const isSend = can.sendRFQ(myRole);
+        const recips = isSend ? (suppliers||[]).filter(s=>selSup.includes(s.id)).map(s=>{ const c=(s.contacts||[]).find(c=>c.id===(contactSel[s.id]||s.contacts[0]?.id))||(s.contacts||[])[0]; return { name:s.name, email: c?c.email:(s.email||"") }; }) : [];
+        const proceedDisabled = loading || (isSend && selSup.length===0);
+        return (
         <div style={{position:"fixed",inset:0,background:"rgba(12,12,14,0.62)",backdropFilter:"blur(7px)",WebkitBackdropFilter:"blur(7px)",zIndex:1003,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:isMobile?"16px 14px":"40px 20px",overflowY:"auto",animation:"fadeIn 0.2s ease"}} onClick={()=>{ if(!loading) setSendConfirm(false); }}>
           <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:520,animation:"scaleIn 0.26s cubic-bezier(0.16,1,0.3,1)"}}>
             <div style={{textAlign:"center",marginBottom:16}}>
-              <h2 style={{fontSize:isMobile?21:24,fontWeight:800,letterSpacing:"-0.02em",color:"#fff",margin:"0 0 4px"}}>Ready to send?</h2>
-              <p style={{fontSize:13.5,color:"rgba(255,255,255,0.72)",margin:0}}>Have one last look. This sends the RFQ to {selSup.length} supplier{selSup.length!==1?"s":""}.</p>
+              <h2 style={{fontSize:isMobile?21:24,fontWeight:800,letterSpacing:"-0.02em",color:"#fff",margin:"0 0 4px"}}>{isSend?"Ready to send?":"Ready to issue?"}</h2>
+              <p style={{fontSize:13.5,color:"rgba(255,255,255,0.72)",margin:0}}>{isSend?`Have one last look. This sends the RFQ to ${selSup.length} supplier${selSup.length!==1?"s":""}.`:"Have one last look. This issues your list to your buyer, who'll request the quotes."}</p>
             </div>
-            <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} recipients={(suppliers||[]).filter(s=>selSup.includes(s.id)).map(s=>{ const c=(s.contacts||[]).find(c=>c.id===(contactSel[s.id]||s.contacts[0]?.id))||(s.contacts||[])[0]; return { name:s.name, email: c?c.email:(s.email||"") }; })}/>
-            <div style={{display:"flex",gap:12,marginTop:16}}>
-              <button onClick={()=>{ if(!loading) setSendConfirm(false); }} disabled={loading} style={{flex:"0 0 auto",fontFamily:"inherit",fontSize:15,fontWeight:700,borderRadius:12,padding:"14px 22px",cursor:loading?"not-allowed":"pointer",border:"1px solid rgba(255,255,255,0.22)",background:"rgba(255,255,255,0.06)",color:"#fff",opacity:loading?0.5:1,display:"inline-flex",alignItems:"center",gap:8}}>
+            <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} recipients={recips} toBuyer={!isSend}/>
+            <div style={{display:"flex",flexDirection:isMobile?"column-reverse":"row",gap:12,marginTop:16}}>
+              <button onClick={()=>{ if(!loading) setSendConfirm(false); }} disabled={loading} style={{flex:isMobile?"none":"0 0 auto",width:isMobile?"100%":"auto",fontFamily:"inherit",fontSize:15,fontWeight:700,borderRadius:12,padding:"14px 22px",cursor:loading?"not-allowed":"pointer",border:"1px solid rgba(255,255,255,0.22)",background:"rgba(255,255,255,0.06)",color:"#fff",opacity:loading?0.5:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
                 Go back &amp; edit
               </button>
-              <button onClick={()=>{ if(!loading) handleSendEmails(); }} disabled={loading||selSup.length===0} className="nr-btn nr-btn-primary" style={{flex:1,justifyContent:"center"}}>
-                {loading?(loadMsg||"Sending..."):(<>{editingReqId?"Re-send":"Proceed & send"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>)}
+              <button onClick={()=>{ if(!loading){ isSend?handleSendEmails():handleIssueToBuyer(); } }} disabled={proceedDisabled} className="nr-btn nr-btn-primary" style={{flex:isMobile?"none":"1",width:isMobile?"100%":"auto",justifyContent:"center"}}>
+                {loading?(loadMsg||"Working..."):(isSend?<>{editingReqId?"Re-send":"Proceed & send"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>:<>Proceed &amp; issue <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>)}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {quickPO&&(
         <QuickPOModal
