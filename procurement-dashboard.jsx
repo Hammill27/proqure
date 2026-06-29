@@ -5725,6 +5725,28 @@ ${settings.company||""}`;
           {id:"help",     label:"Help",           d:"M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01"},
           {id:"contact",  label:"Contact",        d:"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"},
   ];
+  // Sidebar is organised into logical, collapsible sections (state remembered per
+  // browser). Items are referenced by id from navItems above, so ALL role (`min`)
+  // and feature gating still applies unchanged; a group with no visible items for
+  // the current role/plan is dropped entirely (keeps an engineer's nav just as tidy).
+  const navById = Object.fromEntries(navItems.map(i => [i.id, i]));
+  const navGroups = [
+    { id:"home",        label:null,                    items:["dashboard"] },
+    { id:"procurement", label:"Procurement",           items:["new","requests","quotes","orders","invoices"] },
+    { id:"projects",    label:"Projects & costs",      items:["costs","measure","om","reports"] },
+    { id:"inventory",   label:"Inventory & equipment", items:["stock","hire","returns","assets"] },
+    { id:"sourcing",    label:"Sourcing",              items:["suppliers","catalogues","library"] },
+    { id:"company",     label:"Company",               items:["team","settings"] },
+    { id:"support",     label:"Support",               items:["help","contact"] },
+  ];
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("piq_nav_collapsed") || "{}"); } catch { return {}; }
+  });
+  const toggleNavGroup = (gid) => setNavCollapsed(prev => {
+    const next = { ...prev, [gid]: !prev[gid] };
+    try { localStorage.setItem("piq_nav_collapsed", JSON.stringify(next)); } catch {}
+    return next;
+  });
   const VIEW_MIN_ROLE = { quotes:2, suppliers:2, library:2, om:2, reports:2, costs:2, invoices:2, team:3, settings:3 };
   const handleNav = (id) => {
     haptic();
@@ -6328,16 +6350,36 @@ Rules:
             <span style={{fontSize:16,fontWeight:800,color:"white",fontFamily:"inherit"}}>Pro<span style={{color:"#1E9E63"}}>Qure</span></span>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"12px 12px"}}>
-            <div style={{fontSize:10,color:"var(--sidebar-text)",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,marginBottom:8,paddingLeft:4,opacity:0.7}}>Navigation</div>
-            {navItems.filter(item=>(!item.min||roleRank(myRole)>=item.min)&&(!item.feature||featureAccess[item.feature])).map(item=>(
-              <button key={item.id} onClick={()=>handleNav(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"0 8px 8px 0",border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-active)":"3px solid transparent",transition:"all 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
-                {item.label}
-                {item.id==="orders"&&pendingOrders>0&&(
-                  <span style={{marginLeft:"auto",background:"var(--green)",color:"white",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:99}}>{pendingOrders}</span>
-                )}
-              </button>
-            ))}
+            {navGroups.map(group => {
+              const visible = group.items
+                .map(id => navById[id])
+                .filter(item => item && (!item.min || roleRank(myRole) >= item.min) && (!item.feature || featureAccess[item.feature]));
+              if (!visible.length) return null;
+              const hasLabel = !!group.label;
+              const groupActive = visible.some(i => i.id === view);
+              // A manually-collapsed group still expands while it holds the active view,
+              // so the current screen is never hidden behind a collapsed header.
+              const collapsed = hasLabel && !!navCollapsed[group.id] && !groupActive;
+              return (
+                <div key={group.id} style={{marginBottom: hasLabel ? 4 : 6}}>
+                  {hasLabel && (
+                    <button onClick={()=>toggleNavGroup(group.id)} aria-expanded={!collapsed} title={collapsed?"Expand":"Collapse"} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,background:"transparent",border:"none",cursor:"pointer",padding:"7px 8px 5px 8px",marginTop:4,color:"var(--sidebar-text)",fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:600,opacity:0.6}}>
+                      <span>{group.label}</span>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition:"transform 0.2s ease", opacity:0.85}}><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                  )}
+                  {!collapsed && visible.map(item => (
+                    <button key={item.id} onClick={()=>handleNav(item.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:"0 8px 8px 0",border:"none",background:view===item.id?"var(--sidebar-activebg)":"transparent",color:view===item.id?"var(--sidebar-active)":"var(--sidebar-text)",cursor:"pointer",fontSize:13,fontWeight:view===item.id?600:400,marginBottom:1,textAlign:"left",borderLeft:view===item.id?"3px solid var(--sidebar-active)":"3px solid transparent",transition:"all 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.d}/></svg>
+                      {item.label}
+                      {item.id==="orders"&&pendingOrders>0&&(
+                        <span style={{marginLeft:"auto",background:"var(--green)",color:"white",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:99}}>{pendingOrders}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
           </div>
           <div style={{padding:"14px 20px",borderTop:"1px solid var(--sidebar-border)"}}>
             {myCompanies.length > 1 && (
