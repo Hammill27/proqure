@@ -10,6 +10,19 @@
 // datasheets/literature. Web search is METERED on the OpenRouter account
 // (billed per result), so it is OFF unless the caller explicitly asks for it.
 
+
+// --- Bounded fetch (timeout) --------------------------------------------------
+// Aborts a hung upstream before Vercel kills the function (which would surface as a
+// 504). On timeout this throws an AbortError, handled on each caller's existing
+// catch path (try next model / clean error / skip). Kept under the function
+// maxDuration set in vercel.json.
+async function fetchT(url, opts = {}, ms = 55000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+  finally { clearTimeout(t); }
+}
+
 import { createClient } from "@supabase/supabase-js";
 
 // Server-authoritative monthly AI budget (the circuit-breaker's real wall).
@@ -271,7 +284,7 @@ export default async function handler(req, res) {
         // Ask OpenRouter to include usage accounting (cost) in the response.
         body.usage = { include: true };
 
-        const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const r = await fetchT("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
