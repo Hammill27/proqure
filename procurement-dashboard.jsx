@@ -7383,7 +7383,18 @@ Rules:
                   )}
 
                   {cfgStep===4&&!can.sendRFQ(myRole)&&(
-                    <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} toBuyer/>
+                    <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"30px 24px",textAlign:"center"}}>
+                      <div style={{width:60,height:60,borderRadius:"50%",background:"var(--green-light)",border:"1px solid var(--green-deep)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--green-deep)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                      </div>
+                      <h3 style={{fontSize:19,fontWeight:800,color:"var(--text-primary)",margin:"0 0 6px",letterSpacing:"-0.02em"}}>Your list is ready</h3>
+                      <p style={{fontSize:13.5,color:"var(--text-secondary)",lineHeight:1.6,margin:"0 auto",maxWidth:380}}>Review everything once more, then issue it to your buyer - they'll request the quotes and handle pricing.</p>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginTop:18}}>
+                        {jobRef&&<span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:99,padding:"5px 12px"}}>{jobRef}</span>}
+                        <span style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:99,padding:"5px 12px"}}>{trade}</span>
+                        <span style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:99,padding:"5px 12px"}}>{parsed.items?.length||0} item{(parsed.items?.length||0)===1?"":"s"}</span>
+                      </div>
+                    </div>
                   )}
 
                   {/* Footer */}
