@@ -4106,8 +4106,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     meter("posMaterials");
     logActivity("Quick PO raised", `${poNum} - ${supplier?.name||form.newSupplierName||"supplier"} (direct/phone order)${form.total?` - ${form.total}`:""}`, { entity:"order", jobRef:order.jobRef });
     setQuickPO(null);
-    showToast(`Quick PO ${poNum} raised`);
-    setView("orders");
+    setSuccessOverlay({ message:`Quick PO ${poNum} raised`, onReveal:()=>{ setView("orders"); } });
     // Advisory price sanity-check (non-blocking) - compares to past orders for similar items
     if (form.total && can.viewCosts(myRole)) {
       const itemsText = lineItems.map(i=>`${i.quantity} ${i.description}`).join(", ") || form.summary || "";
@@ -4169,8 +4168,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     meter("posRaised");
     meter("posHire");
     logActivity("Hire raised", `${ref} - ${form.description.trim()} (${supplier?.name||form.newSupplierName||"supplier"})`, { entity:"hire", jobRef:hire.jobRef });
-    showToast(`Hire ${ref} raised`);
-    setView("hire");
+    setSuccessOverlay({ message:`Hire ${ref} raised`, onReveal:()=>{ setView("hire"); } });
   }
 
   function updateHire(id, patch, activity) {
