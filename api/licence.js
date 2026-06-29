@@ -35,6 +35,19 @@
 //   TURNSTILE_SECRET_KEY        - OPTIONAL; if set, a valid Cloudflare Turnstile token
 //                                 (sent as `turnstileToken`) is required.
 //
+
+// --- Bounded fetch (timeout) --------------------------------------------------
+// Aborts a hung upstream before Vercel kills the function (which would surface as a
+// 504). On timeout this throws an AbortError, handled on each caller's existing
+// catch path (try next model / clean error / skip). Kept under the function
+// maxDuration set in vercel.json.
+async function fetchT(url, opts = {}, ms = 20000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+  finally { clearTimeout(t); }
+}
+
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
@@ -115,7 +128,7 @@ async function turnstileOk(token, ip) {
   try {
     const form = new URLSearchParams({ secret: TURNSTILE_SECRET, response: token || "" });
     if (ip) form.set("remoteip", ip);
-    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    const r = await fetchT("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: form,
@@ -144,7 +157,7 @@ function systemEmailHtml(heading, lines, ctaText) {
 async function sendSystemEmail(to, subject, html) {
   if (!process.env.RESEND_API_KEY || !to) return false;
   try {
-    const r = await fetch("https://api.resend.com/emails", {
+    const r = await fetchT("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
       body: JSON.stringify({ from: "ProQure <accounts@proqure.co.uk>", to: [to], subject, html }),
