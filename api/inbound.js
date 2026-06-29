@@ -24,6 +24,19 @@
 //   SUPABASE_URL              - Supabase project URL (falls back to VITE_SUPABASE_URL)
 //   SUPABASE_SERVICE_ROLE_KEY - service/secret key (server-only; bypasses RLS to write)
 
+
+// --- Bounded fetch (timeout) --------------------------------------------------
+// Aborts a hung upstream before Vercel kills the function (which would surface as a
+// 504). On timeout this throws an AbortError, handled on each caller's existing
+// catch path (try next model / clean error / skip). Kept under the function
+// maxDuration set in vercel.json.
+async function fetchT(url, opts = {}, ms = 20000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+  finally { clearTimeout(t); }
+}
+
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
@@ -75,7 +88,7 @@ function verifySvix(raw, headers, secret) {
 // Retrieve the full parsed inbound email (the webhook payload is metadata only).
 async function getEmail(emailId) {
   try {
-    const r = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+    const r = await fetchT(`https://api.resend.com/emails/receiving/${emailId}`, {
       headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
     });
     if (r.ok) { const j = await r.json(); return j && j.data ? j.data : j; }
@@ -160,7 +173,7 @@ function extractEmail(str) {
 
 async function forwardCopy(inbox, supName, fromAddr, subject, replyText) {
   try {
-    await fetch("https://api.resend.com/emails", {
+    await fetchT("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -208,7 +221,7 @@ function safeFetchUrl(url) {
 }
 async function bytesFromUrl(url) {
   if (!safeFetchUrl(url)) return null;
-  try { const r = await fetch(url); if (!r.ok) return null; return Buffer.from(await r.arrayBuffer()); }
+  try { const r = await fetchT(url); if (!r.ok) return null; return Buffer.from(await r.arrayBuffer()); }
   catch { return null; }
 }
 async function fetchQuoteAttachments(emailId, email) {
@@ -216,7 +229,7 @@ async function fetchQuoteAttachments(emailId, email) {
   // If the receiving object didn't include attachments, ask the attachments API.
   if (!list.length && emailId && RESEND_API_KEY) {
     try {
-      const r = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments`, { headers: { Authorization: `Bearer ${RESEND_API_KEY}` } });
+      const r = await fetchT(`https://api.resend.com/emails/receiving/${emailId}/attachments`, { headers: { Authorization: `Bearer ${RESEND_API_KEY}` } });
       if (r.ok) { const j = await r.json(); const d = (j && (j.data || j)) || []; list = Array.isArray(d) ? d : []; }
     } catch { /* ignore */ }
   }
@@ -230,7 +243,7 @@ async function fetchQuoteAttachments(emailId, email) {
       if (a.content) bytes = Buffer.from(a.content, "base64");
       else if (a.download_url || a.url) bytes = await bytesFromUrl(a.download_url || a.url);
       else if (a.id && emailId && RESEND_API_KEY) {
-        const r = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments/${a.id}`, { headers: { Authorization: `Bearer ${RESEND_API_KEY}` } });
+        const r = await fetchT(`https://api.resend.com/emails/receiving/${emailId}/attachments/${a.id}`, { headers: { Authorization: `Bearer ${RESEND_API_KEY}` } });
         if (r.ok) { const j = await r.json(); const d = (j && j.data) || j; if (d && d.content) bytes = Buffer.from(d.content, "base64"); else if (d && (d.download_url || d.url)) bytes = await bytesFromUrl(d.download_url || d.url); }
       }
     } catch { /* skip this one */ }
