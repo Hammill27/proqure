@@ -11083,7 +11083,8 @@ function SignatureEditor({ value, onChange }) {
   // Seed the editable area when it's not being actively edited (avoids cursor jumps).
   useEffect(() => {
     if (ref.current && document.activeElement !== ref.current && ref.current.innerHTML !== (value||"")) {
-      ref.current.innerHTML = value || "";
+      // Sanitise on the way in (not just on paste) - stored HTML must never reach innerHTML raw.
+      ref.current.innerHTML = clean(value || "").html;
       setEmpty(!((value||"").trim()));
     }
   }, [value]);
@@ -11092,7 +11093,7 @@ function SignatureEditor({ value, onChange }) {
   const clean = (html) => {
     const div = document.createElement("div");
     div.innerHTML = html;
-    div.querySelectorAll("script,style,meta,link,title,head,o\\:p").forEach(n=>n.remove());
+    div.querySelectorAll("script,style,meta,link,title,head,base,iframe,frame,frameset,object,embed,form,input,textarea,select,button,audio,video,source,track,noscript,template,math,o\\:p").forEach(n=>n.remove());
     let brokenImg = false;
     div.querySelectorAll("img").forEach(img => {
       const src = img.getAttribute("src") || "";
@@ -11107,7 +11108,13 @@ function SignatureEditor({ value, onChange }) {
     div.querySelectorAll("*").forEach(el => {
       // Remove event handlers and class/id noise; keep inline style.
       [...el.attributes].forEach(a => {
-        if (/^on/i.test(a.name) || a.name === "class" || a.name === "id") el.removeAttribute(a.name);
+        const an = a.name.toLowerCase();
+        if (/^on/i.test(an) || an === "class" || an === "id") { el.removeAttribute(a.name); return; }
+        // Neutralise script-bearing URIs in any URL-ish attribute (javascript:, vbscript:, file:, data:text/html).
+        if (/^(href|src|xlink:href|formaction|action|background|poster|data|codebase)$/.test(an)) {
+          const v = String(a.value || "").trim();
+          if (/^(javascript|vbscript|file):/i.test(v) || /^data:\s*text\/html/i.test(v)) el.removeAttribute(a.name);
+        }
       });
       // Outlook signatures use fixed-width tables/cells that overflow narrow boxes.
       // Strip hard widths so the signature flows to fit wherever it's shown.
@@ -11766,9 +11773,12 @@ function AppInner() {
       // Only update session state when the user actually changes, otherwise a
       // harmless refresh would re-trigger cloudPull and remount the app, throwing
       // the user back to the dashboard.
+      const nextId = s?.user?.id || null;
+      // Signed out (or arriving with no session): wipe cached company data so a shared
+      // device can't expose the previous user's suppliers/invoices/costs via localStorage.
+      if (!nextId) { try { SYNC_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} }); localStorage.removeItem("piq_scope"); } catch (e) {} }
       setSession(prev => {
         const prevId = prev?.user?.id || null;
-        const nextId = s?.user?.id || null;
         if (prevId === nextId) return prev; // no real change - keep the same object
         return s || null;
       });
