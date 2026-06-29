@@ -3425,6 +3425,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const [nrAc,     setNrAc]     = useState("");    // Which guided autocomplete is open: "job" | "site" | ""
   const [nrTradePicked, setNrTradePicked] = useState(false); // Whether the user explicitly tapped a trade chip
   const [cfgStep,  setCfgStep]  = useState(1);     // Step 2 (Review & configure) guided sub-step (1..4): items -> deadline -> delivery -> suppliers/send
+  const [sendConfirm, setSendConfirm] = useState(false); // Final summary-confirmation modal before an RFQ is actually sent
   const [rfqEmail, setRfqEmail] = useState("");
   const [rfqDocs,  setRfqDocs]  = useState([]); // supporting docs sent with the RFQ: {id,filename,content(base64),size,kind}
   const [selSup,   setSelSup]   = useState([]);
@@ -4456,7 +4457,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
         // Full reset - ready for next request
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
-        setNrStep(1); setNrTradePicked(false); setCfgStep(1);
+        setNrStep(1); setNrTradePicked(false); setCfgStep(1); setSendConfirm(false);
         setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
         setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
@@ -4552,7 +4553,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
 
   function resetNewRequest() {
     setStep(1); setRawInput(""); setParsed(null); setJobRef(nextJobRef()); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
-    setNrStep(1); setNrTradePicked(false); setCfgStep(1);
+    setNrStep(1); setNrTradePicked(false); setCfgStep(1); setSendConfirm(false);
     setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
     setInterim(""); setScanning(false);
@@ -7400,11 +7401,7 @@ Rules:
             )}
 
             {step===3&&(
-              <div style={{display:isMobile?"block":"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,0.82fr) minmax(0,1.1fr)",gap:isMobile?20:56,alignItems:"start"}}>
-                <div style={{marginBottom:isMobile?20:0}}>
-                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>Ready to send</div>
-                  <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed?.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} recipients={(suppliers||[]).filter(s=>selSup.includes(s.id)).map(s=>{ const c=(s.contacts||[]).find(c=>c.id===(contactSel[s.id]||s.contacts[0]?.id))||(s.contacts||[])[0]; return { name:s.name, email: c?c.email:(s.email||"") }; })}/>
-                </div>
+              <div style={{maxWidth:860,margin:"0 auto"}}>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Review RFQ email</div>
                   {editingReqId&&<div style={{fontSize:12,fontWeight:600,color:"var(--amber)",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",padding:"8px 12px",marginBottom:10}}>Revising {jobRef||editingReqId} - sending this will re-send to the selected suppliers and reset their quotes for this revision.</div>}
@@ -7475,11 +7472,11 @@ Rules:
                   )}
                   {!emailRes&&(
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-                      <Btn outline onClick={()=>{setStep(2);setCfgStep(4);}}>Back</Btn>
+                      <Btn outline onClick={()=>{setSendConfirm(false);setStep(2);setCfgStep(4);}}>Back</Btn>
                       <div style={{display:"flex",gap:10}}>
                         {(EMAIL_VIA_SERVER||settings.resendKey)?(
-                          <Btn onClick={handleSendEmails} disabled={loading||selSup.length===0} color="#15824F">
-                            {loading?loadMsg:`${editingReqId?"Re-send to":"Send to"} ${selSup.length} supplier${selSup.length!==1?"s":""}`}
+                          <Btn onClick={()=>setSendConfirm(true)} disabled={loading||selSup.length===0} color="#15824F">
+                            {loading?loadMsg:`Review & send to ${selSup.length} supplier${selSup.length!==1?"s":""}`}
                           </Btn>
                         ):(
                           <div style={{fontSize:13,color:"var(--text-tertiary)"}}>
@@ -10721,6 +10718,27 @@ Rules:
               <button onClick={()=>{saveSettings({...settings,requirePoApproval:false,poApprovalConfigured:true});setShowPoSetup(false);showToast("Buyers can raise POs directly");}} style={{textAlign:"left",padding:"13px 16px",borderRadius:"var(--radius-md)",border:"1px solid var(--border)",background:"var(--bg-subtle2)",cursor:"pointer"}}>
                 <div style={{fontSize:13.5,fontWeight:700,color:"var(--text-primary)"}}>No - Buyers raise POs directly</div>
                 <div style={{fontSize:12,color:"var(--text-secondary)",marginTop:2}}>Buyers complete the purchase themselves. Faster.</div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sendConfirm&&step===3&&parsed&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(12,12,14,0.62)",backdropFilter:"blur(7px)",WebkitBackdropFilter:"blur(7px)",zIndex:1003,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:isMobile?"16px 14px":"40px 20px",overflowY:"auto",animation:"fadeIn 0.2s ease"}} onClick={()=>{ if(!loading) setSendConfirm(false); }}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:520,animation:"scaleIn 0.26s cubic-bezier(0.16,1,0.3,1)"}}>
+            <div style={{textAlign:"center",marginBottom:16}}>
+              <h2 style={{fontSize:isMobile?21:24,fontWeight:800,letterSpacing:"-0.02em",color:"#fff",margin:"0 0 4px"}}>Ready to send?</h2>
+              <p style={{fontSize:13.5,color:"rgba(255,255,255,0.72)",margin:0}}>Have one last look. This sends the RFQ to {selSup.length} supplier{selSup.length!==1?"s":""}.</p>
+            </div>
+            <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} recipients={(suppliers||[]).filter(s=>selSup.includes(s.id)).map(s=>{ const c=(s.contacts||[]).find(c=>c.id===(contactSel[s.id]||s.contacts[0]?.id))||(s.contacts||[])[0]; return { name:s.name, email: c?c.email:(s.email||"") }; })}/>
+            <div style={{display:"flex",gap:12,marginTop:16}}>
+              <button onClick={()=>{ if(!loading) setSendConfirm(false); }} disabled={loading} style={{flex:"0 0 auto",fontFamily:"inherit",fontSize:15,fontWeight:700,borderRadius:12,padding:"14px 22px",cursor:loading?"not-allowed":"pointer",border:"1px solid rgba(255,255,255,0.22)",background:"rgba(255,255,255,0.06)",color:"#fff",opacity:loading?0.5:1,display:"inline-flex",alignItems:"center",gap:8}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+                Go back &amp; edit
+              </button>
+              <button onClick={()=>{ if(!loading) handleSendEmails(); }} disabled={loading||selSup.length===0} className="nr-btn nr-btn-primary" style={{flex:1,justifyContent:"center"}}>
+                {loading?(loadMsg||"Sending..."):(<>{editingReqId?"Re-send":"Proceed & send"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>)}
               </button>
             </div>
           </div>
