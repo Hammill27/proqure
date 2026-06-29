@@ -10618,7 +10618,7 @@ Rules:
       )}
 
       {needsOnboarding && (
-        <CompanyOnboarding session={session} initial={settings} multiCompany={myCompanies.length > 1} onChooseDifferent={onRechoose} onComplete={(vals)=>{ saveSettings(vals); }} />
+        <CompanyOnboarding session={session} initial={settings} multiCompany={myCompanies.length > 1} onChooseDifferent={onRechoose} onComplete={async (vals)=>{ const next = {...settings, ...vals}; saveSettings(vals); if (cloudEnabled && cloudUserId) { try { await cloudPush(cloudUserId, "piq_settings", next); } catch { showToast("Set up on this device, but cloud sync failed - check your connection and re-save in Settings.","warn"); } } }} />
       )}
 
       {!needsOnboarding && !settings.tourDone && tourStep>=0&&tourStep<tourSteps.length&&(
