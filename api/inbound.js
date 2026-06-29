@@ -197,6 +197,12 @@ function safeFetchUrl(url) {
     if (/^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return false;
     if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h)) return false;
     if (h.endsWith(".internal") || h.endsWith(".local")) return false;
+    // Reject IP-literal and non-DNS hosts: closes the IPv6 (incl. ::ffff: mapped, fe80::, fd00::)
+    // and decimal/hex/octal IP encodings that bypass the dotted-decimal string checks above.
+    // Legitimate attachment hosts are named https domains, which always contain a letter.
+    if (h.includes(":")) return false;            // IPv6 literal
+    if (/^0x/i.test(h)) return false;             // hex-encoded IP
+    if (!/[a-z]/.test(h)) return false;           // all-numeric (dotted/decimal/octal) -> not a hostname
     return true;
   } catch { return false; }
 }
