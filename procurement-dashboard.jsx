@@ -3330,6 +3330,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const [jobRef,   setJobRef]   = useState("");
   const [site,     setSite]     = useState("");
   const [trade,    setTrade]    = useState("Plumbing");
+  const [nrStep,   setNrStep]   = useState(1);     // New-request guided sub-step (1..4): jobref -> site -> trade -> materials
+  const [nrAc,     setNrAc]     = useState("");    // Which guided autocomplete is open: "job" | "site" | ""
+  const [nrTradePicked, setNrTradePicked] = useState(false); // Whether the user explicitly tapped a trade chip
   const [rfqEmail, setRfqEmail] = useState("");
   const [rfqDocs,  setRfqDocs]  = useState([]); // supporting docs sent with the RFQ: {id,filename,content(base64),size,kind}
   const [selSup,   setSelSup]   = useState([]);
@@ -4361,6 +4364,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
         // Full reset - ready for next request
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
+        setNrStep(1); setNrTradePicked(false);
         setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
         setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
@@ -4445,6 +4449,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
 
   function resetNewRequest() {
     setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
+    setNrStep(1); setNrTradePicked(false);
     setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
     setInterim(""); setScanning(false);
@@ -6307,6 +6312,56 @@ Rules:
       .skeleton{background:linear-gradient(90deg,var(--bg-subtle) 25%,var(--bg-subtle2) 50%,var(--bg-subtle) 75%);background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite;border-radius:8px}
       @keyframes typingDot{0%,60%,100%{opacity:0.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
       .stagger-in{animation:slideUp 0.5s cubic-bezier(0.16,1,0.3,1) backwards}
+      /* ---- New Request guided flow ---- */
+      @keyframes nrEnter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+      .nr-step{animation:nrEnter 0.42s cubic-bezier(0.16,1,0.3,1)}
+      .nr-field{width:100%;background:var(--bg-input);border:1.5px solid var(--border);border-radius:var(--radius-md);color:var(--text-primary);font-size:17px;font-family:inherit;padding:16px 18px;outline:none;transition:border-color 0.18s,box-shadow 0.18s}
+      .nr-field::placeholder{color:var(--text-tertiary)}
+      .nr-field:focus{border-color:var(--green);box-shadow:0 0 0 4px var(--green-light)}
+      textarea.nr-field{font-size:14px;line-height:1.6;resize:vertical;min-height:96px}
+      .nr-back{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.18s}
+      .nr-back:hover{background:var(--bg-subtle);color:var(--text-primary);border-color:var(--border-solid)}
+      .nr-bar{flex:1;height:5px;border-radius:99px;background:var(--bg-subtle2);overflow:hidden}
+      .nr-bar-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--green),var(--green-dark));transition:width 0.5s cubic-bezier(0.16,1,0.3,1)}
+      .nr-btn{font-family:inherit;font-size:15px;font-weight:700;border-radius:12px;padding:14px 26px;cursor:pointer;border:1px solid transparent;transition:transform 0.14s,background 0.18s,box-shadow 0.18s,opacity 0.18s;display:inline-flex;align-items:center;gap:9px}
+      .nr-btn-primary{background:var(--green);color:#fff;box-shadow:0 6px 18px rgba(30,158,99,0.32)}
+      .nr-btn-primary:not(:disabled):hover{background:var(--green-dark);transform:translateY(-1px);box-shadow:0 10px 26px rgba(30,158,99,0.42)}
+      .nr-btn-primary:not(:disabled):active{transform:translateY(0) scale(0.985)}
+      .nr-btn-primary:disabled{opacity:0.45;cursor:not-allowed;box-shadow:none}
+      .nr-btn-primary svg{transition:transform 0.18s}
+      .nr-btn-primary:not(:disabled):hover svg{transform:translateX(3px)}
+      .nr-skip{background:none;border:none;color:var(--text-tertiary);font-family:inherit;font-size:13.5px;font-weight:600;cursor:pointer;padding:8px;transition:color 0.18s}
+      .nr-skip:hover{color:var(--text-secondary)}
+      .nr-chip{background:var(--bg-input);border:1.5px solid var(--border);border-radius:12px;color:var(--text-secondary);font-family:inherit;font-size:13.5px;font-weight:600;padding:15px 12px;cursor:pointer;text-align:center;transition:all 0.16s;position:relative}
+      .nr-chip:hover{border-color:var(--border-solid);color:var(--text-primary);background:var(--bg-subtle);transform:translateY(-2px)}
+      .nr-chip:active{transform:translateY(0)}
+      .nr-chip.sel{border-color:var(--green);color:var(--green-dark);background:var(--green-light);box-shadow:0 0 0 3px var(--green-light)}
+      .nr-chip.sel::after{content:"";position:absolute;top:8px;right:9px;width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+      .nr-mic{width:100%;border:1.5px solid var(--green-deep);background:linear-gradient(160deg,var(--green-light),transparent);border-radius:16px;padding:26px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:14px;position:relative;overflow:hidden}
+      .nr-mic:hover{border-color:var(--green);transform:translateY(-2px);box-shadow:0 14px 34px rgba(30,158,99,0.18)}
+      .nr-mic .nr-ico{width:56px;height:56px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;box-shadow:0 8px 22px rgba(30,158,99,0.4);position:relative;z-index:2;transition:transform 0.2s,background 0.2s}
+      .nr-mic:hover .nr-ico{transform:scale(1.05)}
+      .nr-mic.live .nr-ico{animation:nrMicPulse 1.4s ease-in-out infinite;background:var(--red)}
+      .nr-ring{position:absolute;left:50%;top:38px;width:56px;height:56px;border-radius:50%;border:2px solid var(--green);transform:translate(-50%,-50%) scale(1);opacity:0;z-index:1}
+      .nr-mic.live .nr-ring{border-color:var(--red);animation:nrRingPulse 1.6s ease-out infinite}
+      @keyframes nrMicPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+      @keyframes nrRingPulse{0%{opacity:0.6;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(2.4)}}
+      .nr-eq{display:none;justify-content:center;align-items:flex-end;gap:4px;height:20px;margin-top:12px;position:relative;z-index:2}
+      .nr-mic.live .nr-eq{display:flex}
+      .nr-eq i{width:4px;height:5px;background:var(--red);border-radius:99px;animation:nrEq 1s ease-in-out infinite}
+      .nr-eq i:nth-child(1){animation-delay:0s}.nr-eq i:nth-child(2){animation-delay:0.15s}.nr-eq i:nth-child(3){animation-delay:0.3s}.nr-eq i:nth-child(4){animation-delay:0.45s}.nr-eq i:nth-child(5){animation-delay:0.2s}.nr-eq i:nth-child(6){animation-delay:0.35s}.nr-eq i:nth-child(7){animation-delay:0.1s}
+      @keyframes nrEq{0%,100%{height:5px}50%{height:18px}}
+      .nr-opt{background:var(--bg-input);border:1.5px solid var(--border);border-radius:12px;padding:16px 12px;cursor:pointer;text-align:center;transition:all 0.16s;display:block;width:100%;font-family:inherit}
+      .nr-opt:hover{border-color:var(--border-solid);background:var(--bg-subtle);transform:translateY(-2px)}
+      .nr-opt:active{transform:translateY(0)}
+      .nr-opt .nr-oico{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin:0 auto 9px;color:#fff;transition:transform 0.16s}
+      .nr-opt:hover .nr-oico{transform:scale(1.08)}
+      .nr-sep{display:flex;align-items:center;gap:12px;margin:6px 0 14px;color:var(--text-tertiary);font-size:12px;font-weight:600}
+      .nr-sep::before,.nr-sep::after{content:"";flex:1;height:1px;background:var(--border)}
+      .nr-ac{position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:30;background:var(--bg-card-solid);border:1px solid var(--border-solid);border-radius:12px;box-shadow:var(--shadow-lg);overflow:hidden;animation:nrEnter 0.16s ease}
+      .nr-ac-item{display:flex;align-items:center;gap:11px;padding:12px 15px;cursor:pointer;border:none;border-bottom:1px solid var(--border);transition:background 0.14s;width:100%;text-align:left;background:none;font-family:inherit}
+      .nr-ac-item:last-child{border-bottom:none}
+      .nr-ac-item:hover{background:var(--green-light)}
       @keyframes donutSeg{from{stroke-dasharray:0 9999}to{stroke-dasharray:var(--len) var(--gap)}}
       @keyframes barGrow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
       ::-webkit-scrollbar{width:8px;height:8px}
@@ -6833,12 +6888,13 @@ Rules:
 
         {view==="new"&&(
           <div className="stagger-in" style={{maxWidth:860}}>
-            <div style={{marginBottom:24}}>
+            <div style={{marginBottom:step===1?18:24}}>
               <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>New material request</h1>
-              <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step {step} of 3 - {step===1?"Describe your materials":step===2?"Review and configure":"Review and send"}</p>
+              {step!==1&&<p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step {step} of 3 - {step===2?"Review and configure":"Review and send"}</p>}
             </div>
 
-            {/* Step indicator */}
+            {/* Step indicator (macro stage) - hidden during the guided step-1 micro-flow */}
+            {step!==1&&(
             <div style={{display:"flex",alignItems:"center",marginBottom:24,gap:0}}>
               {[{n:1,l:"Describe"},{n:2,l:"Review"},{n:3,l:"Send"}].map((s,i)=>(
                 <div key={s.n} style={{display:"flex",alignItems:"center",flex:i<2?1:"none"}}>
@@ -6850,85 +6906,152 @@ Rules:
                 </div>
               ))}
             </div>
+            )}
 
             {step===1&&(
-              <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)"}}>
-                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:12,marginBottom:20}}>
-                  <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Job reference</label>
-                    <input value={jobRef} onChange={e=>setJobRef(e.target.value)} list="dl-jobrefs" placeholder="e.g. JOB-2025-012" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                    <datalist id="dl-jobrefs">{pastJobRefs.map(v=><option key={v} value={v}/>)}</datalist>
-                  </div>
-                  <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Site / Location</label>
-                    <input value={site} onChange={e=>setSite(e.target.value)} list="dl-sites" placeholder="e.g. Unit 4, High Street" style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                    <datalist id="dl-sites">{pastSites.map(v=><option key={v} value={v}/>)}</datalist>
-                  </div>
-                  <div>
-                    <label style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Trade <span style={{textTransform:"none",fontWeight:400,color:"var(--text-tertiary)"}}>· auto-detected, change if needed</span></label>
-                    <select value={trade} onChange={e=>setTrade(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}>
-                      {TRADES.map(t=><option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
+              <div style={{maxWidth:600}}>
+                {/* Guided micro-flow progress */}
+                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:26,minHeight:34}}>
+                  {nrStep>1
+                    ? <button className="nr-back" aria-label="Back" onClick={()=>{setNrAc("");setNrStep(s=>Math.max(1,s-1));}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg></button>
+                    : <div style={{width:34,height:34,flexShrink:0}}/>}
+                  <div className="nr-bar"><div className="nr-bar-fill" style={{width:(nrStep/4*100)+"%"}}/></div>
+                  <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {nrStep} of 4</div>
                 </div>
 
-                <div style={{background:listening?"linear-gradient(135deg,#FEF2F2,#FFF5F5)":"linear-gradient(135deg,var(--green-mint),var(--green-light))",border:listening?"2px solid var(--red)":"2px dashed var(--green-dark)",borderRadius:"var(--radius-md)",padding:"24px",textAlign:"center",marginBottom:16,cursor:"pointer"}} onClick={()=>supported&&toggleListen()}>
-                  <div style={{fontSize:28,marginBottom:8}}>{listening
-                      ?<svg width="28" height="28" viewBox="0 0 24 24" fill="var(--red)" stroke="var(--red)" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                      :<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
-                  <div style={{fontSize:14,fontWeight:600,color:listening?"var(--red)":"var(--green-deep)"}}>{listening?"Listening - tap to stop":"Tap to speak your material list"}</div>
-                  <div style={{fontSize:12,color:listening?"var(--red)":"var(--green-dark)",marginTop:4}}>{listening?"Speak now - your words appear below. Review, then tap Proceed":"Or type your list below"}</div>
-                  {listening&&interim&&(
-                    <div style={{fontSize:13,color:"var(--text-primary)",marginTop:10,padding:"8px 12px",background:"var(--bg-card-solid)",borderRadius:8,fontStyle:"italic",border:"1px solid var(--border)"}}>"{interim}"</div>
-                  )}
-                </div>
-
-                <textarea value={rawInput} onChange={e=>setRawInput(e.target.value)} placeholder="Type or dictate your materials, e.g. 10 sheets of 18mm OSB, 25 metres of 4mm twin and earth, 5L matt emulsion, 2 boxes of 100mm screws..." style={{width:"100%",height:100,padding:"10px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,marginBottom:16}}></textarea>
-
-                {/* Scan document button */}
-                <div style={{marginBottom:14}}>
-                  <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>Or scan a document</div>
-                  <label style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",background:scanning?"var(--indigo-light)":"var(--bg-subtle)",border:scanning?"2px solid var(--indigo)":"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:scanning?"not-allowed":"pointer",transition:"all 0.2s"}}>
-                    <input type="file" accept="image/*,.pdf" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
-                    <div style={{width:40,height:40,borderRadius:12,background:scanning?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 4px 12px rgba(99,102,241,0.3)"}}>
-                      {scanning
-                        ?<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke="white"/></svg>
-                        :<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                      }
-                    </div>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:600,color:scanning?"var(--indigo)":"var(--text-primary)",marginBottom:2}}>{scanning?loadMsg:"Take a photo or upload a document"}</div>
-                      <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Scope of works, schedule of materials, handwritten list · Photo, PDF, or image</div>
-                    </div>
-                    {!scanning&&(
-                      <div style={{marginLeft:"auto",display:"flex",gap:6,flexShrink:0}}>
-                        <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>PHOTO</span>
-                        <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--bg-subtle2)",color:"var(--text-tertiary)"}}>PDF</span>
+                <div className="nr-step" key={nrStep}>
+                  {/* ---- Sub-step 1: Job reference ---- */}
+                  {nrStep===1&&(
+                    <>
+                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
+                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>What's the job reference?</h2>
+                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>So everything you order stays grouped to the right project.</p>
+                      <div style={{position:"relative"}}>
+                        <input className="nr-field" value={jobRef} autoFocus placeholder="e.g. JOB-2025-012"
+                          onChange={e=>{setJobRef(e.target.value);setNrAc("job");}}
+                          onFocus={()=>setNrAc("job")} onBlur={()=>setTimeout(()=>setNrAc(""),140)}
+                          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setNrAc("");setNrStep(2);}else if(e.key==="Escape"){setNrAc("");}}}/>
+                        {nrAc==="job"&&(()=>{ const q=jobRef.trim().toLowerCase(); const matches=(q?pastJobRefs.filter(v=>v.toLowerCase().includes(q)):pastJobRefs).slice(0,5); if(!matches.length) return null; return (
+                          <div className="nr-ac">{matches.map(m=>(
+                            <button key={m} type="button" className="nr-ac-item" onMouseDown={e=>{e.preventDefault();setJobRef(m);setNrAc("");}}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+                              <span style={{fontSize:14,color:"var(--text-primary)",fontWeight:500}}>{m}</span>
+                            </button>
+                          ))}</div>
+                        ); })()}
                       </div>
-                    )}
-                  </label>
+                      <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginTop:11,display:"flex",alignItems:"center",gap:6}}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0}}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> Start typing - we'll suggest your recent jobs.
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:12,marginTop:26}}>
+                        <button className="nr-skip" onClick={()=>{setNrAc("");setNrStep(2);}}>Skip for now</button>
+                        <div style={{flex:1}}/>
+                        <button className="nr-btn nr-btn-primary" onClick={()=>{setNrAc("");setNrStep(2);}}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+                      </div>
+                    </>
+                  )}
 
-                  {/* Bulk spreadsheet import */}
-                  <label style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",marginTop:10,background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer"}}>
-                    <input type="file" accept=".csv,.txt,.tsv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])importMaterialsCSV(e.target.files[0]);e.target.value="";}}/>
-                    <div style={{width:40,height:40,borderRadius:12,background:"linear-gradient(135deg,#1E9E63,#15824F)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 4px 12px rgba(30,158,99,0.25)"}}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
-                    </div>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:2}}>Import a materials spreadsheet</div>
-                      <div style={{fontSize:11,color:"var(--text-tertiary)"}}>CSV with columns: description, quantity, unit · imports instantly, no AI needed</div>
-                    </div>
-                    <div style={{marginLeft:"auto",flexShrink:0}}>
-                      <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-dark)"}}>CSV</span>
-                    </div>
-                  </label>
-                </div>
+                  {/* ---- Sub-step 2: Site ---- */}
+                  {nrStep===2&&(
+                    <>
+                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
+                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>Where's the site?</h2>
+                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>The delivery or collection location for this job.</p>
+                      <div style={{position:"relative"}}>
+                        <input className="nr-field" value={site} autoFocus placeholder="e.g. Unit 4, High Street, Leeds"
+                          onChange={e=>{setSite(e.target.value);setNrAc("site");}}
+                          onFocus={()=>setNrAc("site")} onBlur={()=>setTimeout(()=>setNrAc(""),140)}
+                          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setNrAc("");setNrStep(3);}else if(e.key==="Escape"){setNrAc("");}}}/>
+                        {nrAc==="site"&&(()=>{ const q=site.trim().toLowerCase(); const matches=(q?pastSites.filter(v=>v.toLowerCase().includes(q)):pastSites).slice(0,5); if(!matches.length) return null; return (
+                          <div className="nr-ac">{matches.map(m=>(
+                            <button key={m} type="button" className="nr-ac-item" onMouseDown={e=>{e.preventDefault();setSite(m);setNrAc("");}}>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                              <span style={{fontSize:14,color:"var(--text-primary)",fontWeight:500}}>{m}</span>
+                            </button>
+                          ))}</div>
+                        ); })()}
+                      </div>
+                      <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginTop:11,display:"flex",alignItems:"center",gap:6}}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0}}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg> Remembers sites you've used before.
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:12,marginTop:26}}>
+                        <button className="nr-skip" onClick={()=>{setNrAc("");setNrStep(3);}}>Skip for now</button>
+                        <div style={{flex:1}}/>
+                        <button className="nr-btn nr-btn-primary" onClick={()=>{setNrAc("");setNrStep(3);}}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+                      </div>
+                    </>
+                  )}
 
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--green-dark)",background:"var(--green-mint)",border:"1px solid var(--green-light)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Load template</button>
-                  <Btn onClick={handleParse} disabled={!rawInput.trim()||loading||scanning} color="#15824F">
-                    {loading||scanning?loadMsg||"Processing...":"Proceed"}
-                  </Btn>
+                  {/* ---- Sub-step 3: Trade ---- */}
+                  {nrStep===3&&(
+                    <>
+                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
+                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>What's the trade?</h2>
+                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>This pre-selects the right suppliers. We also auto-detect it from your list, so just confirm or skip.</p>
+                      <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(3,1fr)",gap:10}}>
+                        {TRADES.map(t=>(
+                          <button key={t} className={"nr-chip"+(nrTradePicked&&trade===t?" sel":"")} onClick={()=>{setTrade(t);setNrTradePicked(true);setTimeout(()=>setNrStep(4),300);}}>{t}</button>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",marginTop:22}}>
+                        <button className="nr-skip" onClick={()=>setNrStep(4)}>Skip - auto-detect from my list</button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ---- Sub-step 4: Materials hub ---- */}
+                  {nrStep===4&&(
+                    <>
+                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
+                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>Add your materials</h2>
+                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>Speak it, snap it, or paste it - the AI tidies it into a clean list you can edit next.</p>
+
+                      <div className={"nr-mic"+(listening?" live":"")} onClick={()=>supported&&toggleListen()} style={supported?{}:{cursor:"default",opacity:0.75}}>
+                        <span className="nr-ring"/>
+                        <div className="nr-ico">{listening
+                          ? <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                          : <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
+                        <div style={{fontSize:16,fontWeight:700,position:"relative",zIndex:2,color:"var(--text-primary)"}}>{listening?"Listening... tap to stop":supported?"Tap to speak your material list":"Voice input isn't available here"}</div>
+                        {!listening&&<div style={{fontSize:12.5,color:"var(--text-secondary)",marginTop:5,position:"relative",zIndex:2}}>{supported?"Say it naturally - \"ten sheets of 18mm OSB, 25 metres of twin and earth...\"":"Type your list below, or snap a photo."}</div>}
+                        <div className="nr-eq"><i/><i/><i/><i/><i/><i/><i/></div>
+                      </div>
+                      {listening&&interim&&(
+                        <div style={{fontSize:13,color:"var(--text-primary)",margin:"0 0 14px",padding:"8px 12px",background:"var(--bg-subtle)",borderRadius:8,fontStyle:"italic",border:"1px solid var(--border)"}}>"{interim}"</div>
+                      )}
+
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
+                        <label className="nr-opt" style={{cursor:(scanning||loading)?"not-allowed":"pointer"}}>
+                          <input type="file" accept="image/*,.pdf" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
+                          <div className="nr-oico" style={{background:scanning?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)"}}>{scanning
+                            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+                            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>}</div>
+                          <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{scanning?"Reading...":"Take a photo"}</div>
+                          <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>Scope, list, drawing</div>
+                        </label>
+                        <label className="nr-opt" style={{cursor:loading?"not-allowed":"pointer"}}>
+                          <input type="file" accept=".csv,.txt,.tsv" style={{display:"none"}} disabled={loading} onChange={e=>{if(e.target.files[0])importMaterialsCSV(e.target.files[0]);e.target.value="";}}/>
+                          <div className="nr-oico" style={{background:"linear-gradient(135deg,#1E9E63,#15824F)"}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/></svg></div>
+                          <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>Import spreadsheet</div>
+                          <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>CSV, instant</div>
+                        </label>
+                        <button type="button" className="nr-opt" onClick={()=>setTemplateModal(true)}>
+                          <div className="nr-oico" style={{background:"linear-gradient(135deg,#3F8CCB,#2C6FA8)"}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12"/></svg></div>
+                          <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>Load template</div>
+                          <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>Saved lists</div>
+                        </button>
+                      </div>
+
+                      <div className="nr-sep">or type it</div>
+                      <textarea className="nr-field" value={rawInput} onChange={e=>setRawInput(e.target.value)} placeholder="10 sheets 18mm OSB, 25m 4mm twin & earth, 5L matt emulsion, 2 boxes 100mm screws..."></textarea>
+
+                      <div style={{display:"flex",alignItems:"center",gap:12,marginTop:22}}>
+                        <div style={{flex:1}}/>
+                        <button className="nr-btn nr-btn-primary" disabled={!rawInput.trim()||loading||scanning} onClick={handleParse}>
+                          {(loading||scanning)?(loadMsg||"Processing..."):<>Review list <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -7129,7 +7252,7 @@ Rules:
                 </div>
 
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-                  <Btn outline onClick={()=>setStep(1)}>Back</Btn>
+                  <Btn outline onClick={()=>{setStep(1);setNrStep(4);}}>Back</Btn>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                     <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Save as template</button>
                     <Btn onClick={handleGenRFQ} disabled={loading||(can.sendRFQ(myRole)&&selSup.length===0)} color="#15824F">
