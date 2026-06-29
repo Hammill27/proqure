@@ -4447,8 +4447,19 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     showToast(`Template "${t.name}" loaded`);
   }
 
+  // Auto-assign a methodical, audit-friendly job reference (JOB-YYYY-NNN) so the
+  // engineer never has to type one. Sequential within the current year, derived from
+  // the highest existing reference; falls back to 001 for the first job of the year.
+  function nextJobRef() {
+    const yr = new Date().getFullYear();
+    const re = new RegExp("^JOB-" + yr + "-(\\d+)$");
+    let max = 0;
+    (requests||[]).forEach(r=>{ const m=(r.jobRef||"").trim().match(re); if(m){ const n=parseInt(m[1],10); if(n>max) max=n; } });
+    return "JOB-" + yr + "-" + String(max+1).padStart(3,"0");
+  }
+
   function resetNewRequest() {
-    setStep(1); setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
+    setStep(1); setRawInput(""); setParsed(null); setJobRef(nextJobRef()); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
     setNrStep(1); setNrTradePicked(false);
     setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
@@ -6887,7 +6898,7 @@ Rules:
         )}
 
         {view==="new"&&(
-          <div className="stagger-in" style={{maxWidth:860}}>
+          <div className="stagger-in" style={{maxWidth:step===1?1120:860}}>
             <div style={{marginBottom:step===1?18:24}}>
               <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>New material request</h1>
               {step!==1&&<p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step {step} of 3 - {step===2?"Review and configure":"Review and send"}</p>}
@@ -6909,149 +6920,133 @@ Rules:
             )}
 
             {step===1&&(
-              <div style={{maxWidth:600}}>
-                {/* Guided micro-flow progress */}
-                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:26,minHeight:34}}>
+              <div>
+                {/* Guided micro-flow progress (full width) */}
+                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:isMobile?22:30,minHeight:34}}>
                   {nrStep>1
                     ? <button className="nr-back" aria-label="Back" onClick={()=>{setNrAc("");setNrStep(s=>Math.max(1,s-1));}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg></button>
                     : <div style={{width:34,height:34,flexShrink:0}}/>}
-                  <div className="nr-bar"><div className="nr-bar-fill" style={{width:(nrStep/4*100)+"%"}}/></div>
-                  <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {nrStep} of 4</div>
+                  <div className="nr-bar"><div className="nr-bar-fill" style={{width:(nrStep/3*100)+"%"}}/></div>
+                  <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {nrStep} of 3</div>
                 </div>
 
-                <div className="nr-step" key={nrStep}>
-                  {/* ---- Sub-step 1: Job reference ---- */}
-                  {nrStep===1&&(
-                    <>
-                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
-                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>What's the job reference?</h2>
-                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>So everything you order stays grouped to the right project.</p>
-                      <div style={{position:"relative"}}>
-                        <input className="nr-field" value={jobRef} autoFocus placeholder="e.g. JOB-2025-012"
-                          onChange={e=>{setJobRef(e.target.value);setNrAc("job");}}
-                          onFocus={()=>setNrAc("job")} onBlur={()=>setTimeout(()=>setNrAc(""),140)}
-                          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setNrAc("");setNrStep(2);}else if(e.key==="Escape"){setNrAc("");}}}/>
-                        {nrAc==="job"&&(()=>{ const q=jobRef.trim().toLowerCase(); const matches=(q?pastJobRefs.filter(v=>v.toLowerCase().includes(q)):pastJobRefs).slice(0,5); if(!matches.length) return null; return (
-                          <div className="nr-ac">{matches.map(m=>(
-                            <button key={m} type="button" className="nr-ac-item" onMouseDown={e=>{e.preventDefault();setJobRef(m);setNrAc("");}}>
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
-                              <span style={{fontSize:14,color:"var(--text-primary)",fontWeight:500}}>{m}</span>
-                            </button>
-                          ))}</div>
-                        ); })()}
-                      </div>
-                      <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginTop:11,display:"flex",alignItems:"center",gap:6}}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0}}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> Start typing - we'll suggest your recent jobs.
-                      </div>
-                      <div style={{display:"flex",alignItems:"center",gap:12,marginTop:26}}>
-                        <button className="nr-skip" onClick={()=>{setNrAc("");setNrStep(2);}}>Skip for now</button>
-                        <div style={{flex:1}}/>
-                        <button className="nr-btn nr-btn-primary" onClick={()=>{setNrAc("");setNrStep(2);}}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-                      </div>
-                    </>
-                  )}
+                {/* Two-pane guided body: framing left, interaction right (stacks on mobile) */}
+                <div className="nr-step" key={nrStep} style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,0.82fr) minmax(0,1.1fr)",gap:isMobile?20:56,alignItems:"start"}}>
 
-                  {/* ---- Sub-step 2: Site ---- */}
-                  {nrStep===2&&(
-                    <>
-                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
-                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>Where's the site?</h2>
-                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>The delivery or collection location for this job.</p>
-                      <div style={{position:"relative"}}>
-                        <input className="nr-field" value={site} autoFocus placeholder="e.g. Unit 4, High Street, Leeds"
-                          onChange={e=>{setSite(e.target.value);setNrAc("site");}}
-                          onFocus={()=>setNrAc("site")} onBlur={()=>setTimeout(()=>setNrAc(""),140)}
-                          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setNrAc("");setNrStep(3);}else if(e.key==="Escape"){setNrAc("");}}}/>
-                        {nrAc==="site"&&(()=>{ const q=site.trim().toLowerCase(); const matches=(q?pastSites.filter(v=>v.toLowerCase().includes(q)):pastSites).slice(0,5); if(!matches.length) return null; return (
-                          <div className="nr-ac">{matches.map(m=>(
-                            <button key={m} type="button" className="nr-ac-item" onMouseDown={e=>{e.preventDefault();setSite(m);setNrAc("");}}>
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                              <span style={{fontSize:14,color:"var(--text-primary)",fontWeight:500}}>{m}</span>
-                            </button>
-                          ))}</div>
-                        ); })()}
+                  {/* LEFT - framing */}
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
+                    <h2 style={{fontSize:isMobile?23:28,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 10px",color:"var(--text-primary)"}}>
+                      {nrStep===1?"Where's the site?":nrStep===2?"What's the trade?":"Add your materials"}
+                    </h2>
+                    <p style={{fontSize:14.5,color:"var(--text-secondary)",lineHeight:1.6,margin:0,maxWidth:380}}>
+                      {nrStep===1?"The delivery or collection location for this job."
+                       :nrStep===2?"This pre-selects the right suppliers. We also auto-detect it from your list, so just confirm or skip."
+                       :"Speak it, snap it, or paste it - the AI tidies it into a clean list you can edit and price next."}
+                    </p>
+                    {jobRef&&(
+                      <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:20,padding:"7px 12px 7px 10px",background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:99}}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green-dark)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                        <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"0.01em"}}>{jobRef}</span>
+                        <span style={{fontSize:11.5,color:"var(--text-tertiary)",fontWeight:500}}>assigned automatically</span>
                       </div>
-                      <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginTop:11,display:"flex",alignItems:"center",gap:6}}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0}}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg> Remembers sites you've used before.
-                      </div>
-                      <div style={{display:"flex",alignItems:"center",gap:12,marginTop:26}}>
-                        <button className="nr-skip" onClick={()=>{setNrAc("");setNrStep(3);}}>Skip for now</button>
-                        <div style={{flex:1}}/>
-                        <button className="nr-btn nr-btn-primary" onClick={()=>{setNrAc("");setNrStep(3);}}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-                      </div>
-                    </>
-                  )}
+                    )}
+                  </div>
 
-                  {/* ---- Sub-step 3: Trade ---- */}
-                  {nrStep===3&&(
-                    <>
-                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
-                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>What's the trade?</h2>
-                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>This pre-selects the right suppliers. We also auto-detect it from your list, so just confirm or skip.</p>
-                      <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(3,1fr)",gap:10}}>
-                        {TRADES.map(t=>(
-                          <button key={t} className={"nr-chip"+(nrTradePicked&&trade===t?" sel":"")} onClick={()=>{setTrade(t);setNrTradePicked(true);setTimeout(()=>setNrStep(4),300);}}>{t}</button>
-                        ))}
-                      </div>
-                      <div style={{display:"flex",alignItems:"center",marginTop:22}}>
-                        <button className="nr-skip" onClick={()=>setNrStep(4)}>Skip - auto-detect from my list</button>
-                      </div>
-                    </>
-                  )}
+                  {/* RIGHT - interaction */}
+                  <div>
+                    {/* Sub-step 1: Site */}
+                    {nrStep===1&&(
+                      <>
+                        <div style={{position:"relative"}}>
+                          <input className="nr-field" value={site} autoFocus placeholder="e.g. Unit 4, High Street, Leeds"
+                            onChange={e=>{setSite(e.target.value);setNrAc("site");}}
+                            onFocus={()=>setNrAc("site")} onBlur={()=>setTimeout(()=>setNrAc(""),140)}
+                            onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setNrAc("");setNrStep(2);}else if(e.key==="Escape"){setNrAc("");}}}/>
+                          {nrAc==="site"&&(()=>{ const q=site.trim().toLowerCase(); const matches=(q?pastSites.filter(v=>v.toLowerCase().includes(q)):pastSites).slice(0,5); if(!matches.length) return null; return (
+                            <div className="nr-ac">{matches.map(m=>(
+                              <button key={m} type="button" className="nr-ac-item" onMouseDown={e=>{e.preventDefault();setSite(m);setNrAc("");}}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                                <span style={{fontSize:14,color:"var(--text-primary)",fontWeight:500}}>{m}</span>
+                              </button>
+                            ))}</div>
+                          ); })()}
+                        </div>
+                        <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginTop:11,display:"flex",alignItems:"center",gap:6}}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0}}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg> Remembers sites you've used before.
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:12,marginTop:26}}>
+                          <button className="nr-skip" onClick={()=>{setNrAc("");setNrStep(2);}}>Skip for now</button>
+                          <div style={{flex:1}}/>
+                          <button className="nr-btn nr-btn-primary" onClick={()=>{setNrAc("");setNrStep(2);}}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+                        </div>
+                      </>
+                    )}
 
-                  {/* ---- Sub-step 4: Materials hub ---- */}
-                  {nrStep===4&&(
-                    <>
-                      <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--green-dark)",marginBottom:12}}>New material request</div>
-                      <h2 style={{fontSize:isMobile?23:27,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.12,margin:"0 0 8px",color:"var(--text-primary)"}}>Add your materials</h2>
-                      <p style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.55,margin:"0 0 24px",maxWidth:"94%"}}>Speak it, snap it, or paste it - the AI tidies it into a clean list you can edit next.</p>
+                    {/* Sub-step 2: Trade */}
+                    {nrStep===2&&(
+                      <>
+                        <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(3,1fr)",gap:10}}>
+                          {TRADES.map(t=>(
+                            <button key={t} className={"nr-chip"+(nrTradePicked&&trade===t?" sel":"")} onClick={()=>{setTrade(t);setNrTradePicked(true);setTimeout(()=>setNrStep(3),300);}}>{t}</button>
+                          ))}
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",marginTop:22}}>
+                          <button className="nr-skip" onClick={()=>setNrStep(3)}>Skip - auto-detect from my list</button>
+                        </div>
+                      </>
+                    )}
 
-                      <div className={"nr-mic"+(listening?" live":"")} onClick={()=>supported&&toggleListen()} style={supported?{}:{cursor:"default",opacity:0.75}}>
-                        <span className="nr-ring"/>
-                        <div className="nr-ico">{listening
-                          ? <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                          : <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
-                        <div style={{fontSize:16,fontWeight:700,position:"relative",zIndex:2,color:"var(--text-primary)"}}>{listening?"Listening... tap to stop":supported?"Tap to speak your material list":"Voice input isn't available here"}</div>
-                        {!listening&&<div style={{fontSize:12.5,color:"var(--text-secondary)",marginTop:5,position:"relative",zIndex:2}}>{supported?"Say it naturally - \"ten sheets of 18mm OSB, 25 metres of twin and earth...\"":"Type your list below, or snap a photo."}</div>}
-                        <div className="nr-eq"><i/><i/><i/><i/><i/><i/><i/></div>
-                      </div>
-                      {listening&&interim&&(
-                        <div style={{fontSize:13,color:"var(--text-primary)",margin:"0 0 14px",padding:"8px 12px",background:"var(--bg-subtle)",borderRadius:8,fontStyle:"italic",border:"1px solid var(--border)"}}>"{interim}"</div>
-                      )}
+                    {/* Sub-step 3: Materials hub */}
+                    {nrStep===3&&(
+                      <>
+                        <div className={"nr-mic"+(listening?" live":"")} onClick={()=>supported&&toggleListen()} style={supported?{}:{cursor:"default",opacity:0.75}}>
+                          <span className="nr-ring"/>
+                          <div className="nr-ico">{listening
+                            ? <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                            : <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
+                          <div style={{fontSize:16,fontWeight:700,position:"relative",zIndex:2,color:"var(--text-primary)"}}>{listening?"Listening... tap to stop":supported?"Tap to speak your material list":"Voice input isn't available here"}</div>
+                          {!listening&&<div style={{fontSize:12.5,color:"var(--text-secondary)",marginTop:5,position:"relative",zIndex:2}}>{supported?"Say it naturally - \"ten sheets of 18mm OSB, 25 metres of twin and earth...\"":"Type your list below, or snap a photo."}</div>}
+                          <div className="nr-eq"><i/><i/><i/><i/><i/><i/><i/></div>
+                        </div>
+                        {listening&&interim&&(
+                          <div style={{fontSize:13,color:"var(--text-primary)",margin:"0 0 14px",padding:"8px 12px",background:"var(--bg-subtle)",borderRadius:8,fontStyle:"italic",border:"1px solid var(--border)"}}>"{interim}"</div>
+                        )}
 
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-                        <label className="nr-opt" style={{cursor:(scanning||loading)?"not-allowed":"pointer"}}>
-                          <input type="file" accept="image/*,.pdf" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
-                          <div className="nr-oico" style={{background:scanning?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)"}}>{scanning
-                            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
-                            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>}</div>
-                          <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{scanning?"Reading...":"Take a photo"}</div>
-                          <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>Scope, list, drawing</div>
-                        </label>
-                        <label className="nr-opt" style={{cursor:loading?"not-allowed":"pointer"}}>
-                          <input type="file" accept=".csv,.txt,.tsv" style={{display:"none"}} disabled={loading} onChange={e=>{if(e.target.files[0])importMaterialsCSV(e.target.files[0]);e.target.value="";}}/>
-                          <div className="nr-oico" style={{background:"linear-gradient(135deg,#1E9E63,#15824F)"}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/></svg></div>
-                          <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>Import spreadsheet</div>
-                          <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>CSV, instant</div>
-                        </label>
-                        <button type="button" className="nr-opt" onClick={()=>setTemplateModal(true)}>
-                          <div className="nr-oico" style={{background:"linear-gradient(135deg,#3F8CCB,#2C6FA8)"}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12"/></svg></div>
-                          <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>Load template</div>
-                          <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>Saved lists</div>
-                        </button>
-                      </div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
+                          <label className="nr-opt" style={{cursor:(scanning||loading)?"not-allowed":"pointer"}}>
+                            <input type="file" accept="image/*,.pdf" style={{display:"none"}} disabled={scanning||loading} onChange={e=>{if(e.target.files[0])scanDocumentFile(e.target.files[0]);e.target.value="";}}/>
+                            <div className="nr-oico" style={{background:scanning?"var(--indigo)":"linear-gradient(135deg,#5B5BD6,#4A4AB8)"}}>{scanning
+                              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+                              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>}</div>
+                            <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{scanning?"Reading...":"Take a photo"}</div>
+                            <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>Scope, list, drawing</div>
+                          </label>
+                          <label className="nr-opt" style={{cursor:loading?"not-allowed":"pointer"}}>
+                            <input type="file" accept=".csv,.txt,.tsv" style={{display:"none"}} disabled={loading} onChange={e=>{if(e.target.files[0])importMaterialsCSV(e.target.files[0]);e.target.value="";}}/>
+                            <div className="nr-oico" style={{background:"linear-gradient(135deg,#1E9E63,#15824F)"}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/></svg></div>
+                            <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>Import spreadsheet</div>
+                            <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>CSV, instant</div>
+                          </label>
+                          <button type="button" className="nr-opt" onClick={()=>setTemplateModal(true)}>
+                            <div className="nr-oico" style={{background:"linear-gradient(135deg,#3F8CCB,#2C6FA8)"}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 014 17V5a2 2 0 012-2h12a2 2 0 012 2v12"/></svg></div>
+                            <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>Load template</div>
+                            <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>Saved lists</div>
+                          </button>
+                        </div>
 
-                      <div className="nr-sep">or type it</div>
-                      <textarea className="nr-field" value={rawInput} onChange={e=>setRawInput(e.target.value)} placeholder="10 sheets 18mm OSB, 25m 4mm twin & earth, 5L matt emulsion, 2 boxes 100mm screws..."></textarea>
+                        <div className="nr-sep">or type it</div>
+                        <textarea className="nr-field" value={rawInput} onChange={e=>setRawInput(e.target.value)} placeholder="10 sheets 18mm OSB, 25m 4mm twin & earth, 5L matt emulsion, 2 boxes 100mm screws..."></textarea>
 
-                      <div style={{display:"flex",alignItems:"center",gap:12,marginTop:22}}>
-                        <div style={{flex:1}}/>
-                        <button className="nr-btn nr-btn-primary" disabled={!rawInput.trim()||loading||scanning} onClick={handleParse}>
-                          {(loading||scanning)?(loadMsg||"Processing..."):<>Review list <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>}
-                        </button>
-                      </div>
-                    </>
-                  )}
+                        <div style={{display:"flex",alignItems:"center",gap:12,marginTop:22}}>
+                          <div style={{flex:1}}/>
+                          <button className="nr-btn nr-btn-primary" disabled={!rawInput.trim()||loading||scanning} onClick={handleParse}>
+                            {(loading||scanning)?(loadMsg||"Processing..."):<>Review list <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -7252,7 +7247,7 @@ Rules:
                 </div>
 
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-                  <Btn outline onClick={()=>{setStep(1);setNrStep(4);}}>Back</Btn>
+                  <Btn outline onClick={()=>{setStep(1);setNrStep(3);}}>Back</Btn>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                     <button onClick={()=>setTemplateModal(true)} style={{fontSize:12,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",fontWeight:500}}>Save as template</button>
                     <Btn onClick={handleGenRFQ} disabled={loading||(can.sendRFQ(myRole)&&selSup.length===0)} color="#15824F">
