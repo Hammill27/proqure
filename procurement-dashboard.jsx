@@ -4668,7 +4668,20 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     setHelpMessages(p=>[...p,userMsg]);
     setHelpInput("");
     setHelpLoading(true);
+    const askRole = roleRank(myRole) >= 3 ? "Manager" : roleRank(myRole) >= 2 ? "Buyer" : "Engineer";
+    const askFeat = [featureAccess.measure && "Measure", featureAccess.catalogues && "Catalogues", featureAccess.hire && "Hire", featureAccess.om_generator && "O&M files", featureAccess.advanced_reporting && "Reports"].filter(Boolean);
+    const askFeatList = askFeat.length ? askFeat.join(", ") : "none of the optional add-ons";
     const sys = `You are the ProQure AI assistant. ProQure is an AI-powered procurement platform for UK trades contractors (plumbing, HVAC, electrical, mechanical, ventilation). You help users understand and use every part of the platform. Be concise, friendly, and accurate.
+
+THE PERSON YOU ARE HELPING RIGHT NOW:
+- Their role in this company is ${askRole}. Answer specifically for a ${askRole}: say "you can…" for things in their remit, and for anything outside it, tell them plainly whose job it is (e.g. "that's a Manager task — you'd ask your manager") rather than walking them through steps they cannot perform. Never imply an Engineer can see prices/costs, or that a Buyer can change company settings.
+- Optional features enabled for this company: ${askFeatList}. Do not tell them to use a feature that isn't enabled; if they ask about one that's off, say it isn't switched on for their account and a Manager can enable it.
+- If they belong to more than one company, they choose which to work in from the company chooser shown when they sign in, and can switch any time via "Companies" in the menu — their role, their data and what they can see are all specific to the company they're currently in.
+
+ROLE CHEAT-SHEET (keep every answer accurate to a ${askRole}):
+- ENGINEER — CAN: raise material lists (voice / type / scan a document / import a spreadsheet) and issue them to the buyer, add notes, sign off deliveries with a photo on the Orders page, and (where enabled) use Measure, Catalogues, Hire, Stock, Returns and Assets. CANNOT: see quote prices, costs or spend, or jobs that aren't theirs; send RFQs; raise purchase orders; see or approve invoices; run Reports; generate O&M files; manage Suppliers; or open Team/Settings.
+- BUYER — everything an Engineer can do, PLUS: send RFQs, handle returned quotes, raise purchase orders, match supplier invoices (and approve a CLEAN match), and use O&M files, Reports, Project costs, Suppliers and the Quote library. CANNOT: approve an invoice that has discrepancies, manage the Team, or change company Settings — those need a Manager.
+- MANAGER — full access: everything a Buyer can do, PLUS approve flagged/discrepant invoices, see the cross-project cost view, invite team members and set their roles (up to Manager), and change all company Settings. The first Manager is the account holder and can't be removed while they're the last one.
 
 COMPLETE FEATURE REFERENCE (you can explain how to do all of these):
 
@@ -5915,6 +5928,8 @@ ${settings.company||""}`;
       {q:"Someone I invited did not get the email - what now?", a:"Ask them to go to the sign-in screen and tap 'Forgot password' using the email you invited. They will get a link to set a password and will still join your company when they sign in. Invite emails can occasionally be held up by a company spam filter, so it is worth checking junk too."},
       {q:"Is my company's data separate from other companies?", a:"Yes. Every company on ProQure is completely isolated - your team shares one live view of your own data, and no other company can see it. Roles then control who on your team sees what (for example, Engineers do not see prices or spend)."},
       {q:"What is the difference between Manager, Buyer and Engineer?", a:"Three roles, high to low. Managers have full access, manage the team and edit settings. Buyers send RFQs, handle returned quotes and raise purchase orders. Engineers raise the materials list and sign off deliveries, but do not see prices, costs or jobs that are not their own, and cannot send RFQs or raise POs."},
+      {q:"Why was I asked to choose a company when I signed in?", a:"Because your account belongs to more than one company. ProQure shows a company chooser at sign-in so you pick which one to work in - everything after that (your role, your data, and what you can see) is specific to the company you choose. If you only belong to one company you go straight in and never see the chooser."},
+      {q:"How do I switch between companies?", a:"Tap 'Companies' in the menu (near the bottom of the sidebar on desktop, or under 'More' on mobile) and pick another one. Your role can differ in each - you might be a Manager in your own company and an Engineer in another - so the menus, prices and data all update to match wherever you switch to. Signing out and back in brings the chooser up again."},
     ]},
   ];
 
@@ -10312,33 +10327,54 @@ Rules:
                 <div style={{width:36,height:4,background:"rgba(255,255,255,0.15)",borderRadius:99,margin:"0 auto 16px"}}/>
                 <div style={{padding:"0 8px",maxHeight:"65vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
                   {[
-                    {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
-                    {id:"invoices", label:"Invoices",       sub:"Match supplier invoices to POs",   icon:"receipt", min:2},
-                    {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck", feature:"hire"},
-                    {id:"stock",    label:"Stock",           sub:"Returned materials kept as stock", icon:"package"},
-                    {id:"returns",  label:"Returns",         sub:"Supplier returns, credits & faults", icon:"undo"},
-                    {id:"assets",   label:"Tools & assets",  sub:"Company tools, plant & equipment", icon:"wrench"},
-                    {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2, feature:"om_generator"},
-                    {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2, feature:"advanced_reporting"},
-                    {id:"costs",    label:"Project costs",   sub:"Cost tracking per project",        icon:"coins", min:2},
-                    {id:"measure",  label:"Measure",         sub:"Work out quantities to order",      icon:"ruler", feature:"measure"},
-                    {id:"catalogues",label:"Supplier catalogues",sub:"Search products & datasheets",     icon:"catalogue", feature:"catalogues"},
-                    {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building", min:2},
-                    {id:"team",     label:"Team",            sub:"People and roles",                icon:"building", min:3},
-                    {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
-                    {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
-                    {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"mail"},
-                    {id:"companies",label:"Companies",        sub:"Switch between your companies",    icon:"building", multiOnly:true},
-                    {id:"settings", label:"Settings",         sub:"Company details and account",      icon:"settings", min:3},
-                  ].filter(item=>(!item.min||roleRank(myRole)>=item.min)&&(!item.feature||featureAccess[item.feature])&&(!item.multiOnly||myCompanies.length>1)).map(item=>(
-                    <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
-                      <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)"}}><Icon name={item.icon} size={18}/></div>
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:14,fontWeight:600,color:view===item.id?"var(--green)":"white"}}>{item.label}</div>
-                        <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{item.sub}</div>
+                    { label:"Procurement", items:[
+                      {id:"requests", label:"All requests",   sub:"View and manage all RFQs",         icon:"clipboard"},
+                      {id:"invoices", label:"Invoices",       sub:"Match supplier invoices to POs",   icon:"receipt", min:2},
+                    ]},
+                    { label:"Projects & costs", items:[
+                      {id:"costs",    label:"Project costs",   sub:"Cost tracking per project",        icon:"coins", min:2},
+                      {id:"measure",  label:"Measure",         sub:"Work out quantities to order",      icon:"ruler", feature:"measure"},
+                      {id:"om",       label:"O&M files",       sub:"Generate O&M packs per project",    icon:"file_check", min:2, feature:"om_generator"},
+                      {id:"reports",  label:"Reports",         sub:"Spend by trade, supplier, project", icon:"bar_chart", min:2, feature:"advanced_reporting"},
+                    ]},
+                    { label:"Inventory & equipment", items:[
+                      {id:"stock",    label:"Stock",           sub:"Returned materials kept as stock", icon:"package"},
+                      {id:"hire",     label:"Hire",            sub:"Plant & tool hire tracking",       icon:"truck", feature:"hire"},
+                      {id:"returns",  label:"Returns",         sub:"Supplier returns, credits & faults", icon:"undo"},
+                      {id:"assets",   label:"Tools & assets",  sub:"Company tools, plant & equipment", icon:"wrench"},
+                    ]},
+                    { label:"Sourcing", items:[
+                      {id:"suppliers",label:"Suppliers",       sub:"Manage your supplier accounts",    icon:"building", min:2},
+                      {id:"catalogues",label:"Supplier catalogues",sub:"Search products & datasheets",     icon:"catalogue", feature:"catalogues"},
+                      {id:"library",  label:"Quote library",   sub:"Price history and supplier scores",icon:"books", min:2},
+                    ]},
+                    { label:"Company", items:[
+                      {id:"companies",label:"Companies",        sub:"Switch between your companies",    icon:"building", multiOnly:true},
+                      {id:"team",     label:"Team",            sub:"People and roles",                icon:"building", min:3},
+                      {id:"settings", label:"Settings",         sub:"Company details and account",      icon:"settings", min:3},
+                    ]},
+                    { label:"Support", items:[
+                      {id:"help",     label:"Help & FAQ",       sub:"Guides and AI assistant",          icon:"help_circle"},
+                      {id:"contact",  label:"Contact support",  sub:"Raise a request",                  icon:"mail"},
+                    ]},
+                  ].map(section => {
+                    const items = section.items.filter(item=>(!item.min||roleRank(myRole)>=item.min)&&(!item.feature||featureAccess[item.feature])&&(!item.multiOnly||myCompanies.length>1));
+                    if(!items.length) return null;
+                    return (
+                      <div key={section.label}>
+                        <div style={{fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:600,color:"var(--sidebar-text)",opacity:0.55,padding:"12px 16px 4px"}}>{section.label}</div>
+                        {items.map(item=>(
+                          <button key={item.id} onClick={()=>{handleNav(item.id);setMoreMenuOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:view===item.id?"rgba(34,197,94,0.1)":"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:2}}>
+                            <div style={{width:40,height:40,background:view===item.id?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,color:view===item.id?"var(--green)":"var(--sidebar-text)"}}><Icon name={item.icon} size={18}/></div>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:14,fontWeight:600,color:view===item.id?"var(--green)":"white"}}>{item.label}</div>
+                              <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{item.sub}</div>
+                            </div>
+                          </button>
+                        ))}
                       </div>
-                    </button>
-                  ))}
+                    );
+                  })}
                   {session && cloudEnabled && (
                     <button onClick={async()=>{ try{ await supabase.auth.signOut(); }catch{} window.location.reload(); }}
                       style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:"transparent",border:"none",borderRadius:12,cursor:"pointer",textAlign:"left",marginTop:4,borderTop:"1px solid var(--sidebar-border)"}}>
