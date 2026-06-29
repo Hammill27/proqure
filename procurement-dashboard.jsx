@@ -3136,7 +3136,14 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const myMember = team.find(m => (m.email||"").toLowerCase() === myEmail) || null;
   // Defensive: treat the retired "owner" role (or any unknown role) as manager / engineer sensibly.
   const normaliseRole = (r) => r === "owner" ? "manager" : (ROLES[r] ? r : null);
-  const myRole = normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
+  // Authoritative role for the company we are ACTUALLY in - taken from the membership the resolver
+  // chose (the same source RLS and the MFA gate use). The piq_team projection can be empty or lag
+  // for a moment right after a company switch, and its "first member => manager" seeding must never
+  // be allowed to make an engineer look like a manager - that is exactly what wrongly triggered the
+  // company-setup wizard when entering a company you are only an engineer in. Fall back to the team
+  // row, then to a safe default, only when no membership is matched (e.g. offline per-user scope).
+  const myMembershipRole = normaliseRole((myCompanies.find(c => String(c.company_id) === String(cloudUserId)) || {}).role);
+  const myRole = myMembershipRole || normaliseRole(myMember?.role) || (cloudEnabled ? "engineer" : "manager");
 
   // ---- Activity capture (login / page views / last-active / JS errors) --------
   // Lightweight usage telemetry, distinct from the business activity log
