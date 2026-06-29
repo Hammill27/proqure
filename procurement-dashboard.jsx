@@ -419,13 +419,20 @@ function useSpeechRecognition({ onTranscript, onFinal }) {
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 const RESEND_API    = "https://api.resend.com/emails";
 const TRADES = ["Plumbing","Heating & Gas","Electrical","HVAC","Ventilation","Mechanical","Joinery & Carpentry","Bricklaying","Groundworks","Roofing","Plastering & Drylining","Decorating","Flooring & Tiling","Drainage","Steel & Fabrication","Landscaping","General"];
-const DEFAULT_SUPPLIERS = [
+const DEFAULT_SUPPLIERS = [];
+// Older builds auto-seeded these sample suppliers into every workspace, which then got
+// saved to the cloud permanently. We no longer seed anything. This list is kept ONLY so the
+// load-time cleanup below can strip the untouched seeds from workspaces that already received
+// them. Matched by exact id + name + email, so any supplier a user actually added (those get a
+// timestamp id and/or different details) is never removed.
+const LEGACY_SEED_SUPPLIERS = [
   { id:1, name:"Travis Perkins",         categories:["Plumbing","HVAC","Electrical"],  email:"quotes@travisperkins.co.uk" },
   { id:2, name:"Wolseley UK",             categories:["Plumbing","HVAC"],               email:"rfq@wolseley.co.uk" },
   { id:3, name:"Screwfix Trade",          categories:["Electrical","Plumbing"],         email:"trade@screwfix.com" },
   { id:4, name:"City Electrical Factors", categories:["Electrical"],                    email:"quotes@cef.co.uk" },
   { id:5, name:"Graham",                  categories:["HVAC","Plumbing","Ventilation"], email:"rfq@grahamplumbingheating.co.uk" },
 ];
+const isLegacySeedSupplier = (s) => !!s && LEGACY_SEED_SUPPLIERS.some(d => d.id===s.id && d.name===s.name && d.email===s.email);
 
 // Short, collision-resistant id for contacts/branches.
 function genId(prefix="ID"){ return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`; }
@@ -3009,7 +3016,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     try { return JSON.parse(localStorage.getItem("piq_settings")||"{}"); } catch { return {}; }
   });
   const [suppliers, setSuppliers] = useState(() => {
-    try { return normSuppliers(JSON.parse(localStorage.getItem("piq_suppliers")||"null")||DEFAULT_SUPPLIERS); } catch { return normSuppliers(DEFAULT_SUPPLIERS); }
+    try { return normSuppliers(JSON.parse(localStorage.getItem("piq_suppliers")||"null")||DEFAULT_SUPPLIERS).filter(s=>!isLegacySeedSupplier(s)); } catch { return []; }
   });
   // Global activity logger — records everything across the app
   const logActivity = (action, detail, meta={}) => {
