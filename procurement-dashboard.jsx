@@ -6544,6 +6544,14 @@ Rules:
       .nr-ac-item{display:flex;align-items:center;gap:11px;padding:12px 15px;cursor:pointer;border:none;border-bottom:1px solid var(--border);transition:background 0.14s,padding-left 0.14s;width:100%;text-align:left;background:none;font-family:inherit}
       .nr-ac-item:last-child{border-bottom:none}
       .nr-ac-item:hover{background:var(--green-light);padding-left:19px}
+      /* Quick PO hero: orange re-skin of the shared nr-* mic hero */
+      .qp-hero .nr-mic{border-color:#C2410C;background:linear-gradient(160deg,rgba(217,119,6,0.16),transparent)}
+      .qp-hero .nr-mic:hover{border-color:#E8890B;box-shadow:0 14px 34px rgba(217,119,6,0.22)}
+      .qp-hero .nr-mic .nr-ico{background:linear-gradient(135deg,#E8890B,#D97706);box-shadow:0 8px 22px rgba(217,119,6,0.42)}
+      .qp-hero .nr-ring{border-color:#E8890B}
+      .qp-hero .nr-opt:hover{border-color:#D97706;box-shadow:0 10px 24px rgba(217,119,6,0.12)}
+      .qp-hero .nr-field:hover:not(:focus){border-color:#E8890B}
+      .qp-hero .nr-field:focus{border-color:#D97706;box-shadow:0 0 0 4px rgba(217,119,6,0.16)}
       @media (prefers-reduced-motion:reduce){
         .nr-step > *,.nr-chip.sel,.nr-bar-fill::after,.nr-mic.live .nr-ico,.nr-mic.live .nr-ring,.nr-mic.live .nr-eq i,.nr-ac{animation:none!important}
         .nr-btn-primary:hover,.nr-chip:hover,.nr-opt:hover,.nr-mic:hover,.nr-back:hover{transform:none!important}
@@ -11239,7 +11247,7 @@ Rules:
 // order. Opens as its own view (does not touch the Orders page); on raise it hands off
 // to handleQuickPO, which fires the ProQure success animation. ---
 function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, onBack, onAiFill, onScan }) {
-  const TOTAL = 5;
+  const TOTAL = 6;
   const [qp, setQp] = useState(1);
   const upd = (patch) => setForm(f => ({ ...f, ...patch }));
   const items = form.items || [{ description:"", quantity:"", unit:"", unitPrice:"" }];
@@ -11274,12 +11282,13 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
   const runScan = async (file) => { if (!file || !onScan) return; setScanBusy(true); try { applyAi(await onScan(file)); } catch {} setScanBusy(false); };
   const { listening, supported:voiceOk, start:micStart, stop:micStop } = useSpeechRecognition({ onTranscript:(t)=>setAiText(t), onFinal:(t)=>setAiText(t) });
 
-  const canNext = qp===1 ? hasSupplier : true;
+  const canNext = qp===2 ? hasSupplier : true;
   const back = () => { if (qp>1) setQp(s=>s-1); else onBack(); };
   const next = () => setQp(s=>Math.min(TOTAL, s+1));
 
   const frames = [
-    { eyebrow:"Supplier",       title:"Who's this order with?",         sub:"Pick a merchant you already use, or add one on the spot. You can also say, type or scan the order and let AI fill it all in." },
+    { eyebrow:"The order",      title:"Say, scan or type the order",    sub:"Speak it, snap a quote or delivery note, or type it - AI turns it into a PO. Or just skip and fill it in yourself." },
+    { eyebrow:"Supplier",       title:"Who's this order with?",         sub:"Pick a merchant you already use, or add one on the spot." },
     { eyebrow:"Items",          title:"What did they agree to supply?", sub:"Add each line here, or skip it and just describe the order with a total on the next step - whichever's quicker." },
     { eyebrow:"Agreed price",   title:"What's the phone-agreed total?",  sub:"The price you settled on the call. Add any notes for the record while it's fresh." },
     { eyebrow:"Job & delivery", title:"Where's it going?",              sub:"Tag the job this is for, then choose delivery or collection." },
@@ -11314,7 +11323,7 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
           <div style={{fontSize:12,fontWeight:700,color:"#D97706",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>{fr.eyebrow}</div>
           <h2 style={{fontSize:isMobile?24:30,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.1,margin:"0 0 12px",color:"var(--text-primary)"}}>{fr.title}</h2>
           <p style={{fontSize:14.5,color:"var(--text-secondary)",lineHeight:1.6,margin:0,maxWidth:360}}>{fr.sub}</p>
-          {supplierName && qp>1 && (
+          {supplierName && qp>2 && (
             <div style={{marginTop:20,display:"inline-flex",alignItems:"center",gap:8,background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:99,padding:"6px 13px"}}>
               <span style={{fontSize:11.5,fontWeight:600,color:"var(--text-tertiary)"}}>With</span>
               <span style={{fontSize:12.5,fontWeight:700,color:"var(--text-primary)"}}>{supplierName}</span>
@@ -11324,27 +11333,36 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
 
         {/* RIGHT interaction */}
         <div>
-          {/* STEP 1 - Supplier + AI fill */}
-          {qp===1 && (<>
-            <div style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:14,padding:"14px 16px",marginBottom:18}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#D97706",marginBottom:8,textTransform:"uppercase",letterSpacing:"0.04em"}}>Say, type or scan the order - AI fills it in</div>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <input className="nr-field" style={{flex:1,fontSize:14,padding:"12px 14px"}} value={aiText} onChange={e=>setAiText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")runAi();}} placeholder='e.g. "10 lengths 22mm copper, £340 with Travis Perkins"'/>
-                {voiceOk && (
-                  <button onClick={()=>listening?micStop():micStart()} title={listening?"Stop":"Dictate"} style={{padding:"11px 12px",borderRadius:12,border:"1px solid var(--border)",background:listening?"#DC2626":"var(--bg-card-solid)",color:listening?"#fff":"var(--text-secondary)",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                  </button>
-                )}
-                <label title="Scan a quote or delivery note" style={{padding:"11px 12px",borderRadius:12,border:"1px solid var(--border)",background:scanBusy?"var(--border)":"var(--bg-card-solid)",color:"var(--text-secondary)",cursor:scanBusy?"wait":"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
-                  <input type="file" accept="image/*,.pdf" capture="environment" disabled={scanBusy} style={{display:"none"}} onChange={e=>{if(e.target.files?.[0])runScan(e.target.files[0]);e.target.value="";}}/>
-                </label>
-                <button onClick={runAi} disabled={aiBusy||!aiText.trim()} style={{padding:"11px 16px",borderRadius:12,border:"none",background:aiBusy||!aiText.trim()?"var(--border)":"#D97706",color:"#fff",fontSize:13,fontWeight:700,cursor:aiBusy?"wait":"pointer",whiteSpace:"nowrap",flexShrink:0}}>{aiBusy?"...":"AI fill"}</button>
+          {/* STEP 1 - Capture (orange hero) */}
+          {qp===1 && (
+            <div className="qp-hero">
+              <div className={"nr-mic"+(listening?" live":"")} onClick={()=>voiceOk&&(listening?micStop():micStart())} style={voiceOk?{}:{cursor:"default",opacity:0.75}}>
+                <span className="nr-ring"/>
+                <div className="nr-ico">{listening
+                  ? <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="1"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                  : <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M19 10a7 7 0 01-14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}</div>
+                <div style={{fontSize:16,fontWeight:700,position:"relative",zIndex:2,color:"var(--text-primary)"}}>{listening?"Listening... tap to stop":voiceOk?"Tap to speak your order":"Voice input isn't available here"}</div>
+                {!listening&&<div style={{fontSize:12.5,color:"var(--text-secondary)",marginTop:5,position:"relative",zIndex:2}}>{voiceOk?'Say it naturally - "10 lengths 22mm copper, £340 with Travis Perkins"':"Type the order below, or scan a quote."}</div>}
+                <div className="nr-eq"><i/><i/><i/><i/><i/><i/><i/></div>
               </div>
-              {listening && <div style={{fontSize:11,color:"#DC2626",marginTop:7,fontWeight:600}}>Listening… speak the order, then tap the mic again.</div>}
-              {scanBusy && <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:7}}>Reading document…</div>}
-            </div>
 
+              <label className="nr-opt" style={{display:"block",cursor:scanBusy?"wait":"pointer",marginBottom:14}}>
+                <input type="file" accept="image/*,.pdf" capture="environment" disabled={scanBusy} style={{display:"none"}} onChange={e=>{if(e.target.files?.[0])runScan(e.target.files[0]);e.target.value="";}}/>
+                <div className="nr-oico" style={{background:scanBusy?"#B45309":"linear-gradient(135deg,#E8890B,#D97706)"}}>{scanBusy
+                  ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{animation:"spin 1s linear infinite"}}><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+                  : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>}</div>
+                <div style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{scanBusy?"Reading...":"Scan a quote or delivery note"}</div>
+                <div style={{fontSize:10.5,color:"var(--text-tertiary)",marginTop:2}}>Photo or PDF</div>
+              </label>
+
+              <div className="nr-sep">or type it</div>
+              <textarea className="nr-field" value={aiText} onChange={e=>setAiText(e.target.value)} placeholder='e.g. "10 lengths 22mm copper, £340 with Travis Perkins"'></textarea>
+              <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:8}}>Tip: include the supplier and the agreed price and AI will fill it all in - or leave this blank and fill each step yourself.</div>
+            </div>
+          )}
+
+          {/* STEP 2 - Supplier */}
+          {qp===2 && (<>
             <label style={lbl}>Supplier</label>
             {!form.newSupplier ? (
               <select className="nr-field" value={form.supplierId||""} onChange={e=>{ const v=e.target.value; if(v==="__new__"){upd({newSupplier:true,supplierId:null});} else {upd({supplierId:v,newSupplier:false});} }} style={{cursor:"pointer",appearance:"auto",fontSize:15}}>
@@ -11366,8 +11384,8 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
             )}
           </>)}
 
-          {/* STEP 2 - Items */}
-          {qp===2 && (<>
+          {/* STEP 3 - Items */}
+          {qp===3 && (<>
             {items.map((it,idx)=>(
               <div key={idx} style={{border:"1px solid var(--border)",borderRadius:12,padding:12,marginBottom:10,background:"var(--bg-subtle2)"}}>
                 <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
@@ -11388,16 +11406,16 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
             <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:10}}>Prefer to keep it simple? Skip this and just enter a description and total on the next step.</div>
           </>)}
 
-          {/* STEP 3 - Price & notes */}
-          {qp===3 && (<>
+          {/* STEP 4 - Price & notes */}
+          {qp===4 && (<>
             <label style={lbl}>Agreed total (the phone-quoted price)</label>
             <input className="nr-field" style={{marginBottom:18,fontSize:17,fontFamily:"'JetBrains Mono',monospace"}} value={form.total||""} onChange={e=>upd({total:e.target.value})} placeholder="e.g. £420.00"/>
             <label style={lbl}>Description / notes (optional)</label>
             <textarea className="nr-field" style={{minHeight:96,resize:"vertical",fontSize:14}} value={form.summary||""} onChange={e=>upd({summary:e.target.value})} placeholder="e.g. Replacement pump agreed on phone with branch manager"></textarea>
           </>)}
 
-          {/* STEP 4 - Job & delivery */}
-          {qp===4 && (<>
+          {/* STEP 5 - Job & delivery */}
+          {qp===5 && (<>
             <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
               <div style={{flex:"1 1 160px"}}>
                 <label style={lbl}>Job ref</label>
@@ -11422,8 +11440,8 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
             <input type="date" className="nr-field" style={{fontSize:15}} value={form.deliveryDate||""} onChange={e=>upd({deliveryDate:e.target.value})}/>
           </>)}
 
-          {/* STEP 5 - Review */}
-          {qp===5 && (
+          {/* STEP 6 - Review */}
+          {qp===6 && (
             <div style={{border:"1px solid var(--border)",borderRadius:14,overflow:"hidden",boxShadow:"var(--shadow-sm)"}}>
               <div style={{background:"linear-gradient(135deg,#E8890B,#D97706)",padding:"14px 18px"}}>
                 <div style={{fontSize:14,fontWeight:800,color:"#fff"}}>Purchase order summary</div>
@@ -11460,16 +11478,17 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
 
           {/* footer action */}
           <div style={{marginTop:22,display:"flex",justifyContent:"flex-end"}}>
-            {qp<TOTAL
-              ? <button className="nr-btn nr-btn-primary" disabled={!canNext} onClick={next}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-              : <button className="nr-btn nr-btn-primary" disabled={!hasSupplier} onClick={()=>onRaise(form)}>Raise PO <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>}
+            {qp===1
+              ? <button className="nr-btn nr-btn-primary" disabled={aiBusy||scanBusy} onClick={async()=>{ if(aiText.trim()){ await runAi(); } setQp(2); }}>{aiBusy?"AI filling...":(aiText.trim()?"AI fill & continue":"Continue")} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+              : qp<TOTAL
+                ? <button className="nr-btn nr-btn-primary" disabled={!canNext} onClick={next}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+                : <button className="nr-btn nr-btn-primary" disabled={!hasSupplier} onClick={()=>onRaise(form)}>Raise PO <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>}
           </div>
         </div>
       </div>
     </div>
   );
 }
-
 // Small label/value row used by the Quick PO review card.
 function SummaryRow({ label, value }) {
   return (
