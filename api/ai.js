@@ -48,7 +48,12 @@ const aiPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 // we fall back to their first membership. If auth can't be verified server-side (anon key
 // not configured), behaviour falls back to the previous open mode so nothing breaks.
 async function verifyCaller(req, requestedCompanyId) {
-  if (!sbAnon) return { mode: "open" }; // verification not configured: legacy behaviour
+  // FAIL CLOSED: this endpoint spends a central, paid OpenRouter key, so if auth
+  // verification isn't configured we must REFUSE rather than run as an open proxy
+  // (matching send-email.js). Previously this returned {mode:"open"}, which — if the
+  // anon key were ever missing/renamed in the environment — would have skipped both
+  // the sign-in check and the per-company budget wall, letting anyone spend the key.
+  if (!sbAnon) return { mode: "deny" };
   const h = req.headers.authorization || req.headers.Authorization || "";
   const token = h.startsWith("Bearer ") ? h.slice(7).trim() : null;
   if (!token) return { mode: "deny" };
@@ -184,12 +189,19 @@ export default async function handler(req, res) {
 
     // Caller verification (closes the open-proxy hole): a valid signed-in session
     // is required, and the company is the active one the client passes, validated
-    // against membership server-side.
+    // against membership server-side. Fails closed — no session, no AI.
     const who = await verifyCaller(req, companyId);
-    if (who.mode === "deny") {
+    if (who.mode !== "ok") {
       return res.status(401).json({ error: "Please sign in to use AI features." });
     }
-    const effectiveCompany = who.mode === "ok" ? who.companyId : (companyId || null);
+    const effectiveCompany = who.companyId;
+    // Never spend the shared key without a company to meter it against. verifyCaller
+    // always resolves one for a valid member (their active company, or their first
+    // membership, or their own uid), so reaching here without one means something is
+    // wrong — refuse rather than run an unmetered call.
+    if (!effectiveCompany) {
+      return res.status(403).json({ error: "No company context for this request." });
+    }
 
     // Circuit-breaker (server-authoritative): refuse to spend if this company is
     // already at/over its plan's monthly AI cost cap. Per-tenant, per-plan only.
