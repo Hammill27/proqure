@@ -9033,7 +9033,7 @@ Rules:
                     <Icon name="clock" size={13} style={{verticalAlign:"-2px"}}/>Quick PO
                   </button>
                 )}
-                {orders.length>0&&(
+                {orders.length>0&&can.viewCosts(myRole)&&(
                   <button onClick={()=>downloadCSV(`orders-${new Date().toISOString().split("T")[0]}.csv`, orders.map(o=>({
                     PO: o.poNumber, Status: o.status, Supplier: o.supplier||"", Job: o.jobRef||"", Site: o.site||"",
                     EstimatedTotal: o.estimatedTotal||o.analysis?.estimatedTotal||"", PODate: o.poDate||"",
@@ -9112,6 +9112,7 @@ Rules:
                 const dueStr=o.expectedDelivery||o.deliveryDate;
                 if(dueStr){ const dl=new Date(dueStr).getTime(); if(!isNaN(dl)&&dl<Date.now()) return "Delivery overdue"; }
                 if(o.status==="pending-send" && can.viewCosts(myRole)) return "Ready to send to supplier";
+                if((o.status==="sent"||o.status==="confirmed") && !can.viewCosts(myRole)) return "Sign off when it arrives";
                 return null;
               };
               const onRowKey = (e,o) => {
@@ -9132,7 +9133,7 @@ Rules:
                       <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.supplier||"Supplier"} · {o.jobRef||"—"}{o.site?` · ${o.site}`:""}</div>
                       {reason && <div style={{fontSize:11,fontWeight:600,color:"#D97706",marginTop:4,display:"inline-flex",alignItems:"center",gap:4}}><Icon name="flag" size={10} color="#D97706"/>{reason}</div>}
                     </div>
-                    {o.estimatedTotal && <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{o.estimatedTotal}</span>}
+                    {o.estimatedTotal && can.viewCosts(myRole) && <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{o.estimatedTotal}</span>}
                     {updated && <span style={{fontSize:11,color:"var(--text-tertiary)",flexShrink:0,whiteSpace:"nowrap"}}>{updated}</span>}
                     <svg className="rq-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M9 18l6-6-6-6"/></svg>
                   </div>
@@ -11517,7 +11518,7 @@ Rules:
                   {kv("Job ref", o.jobRef||"—")}
                   {o.site && kv("Site", o.site)}
                   {kv("Order type", <span style={{color:o.isQuickPO?"#D97706":"var(--green-dark)"}}>{o.isQuickPO?"Quick PO (direct)":"Standard (RFQ)"}</span>)}
-                  {o.estimatedTotal && kv("Total", <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)",fontWeight:700}}>{o.estimatedTotal}</span>)}
+                  {o.estimatedTotal && can.viewCosts(myRole) && kv("Total", <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)",fontWeight:700}}>{o.estimatedTotal}</span>)}
                   {kv("Delivery", deliveryLabel)}
                   {dueStr && kv("Expected", new Date(dueStr).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}))}
                   {(()=>{ const t=lastActivityTs(o); return t?kv("Last updated", relTime(t)):null; })()}
