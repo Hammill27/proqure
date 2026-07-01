@@ -8,6 +8,11 @@
 // Triggered by Vercel Cron (see vercel.json). Protected by CRON_SECRET: Vercel sends
 // `Authorization: Bearer <CRON_SECRET>` when that env var is set.
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
+function secretEq(a, b) {
+  const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
 import { cadenceOf, emailEligible, canSeeInApp } from "../notify-policy.js";
 import { renderNotificationEmail, sendMail } from "../lib/notify-mail.js";
 
@@ -22,7 +27,7 @@ export default async function handler(req, res) {
   // isn't set, refuse rather than expose a publicly-triggerable mail sender.
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!CRON_SECRET) return res.status(500).json({ error: "Digest not configured (set CRON_SECRET)." });
-  if (bearer !== CRON_SECRET) {
+  if (!secretEq(bearer, CRON_SECRET)) {
     return res.status(401).json({ error: "Unauthorised." });
   }
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: "Server not configured." });
