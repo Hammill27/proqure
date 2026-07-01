@@ -527,11 +527,40 @@ function relTime(ts) {
   if (days<7) return days+"d ago";
   return new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
 }
-// Most recent moment on a request: latest activity entry, else created date.
+// Most recent moment on a request/order: latest activity entry, else created date.
 function lastActivityTs(r) {
-  let t = r.created ? new Date(r.created+"T00:00:00").getTime() : 0;
+  let t = 0;
+  [r.created && (r.created.length===10?r.created+"T00:00:00":r.created), r.createdAt].forEach(s=>{ if(s){ const x=new Date(s).getTime(); if(!isNaN(x)&&x>t) t=x; } });
   (r.activity||[]).forEach(a=>{ const x=new Date(a.ts).getTime(); if(!isNaN(x)&&x>t) t=x; });
   return t;
+}
+// --- Order status design language (same family as request statuses) -----------
+const ORDER_STATUS_UI = {
+  "pending-send": { label:"Ready to send", color:"#D97706", bg:"rgba(217,119,6,0.12)",  icon:"package" },
+  sent:           { label:"Sent",          color:"#2563EB", bg:"rgba(37,99,235,0.12)",  icon:"send" },
+  confirmed:      { label:"Confirmed",     color:"#7C3AED", bg:"rgba(124,58,237,0.12)", icon:"check_circle" },
+  delivered:      { label:"Delivered",     color:"#15824F", bg:"var(--green-light)",    icon:"flag" },
+  overdue:        { label:"Overdue",       color:"#DC2626", bg:"rgba(220,38,38,0.12)",  icon:"clock" },
+  cancelled:      { label:"Cancelled",     color:"#94A3B8", bg:"rgba(148,163,184,0.16)",icon:"undo" },
+};
+function orderStatusKey(o) {
+  if (o.status==="cancelled") return "cancelled";
+  if (o.status==="delivered") return "delivered";
+  const dueStr = o.expectedDelivery||o.deliveryDate;
+  if (dueStr) { const dl=new Date(dueStr).getTime(); if(!isNaN(dl)&&dl<Date.now()) return "overdue"; }
+  return ORDER_STATUS_UI[o.status] ? o.status : "pending-send";
+}
+function OrderPill({ o, big=false }) {
+  const m = ORDER_STATUS_UI[orderStatusKey(o)] || ORDER_STATUS_UI["pending-send"];
+  const fs = big?11.5:10.5;
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:fs,fontWeight:700,padding:"2px 9px 2px 7px",borderRadius:99,background:m.bg,color:m.color,lineHeight:1.5,whiteSpace:"nowrap"}}>
+      <Icon name={m.icon} size={fs+1} color={m.color}/>{m.label}
+    </span>
+  );
+}
+function QuickPOTag() {
+  return <span title="Raised directly as a Quick PO - did not go through the RFQ/quote process" style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"rgba(217,119,6,0.12)",color:"#D97706",letterSpacing:"0.03em",textTransform:"uppercase"}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>Quick PO</span>;
 }
 
 // --- AI helpers ---------------------------------------------------------------
@@ -3732,7 +3761,6 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const [activeOrder, setActiveOrder] = useState(null);
   const [sendingOrder, setSendingOrder] = useState(null);
   const [orderFilter, setOrderFilter] = useState("all");
-  const [expandedOrder, setExpandedOrder] = useState(null);
   const [expandedQuote, setExpandedQuote] = useState(null);
   const [orderNote, setOrderNote] = useState({});
   const [expectedDelivery, setExpectedDelivery] = useState({}); // {orderId: dateStr}
@@ -5158,6 +5186,12 @@ ${settings.company||""}`;
   const [reqFilterBuyer, setReqFilterBuyer] = useState("all");
   const [fullSections, setFullSections] = useState({});
   const [reqTab, setReqTab] = useState("active"); // active | completed | archived
+  const [orderTab, setOrderTab] = useState("active"); // active | completed | archived
+  const [drawerOrderId, setDrawerOrderId] = useState(null);
+  const [collapsedOrderGroups, setCollapsedOrderGroups] = useState({ lastWeek:true, earlier:true });
+  const [fullOrderSections, setFullOrderSections] = useState({});
+  const [orderSearch, setOrderSearch] = useState("");
+  const [orderStatusFilter, setOrderStatusFilter] = useState("all");
   const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
   const [trialResetConfirm, setTrialResetConfirm] = useState(false);
@@ -8987,7 +9021,7 @@ Rules:
         )}
 
         {view==="orders"&&(
-          <div className="stagger-in" style={{maxWidth:900}}>
+          <div className="stagger-in" style={{maxWidth:1000}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
               <div>
                 <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Orders</h1>
@@ -9009,224 +9043,152 @@ Rules:
                     <Icon name="download" size={13} style={{marginRight:5,verticalAlign:"-2px"}}/>Export
                   </button>
                 )}
-                {[
-                  {id:"all",      label:"All",       count:visibleOrders.length},
-                  {id:"active",   label:"Active",    count:visibleOrders.filter(o=>o.status!=="delivered").length},
-                  {id:"delivered",label:"Delivered", count:visibleOrders.filter(o=>o.status==="delivered").length},
-                ].map(f=>(
-                  <button key={f.id} onClick={()=>setOrderFilter(f.id)}
-                    style={{padding:"7px 16px",borderRadius:"var(--radius-sm)",border:`1px solid ${orderFilter===f.id?"var(--green-dark)":"var(--border)"}`,background:orderFilter===f.id?"var(--green-mint)":"var(--bg-card-solid)",color:orderFilter===f.id?"var(--green-deep)":"var(--text-secondary)",fontSize:13,fontWeight:orderFilter===f.id?600:400,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
-                    {f.label}
-                    {f.count>0&&<span style={{fontSize:10,fontWeight:700,background:orderFilter===f.id?"var(--green-dark)":"var(--bg-subtle2)",color:orderFilter===f.id?"white":"var(--text-muted)",padding:"1px 6px",borderRadius:99}}>{f.count}</span>}
-                  </button>
-                ))}
               </div>
             </div>
 
-            {visibleOrders.filter(o=>{
-              if(orderFilter==="active") return o.status!=="delivered";
-              if(orderFilter==="delivered") return o.status==="delivered";
-              return true;
-            }).length===0?(
-              <Card style={{textAlign:"center",padding:"48px 32px",color:"var(--text-tertiary)"}}>
-                <div style={{fontSize:15,marginBottom:8}}>No orders yet</div>
-                <div style={{fontSize:13}}>Approve a supplier quote to generate a purchase order</div>
-              </Card>
-            ):(
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {visibleOrders.filter(o=>{
-                  if(orderFilter==="active") return o.status!=="delivered";
-                  if(orderFilter==="delivered") return o.status==="delivered";
-                  return true;
-                }).map(order=>{
-                  const STATUS_STEPS = [
-                    {key:"pending-send",label:"Ready to send",color:"var(--green-dark)",  bg:"var(--green-mint)"},
-                    {key:"sent",        label:"Sent",          color:"var(--green-dark)",  bg:"var(--green-light)"},
-                    {key:"confirmed",   label:"Confirmed",     color:"var(--green-dark)",  bg:"var(--green-light)"},
-                    {key:"delivered",   label:"Delivered",     color:"var(--green-dark)",  bg:"var(--green-light)"},
-                  ];
-                  const stepIdx   = STATUS_STEPS.findIndex(s=>s.key===order.status);
-                  const curStep   = STATUS_STEPS[stepIdx]||STATUS_STEPS[0];
-                  const isExpanded = expandedOrder===order.id;
-
-                  return(
-                    <div key={order.id} style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isExpanded?"var(--green-dark)":"var(--border)"}`,overflow:"hidden",boxShadow:isExpanded?"var(--shadow-md)":"var(--shadow-sm)",transition:"box-shadow 0.2s cubic-bezier(0.16,1,0.3,1),border-color 0.2s"}}>
-
-                      {/* Clickable header row */}
-                      <div onClick={()=>setExpandedOrder(isExpanded?null:order.id)}
-                        style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isExpanded?"var(--green-mint)":"var(--bg-card-solid)",transition:"background 0.2s"}}>
-                        <div style={{width:38,height:38,borderRadius:10,background:order.status==="pending-send"?"linear-gradient(135deg,#1E9E63,#15824F)":order.status==="sent"?"linear-gradient(135deg,#5B5BD6,#4A4AB8)":order.status==="confirmed"?"linear-gradient(135deg,#15824F,#047857)":"linear-gradient(135deg,#4B5563,#374151)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
-                          <Icon name={order.status==="pending-send"?"package":order.status==="sent"?"plane":order.status==="confirmed"?"check_circle":"flag"} size={18} color="white"/>
-                        </div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
-                            <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
-                            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:curStep.bg,color:curStep.color}}>{curStep.label}</span>
-                            {order.isQuickPO && <span title="Raised directly as a Quick PO - did not go through the RFQ/quote process" style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"rgba(217,119,6,0.12)",color:"#D97706",letterSpacing:"0.03em",textTransform:"uppercase"}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>Quick PO</span>}
-                          </div>
-                          <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{order.supplier} · {order.jobRef} · {order.site}</div>
-                        </div>
-                        <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-                          {order.expectedDelivery&&order.status!=="delivered"&&(
-                            <span style={{fontSize:11,color:"var(--green-dark)",background:"var(--green-light)",padding:"3px 10px",borderRadius:99,fontWeight:500}}>{new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span>
-                          )}
-                          <span style={{fontSize:11,color:"var(--text-muted)"}}>{order.poDate}</span>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" style={{transform:isExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
-                        </div>
-                      </div>
-
-                      {/* Expanded body */}
-                      {isExpanded&&(
-                        <div style={{borderTop:"1px solid var(--border)",animation:"cardExpand 0.2s ease"}}>
-
-                          {/* Status timeline */}
-                          <div style={{padding:"16px 20px",borderBottom:"1px solid var(--border)",background:"var(--bg-subtle)"}}>
-                            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
-                              {STATUS_STEPS.map((s,i)=>(
-                                <div key={s.key} style={{display:"flex",alignItems:"center",flex:i<STATUS_STEPS.length-1?1:"none"}}>
-                                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                                    <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,background:stepIdx>i?s.color:stepIdx===i?s.color:"var(--bg-subtle2)",color:stepIdx>=i?"white":"var(--text-muted)",border:`2px solid ${stepIdx>=i?s.color:"var(--border)"}`}}>
-                                      {stepIdx>i?<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>:i+1}
-                                    </div>
-                                    <span style={{fontSize:9,color:stepIdx===i?s.color:"var(--text-muted)",fontWeight:stepIdx===i?700:400,whiteSpace:"nowrap"}}>{s.label}</span>
-                                  </div>
-                                  {i<STATUS_STEPS.length-1&&<div style={{flex:1,height:2,background:stepIdx>i?s.color:"var(--bg-subtle2)",margin:"0 4px",marginBottom:14}}/>}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Order details */}
-                          <div style={{padding:"16px 20px",display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}}>
-                            {/* Left: items */}
-                            <div>
-                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Order items</div>
-                              {(order.items||[]).map((item,i)=>(
-                                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid var(--border)"}}>
-                                  <div style={{fontSize:13,color:"var(--text-primary)",flex:1}}>{item.description}</div>
-                                  <div style={{fontSize:12,color:"var(--text-secondary)",fontFamily:"monospace",flexShrink:0,marginLeft:12}}>{item.quantity} {item.unit}</div>
-                                </div>
-                              ))}
-                              <div style={{marginTop:12}}>
-                                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Supplier</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{order.supplier}</span></div>
-                                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Job ref</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{order.jobRef}</span></div>
-                                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Order type</span><span style={{fontSize:12,fontWeight:700,color:order.isQuickPO?"#D97706":"var(--green-dark)"}}>{order.isQuickPO?"Quick PO (direct)":"Standard (RFQ)"}</span></div>
-                                {order.estimatedTotal&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Total</span><span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",fontFamily:"monospace"}}>{order.estimatedTotal}</span></div>}
-                              </div>
-                            </div>
-
-                            {/* Right: actions */}
-                            <div>
-                              <div style={{fontSize:12,fontWeight:600,color:"var(--text-secondary)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Actions</div>
-
-                              {order.status==="pending-send"&&!can.viewCosts(myRole)&&(
-                                <div style={{fontSize:12.5,color:"var(--text-secondary)",padding:"10px 14px",background:"var(--bg-subtle2)",borderRadius:"var(--radius-sm)",border:"1px solid var(--border)"}}>The buyer is arranging this order. You'll be able to sign off the delivery here once it's on its way.</div>
-                              )}
-                              {order.status==="pending-send"&&can.viewCosts(myRole)&&(
-                                <div>
-                                  <div style={{marginBottom:10}}>
-                                    <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Note to supplier (optional)</label>
-                                    <textarea value={orderNote[order.id]||""} onChange={e=>setOrderNote(p=>({...p,[order.id]:e.target.value}))} placeholder="Any special instructions..." style={{width:"100%",height:70,padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"none",fontFamily:"inherit"}}></textarea>
-                                  </div>
-                                  <div style={{marginBottom:12}}>
-                                    <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Delivery or collection</label>
-                                    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
-                                      {[["direct","Deliver to site"],["collect","Collection"],["alternative","Alternative address"]].map(([val,lab])=>{
-                                        const active=(order.deliveryMethod||"direct")===val;
-                                        return <button key={val} onClick={()=>setOrders(p=>p.map(o=>o.id===order.id?{...o,deliveryMethod:val}:o))} style={{padding:"7px 13px",borderRadius:"var(--radius-sm)",border:`1px solid ${active?"#15824F":"var(--border)"}`,background:active?"var(--green-light)":"var(--bg-card-solid)",color:active?"var(--green-dark)":"var(--text-secondary)",fontSize:12.5,fontWeight:active?700:500,cursor:"pointer"}}>{lab}</button>;
-                                      })}
-                                    </div>
-                                    {(order.deliveryMethod||"direct")==="direct" && (
-                                      <input value={order.site||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,site:e.target.value}:o))} placeholder="Site delivery address" style={{width:"100%",boxSizing:"border-box",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                                    )}
-                                    {order.deliveryMethod==="alternative" && (
-                                      <input value={order.collectFrom||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,collectFrom:e.target.value}:o))} placeholder="Alternative delivery address" style={{width:"100%",boxSizing:"border-box",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                                    )}
-                                    {order.deliveryMethod==="collect" && (
-                                      <input value={order.collectFrom||""} onChange={e=>setOrders(p=>p.map(o=>o.id===order.id?{...o,collectFrom:e.target.value}:o))} placeholder="Collect from (branch / depot)" style={{width:"100%",boxSizing:"border-box",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                                    )}
-                                  </div>
-                                  <div style={{marginBottom:12}}>
-                                    <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Required by (delivery date)</label>
-                                    <input type="date" value={order.deliveryDate||expectedDelivery[order.id]||""} onChange={e=>{const v=e.target.value;setExpectedDelivery(p=>({...p,[order.id]:v}));setOrders(p=>p.map(o=>o.id===order.id?{...o,deliveryDate:v,expectedDelivery:v}:o));}} style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
-                                  </div>
-                                  <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
-                                    A branded PO PDF (items, delivery, job ref, invoicing email) will be attached automatically.
-                                  </div>
-                                  {(EMAIL_VIA_SERVER||settings.resendKey)?(
-                                    <Btn onClick={()=>handleSendOrder(order)} disabled={sendingOrder===order.id} color="#15824F">
-                                      {sendingOrder===order.id?<><Spinner/> Sending...</>:"Send order to supplier"}
-                                    </Btn>
-                                  ):(
-                                    <div style={{fontSize:12,color:"var(--text-tertiary)"}}>Email sending is being set up</div>
-                                  )}
-                                </div>
-                              )}
-
-                              {order.status==="sent"&&(
-                                <div>
-                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>{can.viewCosts(myRole)?"Mark this order as confirmed manually, or upload the supplier's confirmation document.":"When the materials arrive, take a photo of the delivery note to sign off this delivery."}</div>
-                                  <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-                                    {can.viewCosts(myRole)&&<Btn onClick={()=>{setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"confirmed",confirmedAt:new Date().toISOString()}:o));logActivity("Order confirmed",`${order.poNumber} (${order.supplier}) marked as confirmed`,{entity:"order",jobRef:order.jobRef});}} color="#15824F">Mark as confirmed</Btn>}
-                                    <label style={{fontSize:13,fontWeight:600,color:"white",background:"#15824F",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
-                                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                                      {order.deliveryPhoto?"Replace delivery photo":"Photo + sign off delivery"}
-                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];deliverWithPhoto(order,f);e.target.value="";}}/>
-                                    </label>
-                                    <Btn outline onClick={()=>markOrderDelivered(order,null)}>Mark delivered (no photo)</Btn>
-                                    {can.deleteItems(myRole) && order.status!=="cancelled" && <Btn outline onClick={()=>setCancelOrderConfirm(order)} style={{color:"var(--red)"}}>Cancel order</Btn>}
-                                  </div>
-                                  <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer",marginBottom:10}}>
-                                    <input type="file" accept=".pdf,.jpg,.png,.doc,.docx" style={{display:"none"}} onChange={e=>handleOrderConfirmationUpload(e.target.files[0],order.id)}/>
-                                    <span style={{fontSize:13,color:"var(--text-secondary)"}}>Or upload confirmation document</span>
-                                    <span style={{fontSize:12,color:"var(--text-muted)"}}>PDF, Word, or image</span>
-                                  </label>
-                                  <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Expected delivery: {order.expectedDelivery?new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):"Not set"}</div>
-                                </div>
-                              )}
-
-                              {order.status==="confirmed"&&(
-                                <div>
-                                  {order.confirmationDoc&&<div style={{fontSize:12,color:"var(--green-dark)",marginBottom:10}}>Confirmation received: {order.confirmationDoc.label||"document"}</div>}
-                                  <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:12}}>Expected delivery: {order.expectedDelivery?new Date(order.expectedDelivery).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):"Not set"}</div>
-                                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                                    <label style={{fontSize:13,fontWeight:600,color:"white",background:"#15824F",borderRadius:"var(--radius-sm)",padding:"8px 14px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
-                                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                                      {order.deliveryPhoto?"Replace delivery photo":"Photo + sign off delivery"}
-                                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];deliverWithPhoto(order,f);e.target.value="";}}/>
-                                    </label>
-                                    <Btn outline onClick={()=>markOrderDelivered(order,null)}>Mark delivered (no photo)</Btn>
-                                  </div>
-                                </div>
-                              )}
-
-                              {order.status==="delivered"&&(
-                                <div>
-                                  <div style={{display:"flex",alignItems:"center",gap:10,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:"var(--radius-sm)",padding:"12px 16px"}}>
-                                    <span style={{fontSize:16}}>D</span>
-                                    <div>
-                                      <div style={{fontSize:13,fontWeight:600,color:"var(--green-dark)"}}>Order delivered</div>
-                                      {order.deliveredAt&&<div style={{fontSize:11,color:"var(--green-dark)",opacity:0.8}}>{new Date(order.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}{order.signedOffBy?` - signed off by ${order.signedOffBy}`:""}</div>}
-                                    </div>
-                                  </div>
-                                  {order.deliveryPhoto&&(
-                                    <div style={{marginTop:10}}>
-                                      <div style={{fontSize:11,fontWeight:600,color:"var(--text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>Delivery note</div>
-                                      <a href={order.deliveryPhoto} target="_blank" rel="noreferrer"><img src={order.deliveryPhoto} alt="Delivery note" style={{maxWidth:220,maxHeight:220,borderRadius:"var(--radius-sm)",border:"1px solid var(--border)",cursor:"pointer"}}/></a>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+            {/* Filter bar */}
+            {visibleOrders.length>0&&(
+              <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+                <input value={orderSearch} onChange={e=>setOrderSearch(e.target.value)} placeholder="Search PO, supplier, job ref or site..." style={{flex:"1 1 220px",minWidth:170,padding:"9px 14px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                <select value={orderStatusFilter} onChange={e=>setOrderStatusFilter(e.target.value)} style={{padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",cursor:"pointer"}}>
+                  <option value="all">All statuses</option>
+                  <option value="pending-send">Ready to send</option>
+                  <option value="sent">Sent</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="overdue">Overdue</option>
+                </select>
+                {(orderSearch||orderStatusFilter!=="all")&&(
+                  <button onClick={()=>{setOrderSearch("");setOrderStatusFilter("all");}} style={{fontSize:12,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer"}}>Clear</button>
+                )}
               </div>
             )}
+
+            {/* Tabs */}
+            {(()=>{
+              const nArchived = visibleOrders.filter(o=>o.status==="cancelled").length;
+              const nCompleted = visibleOrders.filter(o=>o.status==="delivered").length;
+              const nActive = visibleOrders.filter(o=>o.status!=="delivered"&&o.status!=="cancelled").length;
+              const tabs=[{id:"active",label:"Active",count:nActive},{id:"completed",label:"Completed",count:nCompleted},{id:"archived",label:"Archived",count:nArchived}];
+              return (
+                <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+                  {tabs.map(t=>{ const on=orderTab===t.id; return (
+                    <button key={t.id} onClick={()=>setOrderTab(t.id)} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12,fontWeight:600,padding:"7px 15px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:on?"var(--green-dark)":"var(--bg-card-solid)",color:on?"white":"var(--text-secondary)"}}>
+                      {t.label}
+                      <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:99,background:on?"rgba(255,255,255,0.22)":"var(--bg-subtle2)",color:on?"white":"var(--text-muted)"}}>{t.count}</span>
+                    </button>
+                  ); })}
+                </div>
+              );
+            })()}
+
+            {/* List */}
+            {(()=>{
+              const CAP = 25;
+              const list = visibleOrders.filter(o=>{
+                if(orderTab==="archived"){ if(o.status!=="cancelled") return false; }
+                else if(orderTab==="completed"){ if(o.status!=="delivered") return false; }
+                else { if(o.status==="delivered"||o.status==="cancelled") return false; }
+                if(orderStatusFilter!=="all" && orderStatusKey(o)!==orderStatusFilter && o.status!==orderStatusFilter) return false;
+                if(orderSearch){ const q=orderSearch.toLowerCase(); if(!((o.poNumber||"").toLowerCase().includes(q)||(o.supplier||"").toLowerCase().includes(q)||(o.jobRef||"").toLowerCase().includes(q)||(o.site||"").toLowerCase().includes(q)||(o.trade||"").toLowerCase().includes(q))) return false; }
+                return true;
+              });
+              if(visibleOrders.length===0) return (
+                <Card style={{textAlign:"center",padding:"48px 32px",color:"var(--text-tertiary)"}}>
+                  <div style={{fontSize:15,marginBottom:8}}>No orders yet</div>
+                  <div style={{fontSize:13}}>Approve a supplier quote or raise a Quick PO to create one</div>
+                </Card>
+              );
+              if(list.length===0) return (
+                <Card>
+                  <div style={{textAlign:"center",padding:"36px 0",color:"var(--text-tertiary)"}}>
+                    <div style={{fontSize:14,marginBottom:8}}>{orderSearch?"No orders match your search":orderTab==="completed"?"No completed orders yet":orderTab==="archived"?"Nothing archived":"No active orders"}</div>
+                    {(orderSearch||orderStatusFilter!=="all")&&<button onClick={()=>{setOrderSearch("");setOrderStatusFilter("all");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear search &amp; filters</button>}
+                  </div>
+                </Card>
+              );
+
+              const orderAttn = (o) => {
+                if(o.status==="delivered"||o.status==="cancelled") return null;
+                const dueStr=o.expectedDelivery||o.deliveryDate;
+                if(dueStr){ const dl=new Date(dueStr).getTime(); if(!isNaN(dl)&&dl<Date.now()) return "Delivery overdue"; }
+                if(o.status==="pending-send" && can.viewCosts(myRole)) return "Ready to send to supplier";
+                return null;
+              };
+              const onRowKey = (e,o) => {
+                if(e.key==="Enter"||e.key===" "){ e.preventDefault(); setDrawerOrderId(o.id); return; }
+                if(e.key==="ArrowDown"||e.key==="ArrowUp"){ e.preventDefault(); const rows=[...document.querySelectorAll(".rq-row")]; const i=rows.indexOf(e.currentTarget); const n=e.key==="ArrowDown"?rows[i+1]:rows[i-1]; if(n)n.focus(); }
+              };
+              const rowFor = (o, reason) => {
+                const accent = (ORDER_STATUS_UI[orderStatusKey(o)]||ORDER_STATUS_UI["pending-send"]).color;
+                const updated = relTime(lastActivityTs(o));
+                return (
+                  <div key={o.id} className="rq-row" tabIndex={0} role="button" onKeyDown={e=>onRowKey(e,o)} onClick={()=>setDrawerOrderId(o.id)} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px 13px 18px","--rowaccent":accent}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+                        <span style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.01em"}}>{o.poNumber}</span>
+                        <OrderPill o={o}/>
+                        {o.isQuickPO && <QuickPOTag/>}
+                      </div>
+                      <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.supplier||"Supplier"} · {o.jobRef||"—"}{o.site?` · ${o.site}`:""}</div>
+                      {reason && <div style={{fontSize:11,fontWeight:600,color:"#D97706",marginTop:4,display:"inline-flex",alignItems:"center",gap:4}}><Icon name="flag" size={10} color="#D97706"/>{reason}</div>}
+                    </div>
+                    {o.estimatedTotal && <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{o.estimatedTotal}</span>}
+                    {updated && <span style={{fontSize:11,color:"var(--text-tertiary)",flexShrink:0,whiteSpace:"nowrap"}}>{updated}</span>}
+                    <svg className="rq-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M9 18l6-6-6-6"/></svg>
+                  </div>
+                );
+              };
+              const bodyFor = (key, items, reasonMap) => {
+                const full=!!fullOrderSections[key]; const shown=full?items:items.slice(0,CAP);
+                return (
+                  <div className="rq-group-body">
+                    {shown.map(o=>rowFor(o, reasonMap?reasonMap.get(o.id):null))}
+                    {items.length>CAP && <button onClick={()=>setFullOrderSections(p=>({...p,[key]:!full}))} style={{width:"100%",padding:"11px",background:"var(--bg-subtle)",border:"none",borderTop:"1px solid var(--border)",color:"var(--green-dark)",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{full?"Show less":`Show all ${items.length}`}</button>}
+                  </div>
+                );
+              };
+
+              if(orderSearch.trim() || orderTab!=="active"){
+                const flat=[...list].sort((a,b)=>lastActivityTs(b)-lastActivityTs(a));
+                const heading = orderSearch.trim()?"Results":orderTab==="archived"?"Cancelled":"Delivered";
+                return (<div><div style={{fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"0 0 10px 4px"}}>{heading} · {flat.length}</div>{bodyFor("flat",flat,null)}</div>);
+              }
+
+              const dayMs=86400000, now=new Date();
+              const startToday=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+              const startYesterday=startToday-dayMs;
+              const dow=(new Date(startToday).getDay()+6)%7;
+              const startWeek=startToday-dow*dayMs, startLastWeek=startWeek-7*dayMs;
+              const bucketOf=(t)=>t>=startToday?"today":t>=startYesterday?"yesterday":t>=startWeek?"thisWeek":t>=startLastWeek?"lastWeek":"earlier";
+              const sorted=[...list].sort((a,b)=>lastActivityTs(b)-lastActivityTs(a));
+              const reasonMap=new Map();
+              const g={needs:[],today:[],yesterday:[],thisWeek:[],lastWeek:[],earlier:[]};
+              sorted.forEach(o=>{ const rs=orderAttn(o); if(rs){ reasonMap.set(o.id,rs); g.needs.push(o); } else { g[bucketOf(lastActivityTs(o))].push(o); } });
+              const sections=[
+                {key:"needs",label:"Needs attention",items:g.needs,attn:true},
+                {key:"today",label:"Today",items:g.today},
+                {key:"yesterday",label:"Yesterday",items:g.yesterday},
+                {key:"thisWeek",label:"This week",items:g.thisWeek},
+                {key:"lastWeek",label:"Last week",items:g.lastWeek},
+                {key:"earlier",label:"Earlier",items:g.earlier},
+              ].filter(s=>s.items.length>0);
+              const toggle=(k)=>setCollapsedOrderGroups(p=>({...p,[k]:!p[k]}));
+              return (
+                <div>
+                  {sections.map(sec=>{ const collapsed=!!collapsedOrderGroups[sec.key]; return (
+                    <div key={sec.key} style={{marginBottom:16}}>
+                      <button className={"rq-group-hd"+(collapsed?" collapsed":"")} onClick={()=>toggle(sec.key)} aria-expanded={!collapsed}>
+                        <svg className="rq-gchev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                        {sec.attn && <span style={{width:7,height:7,borderRadius:"50%",background:"#D97706",flexShrink:0,boxShadow:"0 0 0 3px rgba(217,119,6,0.15)"}}/>}
+                        <span style={{fontSize:13,fontWeight:700,color:sec.attn?"#D97706":"var(--text-primary)",letterSpacing:"-0.01em"}}>{sec.label}</span>
+                        <span style={{fontSize:11,fontWeight:700,padding:"1px 8px",borderRadius:99,background:sec.attn?"rgba(217,119,6,0.12)":"var(--bg-subtle2)",color:sec.attn?"#D97706":"var(--text-tertiary)"}}>{sec.items.length}</span>
+                      </button>
+                      {!collapsed && <div style={{marginTop:8}}>{bodyFor(sec.key, sec.items, sec.attn?reasonMap:null)}</div>}
+                    </div>
+                  ); })}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -11462,7 +11424,7 @@ Rules:
                 {isAwaiting && !canContinue ? (
                   <button disabled style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"var(--bg-subtle2)",color:"var(--text-tertiary)",fontSize:14,fontWeight:700,cursor:"not-allowed"}}>Awaiting a buyer</button>
                 ) : linkedOrder ? (
-                  <button onClick={()=>closeAnd(()=>{ setExpandedOrder(linkedOrder.id); setView("orders"); })} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  <button onClick={()=>closeAnd(()=>{ setView("orders"); setDrawerOrderId(linkedOrder.id); })} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
                     View order <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,opacity:0.85}}>{linkedOrder.poNumber}</span> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                   </button>
                 ) : (
@@ -11479,6 +11441,193 @@ Rules:
                     ? <button className="rq-act" onClick={()=>closeAnd(()=>handleRestore(r.id))}>Restore</button>
                     : <button className="rq-act danger" onClick={()=>closeAnd(()=>setDeleteConfirm(r))}>Archive</button>)}
                 </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {drawerOrderId && (()=>{
+        const o = (orders||[]).find(x=>x.id===drawerOrderId);
+        if(!o) return null;
+        const close = ()=>setDrawerOrderId(null);
+        const canAct = can.viewCosts(myRole);
+        const steps = [{key:"pending-send",label:"Ready to send"},{key:"sent",label:"Sent"},{key:"confirmed",label:"Confirmed"},{key:"delivered",label:"Delivered"}];
+        const isCancelled = o.status==="cancelled";
+        const stepIdx = isCancelled ? -1 : steps.findIndex(s=>s.key===o.status);
+        const acts = [...(o.activity||[])].reverse();
+        const secLbl = {fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:9};
+        const kv = (label,val)=> (val==null||val==="") ? null : (
+          <div style={{display:"flex",justifyContent:"space-between",gap:16,padding:"9px 0",borderBottom:"1px solid var(--border)"}}>
+            <span style={{fontSize:12.5,color:"var(--text-tertiary)",flexShrink:0}}>{label}</span>
+            <span style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",textAlign:"right",overflowWrap:"anywhere"}}>{val}</span>
+          </div>
+        );
+        const dueStr = o.expectedDelivery||o.deliveryDate;
+        const deliveryLabel = o.deliveryMethod==="collect"?"Collection":o.deliveryMethod==="alternative"?"Alternative address":"Deliver to site";
+        return (
+          <div className="rq-scrim" onClick={close} style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.5)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:1400,display:"flex",justifyContent:"flex-end"}}>
+            <div className="rq-panel" onClick={e=>e.stopPropagation()} style={{width:"min(480px,100%)",height:"100%",background:"var(--bg-card-solid)",borderLeft:"1px solid var(--border)",boxShadow:"var(--shadow-lg)",display:"flex",flexDirection:"column"}}>
+              {/* header */}
+              <div style={{padding:"20px 22px 16px",borderBottom:"1px solid var(--border)",flexShrink:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+                      <span style={{fontSize:19,fontWeight:800,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.02em"}}>{o.poNumber}</span>
+                      <OrderPill o={o} big/>
+                      {o.isQuickPO && <QuickPOTag/>}
+                    </div>
+                    <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:4}}>{o.supplier||"Supplier"}{o.poDate?` · ${o.poDate}`:""}</div>
+                  </div>
+                  <button onClick={close} aria-label="Close" style={{background:"var(--bg-subtle2)",border:"none",borderRadius:9,width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"var(--text-secondary)",flexShrink:0}}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* body */}
+              <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
+                {/* Interactive step tracker */}
+                {isCancelled ? (
+                  <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(148,163,184,0.14)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px",marginBottom:22}}>
+                    <Icon name="undo" size={16} color="#94A3B8"/>
+                    <div><div style={{fontSize:13,fontWeight:700,color:"var(--text-secondary)"}}>Order cancelled</div>{o.cancelledAt&&<div style={{fontSize:11,color:"var(--text-tertiary)"}}>{new Date(o.cancelledAt).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}{o.cancelledBy?` · ${o.cancelledBy}`:""}</div>}</div>
+                  </div>
+                ) : (
+                  <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:12,padding:"16px 14px",marginBottom:22}}>
+                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:2}}>
+                      {steps.map((s,i)=>(
+                        <div key={s.key} style={{display:"flex",alignItems:"flex-start",flex:i<steps.length-1?1:"none"}}>
+                          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,minWidth:52}}>
+                            <div style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,background:stepIdx>=i?"var(--green-dark)":"var(--bg-subtle2)",color:stepIdx>=i?"white":"var(--text-muted)",border:`2px solid ${stepIdx>=i?"var(--green-dark)":"var(--border)"}`,transition:"all 0.2s"}}>
+                              {stepIdx>i?<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>:i+1}
+                            </div>
+                            <span style={{fontSize:9.5,color:stepIdx===i?"var(--green-dark)":"var(--text-muted)",fontWeight:stepIdx===i?700:500,textAlign:"center",lineHeight:1.2}}>{s.label}</span>
+                          </div>
+                          {i<steps.length-1&&<div style={{flex:1,height:2,background:stepIdx>i?"var(--green-dark)":"var(--bg-subtle2)",marginTop:13}}/>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Overview */}
+                <div style={{marginBottom:22}}>
+                  {kv("Supplier", o.supplier||"—")}
+                  {kv("Job ref", o.jobRef||"—")}
+                  {o.site && kv("Site", o.site)}
+                  {kv("Order type", <span style={{color:o.isQuickPO?"#D97706":"var(--green-dark)"}}>{o.isQuickPO?"Quick PO (direct)":"Standard (RFQ)"}</span>)}
+                  {o.estimatedTotal && kv("Total", <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)",fontWeight:700}}>{o.estimatedTotal}</span>)}
+                  {kv("Delivery", deliveryLabel)}
+                  {dueStr && kv("Expected", new Date(dueStr).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}))}
+                  {(()=>{ const t=lastActivityTs(o); return t?kv("Last updated", relTime(t)):null; })()}
+                </div>
+
+                {/* Items */}
+                {(o.items||[]).length>0 && (
+                  <div style={{marginBottom:22}}>
+                    <div style={secLbl}>Order items</div>
+                    {(o.items||[]).map((it,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"baseline",gap:10,padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
+                        <span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0,minWidth:52}}>{it.quantity||"—"} {it.unit||""}</span>
+                        <span style={{fontSize:13,color:"var(--text-primary)",flex:1,minWidth:0,overflowWrap:"anywhere"}}>{it.description}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Stage action panel */}
+                {!isCancelled && (
+                  <div style={{marginBottom:22}}>
+                    <div style={secLbl}>{o.status==="delivered"?"Delivery":"Next step"}</div>
+
+                    {o.status==="pending-send" && !canAct && (
+                      <div style={{fontSize:12.5,color:"var(--text-secondary)",padding:"12px 14px",background:"var(--bg-subtle2)",borderRadius:10,border:"1px solid var(--border)",lineHeight:1.5}}>The buyer is arranging this order. You'll be able to sign off the delivery here once it's on its way.</div>
+                    )}
+
+                    {o.status==="pending-send" && canAct && (
+                      <div>
+                        <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Note to supplier (optional)</label>
+                        <textarea value={orderNote[o.id]||""} onChange={e=>setOrderNote(p=>({...p,[o.id]:e.target.value}))} placeholder="Any special instructions..." style={{width:"100%",boxSizing:"border-box",height:64,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:10,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",marginBottom:12}}></textarea>
+                        <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Delivery or collection</label>
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                          {[["direct","Deliver to site"],["collect","Collection"],["alternative","Alternative address"]].map(([val,lab])=>{ const active=(o.deliveryMethod||"direct")===val; return <button key={val} onClick={()=>setOrders(p=>p.map(x=>x.id===o.id?{...x,deliveryMethod:val}:x))} style={{padding:"7px 13px",borderRadius:10,border:`1px solid ${active?"#15824F":"var(--border)"}`,background:active?"var(--green-light)":"var(--bg-card-solid)",color:active?"var(--green-dark)":"var(--text-secondary)",fontSize:12.5,fontWeight:active?700:500,cursor:"pointer"}}>{lab}</button>; })}
+                        </div>
+                        {(o.deliveryMethod||"direct")==="direct" && <input value={o.site||""} onChange={e=>setOrders(p=>p.map(x=>x.id===o.id?{...x,site:e.target.value}:x))} placeholder="Site delivery address" style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:10,fontSize:13,outline:"none",marginBottom:12}}/>}
+                        {(o.deliveryMethod==="alternative"||o.deliveryMethod==="collect") && <input value={o.collectFrom||""} onChange={e=>setOrders(p=>p.map(x=>x.id===o.id?{...x,collectFrom:e.target.value}:x))} placeholder={o.deliveryMethod==="collect"?"Collect from (branch / depot)":"Alternative delivery address"} style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:10,fontSize:13,outline:"none",marginBottom:12}}/>}
+                        <label style={{fontSize:11,color:"var(--text-secondary)",display:"block",marginBottom:5}}>Required by (delivery date)</label>
+                        <input type="date" value={o.deliveryDate||expectedDelivery[o.id]||""} onChange={e=>{const v=e.target.value;setExpectedDelivery(p=>({...p,[o.id]:v}));setOrders(p=>p.map(x=>x.id===o.id?{...x,deliveryDate:v,expectedDelivery:v}:x));}} style={{padding:"9px 12px",border:"1px solid var(--border)",borderRadius:10,fontSize:13,outline:"none",marginBottom:14,display:"block"}}/>
+                        <div style={{fontSize:11,color:"var(--text-tertiary)",marginBottom:12,display:"flex",alignItems:"center",gap:6,lineHeight:1.4}}><Icon name="file_check" size={13}/>A branded PO PDF (items, delivery, job ref, invoicing) is attached automatically.</div>
+                        {(EMAIL_VIA_SERVER||settings.resendKey)?(
+                          <button onClick={()=>handleSendOrder(o)} disabled={sendingOrder===o.id} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>{sendingOrder===o.id?<><Spinner/> Sending...</>:<>Send order to supplier</>}</button>
+                        ):(
+                          <div style={{fontSize:12,color:"var(--text-tertiary)"}}>Email sending is being set up.</div>
+                        )}
+                      </div>
+                    )}
+
+                    {(o.status==="sent"||o.status==="confirmed") && (
+                      <div>
+                        <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:12,lineHeight:1.5}}>{canAct?"When materials arrive, sign off with a photo of the delivery note. You can also mark it confirmed by the supplier first.":"When the materials arrive, take a photo of the delivery note to sign off this delivery."}</div>
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+                          {o.status==="sent" && canAct && <button onClick={()=>{setOrders(p=>p.map(x=>x.id===o.id?{...x,status:"confirmed",confirmedAt:new Date().toISOString()}:x));logActivity("Order confirmed",`${o.poNumber} (${o.supplier}) marked as confirmed`,{entity:"order",jobRef:o.jobRef});}} style={{padding:"10px 15px",borderRadius:10,border:"1px solid var(--border)",background:"var(--bg-card-solid)",color:"var(--text-primary)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Mark as confirmed</button>}
+                          <label style={{fontSize:13,fontWeight:700,color:"white",background:"#15824F",borderRadius:10,padding:"10px 15px",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                            {o.deliveryPhoto?"Replace delivery photo":"Photo + sign off"}
+                            <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];deliverWithPhoto(o,f);e.target.value="";}}/>
+                          </label>
+                          <button onClick={()=>markOrderDelivered(o,null)} style={{padding:"10px 15px",borderRadius:10,border:"1px solid var(--border)",background:"var(--bg-card-solid)",color:"var(--text-secondary)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Mark delivered (no photo)</button>
+                        </div>
+                        {o.status==="sent" && (
+                          <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:10,cursor:"pointer"}}>
+                            <input type="file" accept=".pdf,.jpg,.png,.doc,.docx" style={{display:"none"}} onChange={e=>handleOrderConfirmationUpload(e.target.files[0],o.id)}/>
+                            <span style={{fontSize:12.5,color:"var(--text-secondary)"}}>Or upload confirmation document</span>
+                          </label>
+                        )}
+                        {o.confirmationDoc && <div style={{fontSize:12,color:"var(--green-dark)",marginTop:10}}>Confirmation received: {o.confirmationDoc.label||"document"}</div>}
+                      </div>
+                    )}
+
+                    {o.status==="delivered" && (
+                      <div>
+                        <div style={{display:"flex",alignItems:"center",gap:10,background:"var(--green-light)",border:"1px solid var(--green-dark)",borderRadius:12,padding:"12px 16px"}}>
+                          <Icon name="check_circle" size={18} color="var(--green-dark)"/>
+                          <div><div style={{fontSize:13,fontWeight:700,color:"var(--green-dark)"}}>Order delivered</div>{o.deliveredAt&&<div style={{fontSize:11,color:"var(--green-dark)",opacity:0.85}}>{new Date(o.deliveredAt).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}{o.signedOffBy?` · signed off by ${o.signedOffBy}`:""}</div>}</div>
+                        </div>
+                        {o.deliveryPhoto && (
+                          <div style={{marginTop:12}}>
+                            <div style={secLbl}>Delivery note</div>
+                            <a href={o.deliveryPhoto} target="_blank" rel="noreferrer"><img src={o.deliveryPhoto} alt="Delivery note" style={{maxWidth:"100%",maxHeight:260,borderRadius:10,border:"1px solid var(--border)",cursor:"pointer"}}/></a>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Activity */}
+                {acts.length>0 && (
+                  <div style={{marginBottom:16}}>
+                    <div style={secLbl}>Activity</div>
+                    {acts.slice(0,6).map((entry,i)=>(
+                      <div key={i} style={{display:"flex",gap:11,padding:"8px 0",borderBottom:i<Math.min(acts.length,6)-1?"1px solid var(--border)":"none"}}>
+                        <div style={{width:7,height:7,borderRadius:"50%",background:"var(--green-dark)",marginTop:5,flexShrink:0}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
+                            <span style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{entry.action}</span>
+                            <span style={{fontSize:10.5,color:"var(--text-muted)",whiteSpace:"nowrap"}}>{new Date(entry.ts).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span>
+                          </div>
+                          {entry.detail&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:2,lineHeight:1.45}}>{entry.detail}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Cancel */}
+                {canAct && !isCancelled && o.status!=="delivered" && (
+                  <button onClick={()=>{ close(); setCancelOrderConfirm(o); }} style={{background:"none",border:"none",color:"var(--red)",fontSize:12.5,fontWeight:600,cursor:"pointer",padding:"4px 0",textDecoration:"underline"}}>Cancel this order</button>
+                )}
               </div>
             </div>
           </div>
