@@ -2430,6 +2430,17 @@ function repProject(orders, jobRef) {
 function gbp(n) {
   return "£" + (Math.round(n || 0)).toLocaleString("en-GB");
 }
+// Display an order total with a £ sign. Values are stored inconsistently (some
+// already carry a symbol, some are bare numbers), so normalise on display only.
+function fmtOrderMoney(v) {
+  if (v==null || v==="") return "";
+  const s = String(v).trim();
+  if (/[£$€]/.test(s)) return s;
+  const num = parseFloat(s.replace(/[, ]/g,""));
+  if (isNaN(num)) return s;
+  const hasDec = /\.\d/.test(s);
+  return "£" + num.toLocaleString("en-GB", hasDec?{minimumFractionDigits:2,maximumFractionDigits:2}:{maximumFractionDigits:0});
+}
 
 // ---- Project cost capture (Phase 1 financials) ------------------------------
 // Manual project costs live in piq_costs as an array of entries. They sit ALONGSIDE
@@ -4008,13 +4019,12 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     if (editForm.jobRef!==r.jobRef) changes.push(`Job ref: ${r.jobRef} > ${editForm.jobRef}`);
     if (editForm.site!==r.site)     changes.push(`Site: ${r.site} > ${editForm.site}`);
     if (editForm.status!==r.status) changes.push(`Status: ${(STATUS[r.status]||{label:r.status}).label} > ${(STATUS[editForm.status]||{label:editForm.status}).label}`);
-    if (editForm.notes!==r.notes)   changes.push(`Notes updated`);
     const entry = { ts: new Date().toISOString(), action:"Edited", detail: changes.join(" · ")||"No changes", user: settings.contactName||"You" };
     setRequests(p=>p.map(r=>r.id===editModal.id
-      ? {...r, jobRef:editForm.jobRef, site:editForm.site, status:editForm.status, notes:editForm.notes, activity:[...(r.activity||[]), entry]}
+      ? {...r, jobRef:editForm.jobRef, site:editForm.site, status:editForm.status, activity:[...(r.activity||[]), entry]}
       : r
     ));
-    if (activeReq?.id===editModal.id) setActiveReq(prev=>({...prev, jobRef:editForm.jobRef, site:editForm.site, status:editForm.status, notes:editForm.notes}));
+    if (activeReq?.id===editModal.id) setActiveReq(prev=>({...prev, jobRef:editForm.jobRef, site:editForm.site, status:editForm.status}));
     setEditModal(null);
     showToast("Request updated");
   }
@@ -5182,6 +5192,7 @@ ${settings.company||""}`;
   const [reqFilterTrade, setReqFilterTrade] = useState("all");
   const [reqSearch, setReqSearch] = useState("");
   const [drawerReq, setDrawerReq] = useState(null);
+  const [drawerNote, setDrawerNote] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState({ lastWeek:true, earlier:true });
   const [reqFilterBuyer, setReqFilterBuyer] = useState("all");
   const [fullSections, setFullSections] = useState({});
@@ -9028,11 +9039,6 @@ Rules:
                 <p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>{visibleOrders.length} {can.viewAllJobs(myRole)?"total orders":"of your deliveries"}</p>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                {can.raisePO(myRole)&&(
-                  <button onClick={openQuickPO} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"#fff",background:"#D97706",border:"none",borderRadius:"var(--radius-sm)",padding:"8px 15px",cursor:"pointer",fontWeight:700}}>
-                    <Icon name="clock" size={13} style={{verticalAlign:"-2px"}}/>Quick PO
-                  </button>
-                )}
                 {orders.length>0&&can.viewCosts(myRole)&&(
                   <button onClick={()=>downloadCSV(`orders-${new Date().toISOString().split("T")[0]}.csv`, orders.map(o=>({
                     PO: o.poNumber, Status: o.status, Supplier: o.supplier||"", Job: o.jobRef||"", Site: o.site||"",
@@ -9041,6 +9047,11 @@ Rules:
                     Items: (o.items||[]).map(i=>`${i.quantity} ${i.unit} ${i.description}`).join("; ")
                   })))} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"var(--indigo)",background:"var(--indigo-light)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 14px",cursor:"pointer",fontWeight:500}}>
                     <Icon name="download" size={13} style={{marginRight:5,verticalAlign:"-2px"}}/>Export
+                  </button>
+                )}
+                {can.raisePO(myRole)&&(
+                  <button onClick={openQuickPO} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"#fff",background:"#D97706",border:"none",borderRadius:"var(--radius-sm)",padding:"8px 15px",cursor:"pointer",fontWeight:700}}>
+                    <Icon name="clock" size={13} style={{verticalAlign:"-2px"}}/>Quick PO
                   </button>
                 )}
               </div>
@@ -9165,7 +9176,7 @@ Rules:
                       {reason && <div style={{fontSize:11,fontWeight:600,color:"#D97706",marginTop:4,display:"inline-flex",alignItems:"center",gap:4}}><Icon name="flag" size={10} color="#D97706"/>{reason}</div>}
                       {o.status!=="cancelled" && <div style={{display:"flex",gap:3,marginTop:8,maxWidth:150}} aria-hidden="true">{[0,1,2,3].map(i=><div key={i} style={{flex:1,height:3,borderRadius:2,background:i<=sIdx?"var(--green-dark)":"var(--bg-subtle2)"}}/>)}</div>}
                     </div>
-                    {o.estimatedTotal && can.viewCosts(myRole) && <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{o.estimatedTotal}</span>}
+                    {o.estimatedTotal && can.viewCosts(myRole) && <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{fmtOrderMoney(o.estimatedTotal)}</span>}
                     {updated && <span style={{fontSize:11,color:"var(--text-tertiary)",flexShrink:0,whiteSpace:"nowrap"}}>{updated}</span>}
                     <svg className="rq-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M9 18l6-6-6-6"/></svg>
                   </div>
@@ -11300,10 +11311,6 @@ Rules:
                   <option value="approved">Approved</option>
                 </select>
               </div>
-              <div>
-                <label style={{fontSize:12,fontWeight:500,color:"var(--text-secondary)",display:"block",marginBottom:6}}>Notes</label>
-                <textarea value={editForm.notes||""} onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))} placeholder="Add any notes about this request..." style={{width:"100%",height:80,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}></textarea>
-              </div>
             </div>
             <div style={{display:"flex",gap:10,marginTop:20,justifyContent:"flex-end"}}>
               <Btn outline onClick={()=>setEditModal(null)}>Cancel</Btn>
@@ -11347,7 +11354,7 @@ Rules:
       )}
 
       {drawerReq && (()=>{
-        const r = drawerReq;
+        const r = (requests.find(x=>x.id===drawerReq.id)) || drawerReq;
         const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
         const quotesTotal = (r.sentTo||[]).length;
         const items = r.items||[];
@@ -11359,6 +11366,13 @@ Rules:
         const recentActs = acts.slice(0,4);
         const close = ()=>setDrawerReq(null);
         const closeAnd = (fn)=>{ setDrawerReq(null); fn(); };
+        const addNote = () => {
+          const text = drawerNote.trim(); if(!text) return;
+          const c = { ts:new Date().toISOString(), user: settings.contactName || (myMember&&myMember.name) || myEmail, text };
+          setRequests(p=>p.map(x=>x.id===r.id?{...x, comments:[...(x.comments||[]), c]}:x));
+          if (activeReq?.id===r.id) setActiveReq(prev=>({...prev, comments:[...(prev.comments||[]), c]}));
+          setDrawerNote("");
+        };
         const secLbl = {fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:9};
         const kv = (label,val)=> (val==null||val==="") ? null : (
           <div style={{display:"flex",justifyContent:"space-between",gap:16,padding:"9px 0",borderBottom:"1px solid var(--border)"}}>
@@ -11424,12 +11438,24 @@ Rules:
                   </div>
                 )}
 
-                {r.notes && (
-                  <div style={{marginBottom:24}}>
-                    <div style={secLbl}>Notes</div>
-                    <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.55,background:"var(--bg-subtle2)",borderRadius:10,padding:"12px 14px"}}>{r.notes}</div>
+                {/* Notes & comments - anyone on the job can post; kept separate from the activity log */}
+                <div style={{marginBottom:24}}>
+                  <div style={secLbl}>Notes</div>
+                  {r.notes && (
+                    <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.55,background:"var(--bg-subtle2)",borderRadius:10,padding:"12px 14px",marginBottom:10}}>{r.notes}</div>
+                  )}
+                  {(r.comments||[]).map((c,i)=>(
+                    <div key={i} style={{background:"var(--bg-subtle2)",borderRadius:10,padding:"10px 14px",marginBottom:8}}>
+                      <div style={{fontSize:13,color:"var(--text-primary)",lineHeight:1.5,overflowWrap:"anywhere"}}>{c.text}</div>
+                      <div style={{fontSize:10.5,color:"var(--text-muted)",marginTop:5}}>{c.user||"Someone"} · {relTime(c.ts)}</div>
+                    </div>
+                  ))}
+                  {!r.notes && !(r.comments||[]).length && <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginBottom:10}}>No notes yet. Add one for anyone on this job to see.</div>}
+                  <div style={{display:"flex",gap:8,alignItems:"flex-end",marginTop:4}}>
+                    <textarea value={drawerNote} onChange={e=>setDrawerNote(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); addNote(); } }} placeholder="Add a note..." rows={2} style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:10,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}/>
+                    <button onClick={addNote} disabled={!drawerNote.trim()} style={{flexShrink:0,padding:"10px 14px",borderRadius:10,border:"none",background:drawerNote.trim()?"var(--green-dark)":"var(--bg-subtle2)",color:drawerNote.trim()?"#fff":"var(--text-muted)",fontSize:13,fontWeight:700,cursor:drawerNote.trim()?"pointer":"default",fontFamily:"inherit"}}>Add</button>
                   </div>
-                )}
+                </div>
 
                 {acts.length>0 && (
                   <div style={{marginBottom:6}}>
@@ -11468,8 +11494,7 @@ Rules:
                 <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:10}}>
                   <button className="rq-act" onClick={()=>closeAnd(()=>handleDuplicate(r))}>Duplicate</button>
                   {canReviseR && <button className="rq-act" onClick={()=>closeAnd(()=>handleRevise(r))}>Revise</button>}
-                  <button className="rq-act" onClick={()=>closeAnd(()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});})}>Edit</button>
-                  <button className="rq-act" onClick={()=>closeAnd(()=>setActivityModal(r))}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
+                  <button className="rq-act" onClick={()=>closeAnd(()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status});})}>Edit</button>
                   {can.deleteItems(myRole) && (r.archived
                     ? <button className="rq-act" onClick={()=>closeAnd(()=>handleRestore(r.id))}>Restore</button>
                     : <button className="rq-act danger" onClick={()=>closeAnd(()=>setDeleteConfirm(r))}>Archive</button>)}
@@ -11550,7 +11575,7 @@ Rules:
                   {kv("Job ref", o.jobRef||"—")}
                   {o.site && kv("Site", o.site)}
                   {kv("Order type", <span style={{color:o.isQuickPO?"#D97706":"var(--green-dark)"}}>{o.isQuickPO?"Quick PO (direct)":"Standard (RFQ)"}</span>)}
-                  {o.estimatedTotal && can.viewCosts(myRole) && kv("Total", <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)",fontWeight:700}}>{o.estimatedTotal}</span>)}
+                  {o.estimatedTotal && can.viewCosts(myRole) && kv("Total", <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)",fontWeight:700}}>{fmtOrderMoney(o.estimatedTotal)}</span>)}
                   {kv("Delivery", deliveryLabel)}
                   {dueStr && kv("Expected", new Date(dueStr).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}))}
                   {(()=>{ const t=lastActivityTs(o); return t?kv("Last updated", relTime(t)):null; })()}
