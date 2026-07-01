@@ -9081,6 +9081,30 @@ Rules:
               );
             })()}
 
+            {/* At a glance (Active) */}
+            {(()=>{
+              if(orderTab!=="active"||orderSearch) return null;
+              const act = visibleOrders.filter(o=>o.status!=="delivered"&&o.status!=="cancelled");
+              if(act.length===0) return null;
+              const overdue = act.filter(o=>{ const d=o.expectedDelivery||o.deliveryDate; if(!d) return false; const t=new Date(d).getTime(); return !isNaN(t)&&t<Date.now(); }).length;
+              const chips = can.viewCosts(myRole)
+                ? [["To send", act.filter(o=>o.status==="pending-send").length, "#D97706"],["In transit", act.filter(o=>o.status==="sent"||o.status==="confirmed").length, "#2563EB"],["Overdue", overdue, "#DC2626"]]
+                : [["To sign off", act.filter(o=>o.status==="sent"||o.status==="confirmed").length, "#15824F"],["Overdue", overdue, "#DC2626"]];
+              const shown = chips.filter(c=>c[1]>0);
+              if(!shown.length) return null;
+              return (
+                <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+                  {shown.map(([label,count,color])=>(
+                    <div key={label} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:12,background:"var(--bg-card-solid)",border:"1px solid var(--border)"}}>
+                      <span style={{width:8,height:8,borderRadius:"50%",background:color,flexShrink:0}}/>
+                      <span style={{fontSize:17,fontWeight:800,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",lineHeight:1}}>{count}</span>
+                      <span style={{fontSize:12,color:"var(--text-secondary)",fontWeight:600}}>{label}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
             {/* List */}
             {(()=>{
               const CAP = 25;
@@ -9093,15 +9117,18 @@ Rules:
                 return true;
               });
               if(visibleOrders.length===0) return (
-                <Card style={{textAlign:"center",padding:"48px 32px",color:"var(--text-tertiary)"}}>
-                  <div style={{fontSize:15,marginBottom:8}}>No orders yet</div>
-                  <div style={{fontSize:13}}>Approve a supplier quote or raise a Quick PO to create one</div>
+                <Card style={{textAlign:"center",padding:"52px 32px"}}>
+                  <div style={{width:56,height:56,borderRadius:16,background:"var(--green-light)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Icon name="truck" size={26} color="var(--green-dark)"/></div>
+                  <div style={{fontSize:16,fontWeight:700,color:"var(--text-primary)",marginBottom:6}}>No orders yet</div>
+                  <div style={{fontSize:13,color:"var(--text-tertiary)",lineHeight:1.55,maxWidth:340,margin:"0 auto 18px"}}>Orders land here when you approve a supplier quote{can.raisePO(myRole)?", or raise a Quick PO for a phone order.":"."}</div>
+                  {can.raisePO(myRole)&&<button onClick={openQuickPO} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:13,color:"#fff",background:"#D97706",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 18px",cursor:"pointer",fontWeight:700}}><Icon name="clock" size={14}/>Raise a Quick PO</button>}
                 </Card>
               );
               if(list.length===0) return (
                 <Card>
-                  <div style={{textAlign:"center",padding:"36px 0",color:"var(--text-tertiary)"}}>
-                    <div style={{fontSize:14,marginBottom:8}}>{orderSearch?"No orders match your search":orderTab==="completed"?"No completed orders yet":orderTab==="archived"?"Nothing archived":"No active orders"}</div>
+                  <div style={{textAlign:"center",padding:"42px 0"}}>
+                    <div style={{width:46,height:46,borderRadius:13,background:"var(--bg-subtle2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 13px"}}><Icon name={orderSearch?"search":orderTab==="completed"?"check_circle":orderTab==="archived"?"undo":"package"} size={21} color="var(--text-tertiary)"/></div>
+                    <div style={{fontSize:14,fontWeight:600,color:"var(--text-secondary)",marginBottom:8}}>{orderSearch?"No orders match your search":orderTab==="completed"?"No completed orders yet":orderTab==="archived"?"Nothing archived":"No active orders"}</div>
                     {(orderSearch||orderStatusFilter!=="all")&&<button onClick={()=>{setOrderSearch("");setOrderStatusFilter("all");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear search &amp; filters</button>}
                   </div>
                 </Card>
@@ -9122,6 +9149,10 @@ Rules:
               const rowFor = (o, reason) => {
                 const accent = (ORDER_STATUS_UI[orderStatusKey(o)]||ORDER_STATUS_UI["pending-send"]).color;
                 const updated = relTime(lastActivityTs(o));
+                const sIdx = ["pending-send","sent","confirmed","delivered"].indexOf(o.status);
+                const dueStr = o.expectedDelivery||o.deliveryDate;
+                const active = o.status!=="delivered" && o.status!=="cancelled";
+                const dueTxt = dueStr ? new Date(dueStr).toLocaleDateString("en-GB",{day:"numeric",month:"short"}) : "";
                 return (
                   <div key={o.id} className="rq-row" tabIndex={0} role="button" onKeyDown={e=>onRowKey(e,o)} onClick={()=>setDrawerOrderId(o.id)} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px 13px 18px","--rowaccent":accent}}>
                     <div style={{flex:1,minWidth:0}}>
@@ -9130,8 +9161,9 @@ Rules:
                         <OrderPill o={o}/>
                         {o.isQuickPO && <QuickPOTag/>}
                       </div>
-                      <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.supplier||"Supplier"} · {o.jobRef||"—"}{o.site?` · ${o.site}`:""}</div>
+                      <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.supplier||"Supplier"} · {o.jobRef||"—"}{o.site?` · ${o.site}`:""}{active&&dueTxt?` · due ${dueTxt}`:""}</div>
                       {reason && <div style={{fontSize:11,fontWeight:600,color:"#D97706",marginTop:4,display:"inline-flex",alignItems:"center",gap:4}}><Icon name="flag" size={10} color="#D97706"/>{reason}</div>}
+                      {o.status!=="cancelled" && <div style={{display:"flex",gap:3,marginTop:8,maxWidth:150}} aria-hidden="true">{[0,1,2,3].map(i=><div key={i} style={{flex:1,height:3,borderRadius:2,background:i<=sIdx?"var(--green-dark)":"var(--bg-subtle2)"}}/>)}</div>}
                     </div>
                     {o.estimatedTotal && can.viewCosts(myRole) && <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{o.estimatedTotal}</span>}
                     {updated && <span style={{fontSize:11,color:"var(--text-tertiary)",flexShrink:0,whiteSpace:"nowrap"}}>{updated}</span>}
