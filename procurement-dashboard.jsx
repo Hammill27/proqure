@@ -2691,7 +2691,7 @@ const Spinner = () => (
 // An attractive, complete recap of a material request, shown before it's sent.
 // Used at the end of both paths: engineers review before issuing to their buyer
 // (toBuyer), buyers/managers review beside the RFQ email before sending.
-const RequestSummary = ({ jobRef, site, trade, items=[], notes, deadline, deliveryMethod, deliveryDate, altAddress, collectFrom, recipients=[], toBuyer=false }) => {
+const RequestSummary = ({ jobRef, site, trade, items=[], notes, deadline, deliveryMethod, deliveryDate, altAddress, collectFrom, recipients=[], toBuyer=false, stock=[] }) => {
   const fmtDate = (d) => { if(!d) return ""; try { return new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"}); } catch { return d; } };
   const dmLabel = { direct:"Deliver to site", alternative:"Deliver to alternative address", collect:"Collect from supplier", tbc:"To be confirmed" }[deliveryMethod] || "Deliver to site";
   const dmDetail = deliveryMethod==="alternative" ? (altAddress||"") : deliveryMethod==="collect" ? (collectFrom||"") : deliveryMethod==="direct" ? (site||"") : "";
@@ -2732,6 +2732,7 @@ const RequestSummary = ({ jobRef, site, trade, items=[], notes, deadline, delive
               <div style={{minWidth:0}}>
                 <div style={{fontSize:13,color:"var(--text-primary)",fontWeight:500,overflowWrap:"anywhere"}}>{it.description||<span style={{color:"var(--text-tertiary)"}}>(no description)</span>}</div>
                 {it.notes&&<div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:1,overflowWrap:"anywhere"}}>{it.notes}</div>}
+                {(()=>{ const m=stockMatchesFor(it.description, stock); if(!m.length) return null; const tq=m.reduce((s,x)=>s+(Number(x.qty)||0),0); return (<div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:3,fontSize:10,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",borderRadius:99,padding:"2px 8px"}}>In stock: {tq}</div>); })()}
               </div>
             </div>
           ))}
@@ -3433,6 +3434,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const [contactSel, setContactSel] = useState({}); // { [supplierId]: contactId } - which contact an RFQ goes to
   const [supSearch, setSupSearch] = useState("");    // searchable supplier picker (wizard)
   const [editingReqId, setEditingReqId] = useState(null); // when set, the wizard is revising an existing request (re-send)
+  const [newReqTab, setNewReqTab] = useState("new"); // "new" | "engineers" – entry tab on the New Request screen (buyer/manager)
   const [loading,  setLoading]  = useState(false);
   const [loadMsg,  setLoadMsg]  = useState("");
   const [emailRes, setEmailRes] = useState(null);
@@ -3791,6 +3793,11 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const liveRequests = requests.filter(r=>!r.archived);
   // Engineers only see jobs they created; buyers and managers see everything.
   const visibleRequests = can.viewAllJobs(myRole) ? liveRequests : liveRequests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail);
+  // Engineer-issued materials lists waiting for a Buyer/Manager to send the RFQ.
+  const awaitingLists = liveRequests.filter(r=>r.status==="awaiting-buyer");
+  // When resuming a request into the wizard: is it a first send (engineer list) or a revision (already-sent)?
+  const editingReqObj = editingReqId ? requests.find(r=>r.id===editingReqId) : null;
+  const isFirstSend = editingReqObj?.status === "awaiting-buyer";
   // Engineers/subcontractors only see orders for jobs they're involved with: a request
   // they raised, or a Quick PO they raised themselves. Managers/buyers see everything.
   // ONE scoped list powers the rows AND every count (pills, empty-state, nav badge) so
@@ -4410,6 +4417,26 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
       // creating a new one. Quotes for the re-sent suppliers are reset, since the RFQ changed.
       if (editingReqId) {
         const existing = requests.find(r=>r.id===editingReqId);
+        if (existing?.status === "awaiting-buyer") {
+          // FIRST SEND of an engineer-issued list: the buyer sends the RFQ. Update the
+          // request in place, keep the engineer as originator, no revision bump. It then
+          // flows into Quotes exactly like a from-scratch request.
+          const firstEntry = { ts:new Date().toISOString(), action:"RFQ sent", detail:`Sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}${rfqDocs.length?` · ${rfqDocs.length} supporting doc${rfqDocs.length!==1?"s":""}`:""}`, user:settings.contactName||"You" };
+          setRequests(p=>p.map(r=>r.id===editingReqId ? {
+            ...r,
+            jobRef:jobRef||r.jobRef, site:site||r.site, trade, notes:requestNotes,
+            items: parsed.items,
+            deliveryMethod, deliveryDate, altAddress, collectFrom, rfqDeadline,
+            status: "pending",
+            sentBy: myEmail, sentAt: new Date().toISOString(),
+            sentTo: sentSuppliers,
+            activity: [...(r.activity||[]), firstEntry]
+          } : r));
+          logActivity("RFQ sent (from engineer list)",`${jobRef||editingReqId} sent to ${ok} supplier${ok!==1?"s":""}`,{entity:"request",reqId:editingReqId,jobRef});meter("rfqsSent");meter("emailsSent", ok);
+          setSendConfirm(false);
+          setSuccessOverlay({ message:`Sent to ${ok} supplier${ok!==1?"s":""}`, onReveal:()=>{ resetNewRequest(); setView("requests"); } });
+          return;
+        }
         const rev = (existing?.revision||1)+1;
         const reviseEntry = { ts:new Date().toISOString(), action:`RFQ revised (v${rev}) & re-sent`, detail:`Re-sent to ${ok} supplier${ok!==1?"s":""}: ${toSend.map(s=>s.name).join(", ")}${rfqDocs.length?` · ${rfqDocs.length} supporting doc${rfqDocs.length!==1?"s":""}`:""}`, user:settings.contactName||"You" };
         setRequests(p=>p.map(r=>r.id===editingReqId ? {
@@ -4497,6 +4524,32 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     showToast(`Revising ${r.jobRef||r.id} - edit, then re-send`);
   }
 
+  // Buyer/Manager picks up an engineer-issued materials list ("awaiting-buyer") and
+  // continues it into the wizard at the review step (step 2). editingReqId is set to the
+  // same id so, on send, handleSendEmails updates THIS request in place as a first send
+  // (not a revision) — it then flows into Quotes exactly like a from-scratch request.
+  function handleContinueList(r) {
+    if (!can.sendRFQ(myRole)) { showToast("Only a Buyer or Manager can send RFQs.","warn"); return; }
+    setEditingReqId(r.id);
+    setJobRef(r.jobRef||"");
+    setSite(r.site||"");
+    setTrade(r.trade||"Plumbing");
+    setRequestNotes(r.notes||r.buyerNote||"");
+    setRequestBudget(r.budget||"");
+    setDeliveryMethod(r.deliveryMethod||"direct");
+    setDeliveryDate(r.deliveryDate||"");
+    setAltAddress(r.altAddress||""); setCollectFrom(r.collectFrom||"");
+    setRfqDeadline(r.rfqDeadline||"");
+    const raw = (r.items||[]).map(i=>`${i.quantity} ${i.unit} of ${i.description}${i.notes?` (${i.notes})`:""}`).join(", ");
+    setRawInput(raw);
+    setParsed({ items: (r.items||[]).map(i=>({...i})), jobRef:r.jobRef||"", urgency:"standard" });
+    setSelSup([]); setContactSel({}); setSupSearch("");
+    setRfqEmail(""); setRfqDocs([]); setEmailRes(null);
+    setNewReqTab("new");
+    setStep(2); setCfgStep(1);
+    setView("new");
+  }
+
   function handleDuplicate(r) {
     setEditingReqId(null);
     setJobRef(r.jobRef+" (copy)");
@@ -4551,6 +4604,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     setNrStep(1); setNrTradePicked(false); setCfgStep(1); setSendConfirm(false);
     setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
+    setRequestNotes(""); setRequestBudget(""); setNewReqTab("new");
     setInterim(""); setScanning(false);
     setLoading(false); setLoadMsg("");
     setAllAnalyses([]); setExpandedQuote(null);
@@ -6634,10 +6688,10 @@ Rules:
           <div style={{animation:"fadeIn 0.25s ease",maxWidth:1280}}>
 
             {/* Buyer notification: lists issued by engineers, awaiting action */}
-            {can.sendRFQ(myRole)&&liveRequests.filter(r=>r.status==="awaiting-buyer").length>0&&(
-              <div onClick={()=>setView("requests")} style={{cursor:"pointer",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderLeft:"4px solid #4A4AB8",borderRadius:"var(--radius-md)",padding:"14px 18px",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <div><div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{liveRequests.filter(r=>r.status==="awaiting-buyer").length} materials list{liveRequests.filter(r=>r.status==="awaiting-buyer").length!==1?"s":""} waiting for you</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>Issued by an engineer - ready for you to send the RFQ</div></div>
-                <span style={{fontSize:12,fontWeight:600,color:"#4A4AB8"}}>View &rarr;</span>
+            {can.sendRFQ(myRole)&&awaitingLists.length>0&&(
+              <div onClick={()=>{ resetNewRequest(); setNewReqTab("engineers"); setView("new"); }} style={{cursor:"pointer",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderLeft:"4px solid #4A4AB8",borderRadius:"var(--radius-md)",padding:"14px 18px",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div><div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)"}}>{awaitingLists.length} materials list{awaitingLists.length!==1?"s":""} waiting for you</div><div style={{fontSize:12,color:"var(--text-secondary)"}}>Issued by an engineer - ready for you to send the RFQ</div></div>
+                <span style={{fontSize:12,fontWeight:600,color:"#4A4AB8"}}>Continue &rarr;</span>
               </div>
             )}
 
@@ -7006,6 +7060,50 @@ Rules:
               {step===3&&<p style={{fontSize:14,color:"var(--text-secondary)",marginTop:4}}>Step 8 of 8 - Review and send</p>}
             </div>
 
+            {/* Entry tabs (buyer/manager only, when engineer lists are waiting) */}
+            {step===1 && can.sendRFQ(myRole) && awaitingLists.length>0 && (
+              <div style={{display:"inline-flex",gap:4,background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:12,padding:4,marginBottom:22}}>
+                {[{k:"new",l:"Start new"},{k:"engineers",l:`From your engineers · ${awaitingLists.length}`}].map(t=>(
+                  <button key={t.k} onClick={()=>setNewReqTab(t.k)} style={{fontFamily:"inherit",fontSize:13,fontWeight:700,padding:"8px 16px",borderRadius:9,border:"none",cursor:"pointer",transition:"all 0.18s",background:newReqTab===t.k?"var(--bg-card-solid)":"transparent",color:newReqTab===t.k?"var(--green-dark)":"var(--text-secondary)",boxShadow:newReqTab===t.k?"var(--shadow-sm)":"none"}}>{t.l}</button>
+                ))}
+              </div>
+            )}
+
+            {/* From your engineers: clickable job cards → continue into step 2 */}
+            {step===1 && newReqTab==="engineers" && (
+              <div style={{animation:"fadeIn 0.25s ease"}}>
+                {awaitingLists.length===0 ? (
+                  <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 24px",textAlign:"center",color:"var(--text-secondary)"}}>No lists waiting - you're all caught up.</div>
+                ) : (
+                  <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,1fr)",gap:14}}>
+                    {awaitingLists.map(r=>{
+                      const items = r.items||[];
+                      const inStockCount = items.filter(i=>stockMatchesFor(i.description, stock).length>0).length;
+                      return (
+                        <button key={r.id} onClick={()=>handleContinueList(r)} style={{textAlign:"left",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"16px 18px",cursor:"pointer",boxShadow:"var(--shadow-sm)",transition:"transform 0.16s,box-shadow 0.16s,border-color 0.16s",fontFamily:"inherit"}} onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 24px rgba(0,0,0,0.08)";e.currentTarget.style.borderColor="var(--green-deep)";}} onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="var(--shadow-sm)";e.currentTarget.style.borderColor="var(--border)";}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,fontWeight:700,color:"var(--green-dark)"}}>{r.jobRef||r.id}</span>
+                            <span style={{fontSize:10.5,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",color:"var(--indigo)",background:"var(--indigo-light)",padding:"3px 8px",borderRadius:99}}>With buyer</span>
+                          </div>
+                          <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:3}}>{r.site||"Site TBC"}</div>
+                          <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10}}>{r.trade||"—"} · {items.length} item{items.length!==1?"s":""}</div>
+                          {inStockCount>0 && (
+                            <div style={{marginBottom:12}}>
+                              <span style={{fontSize:11,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:99,padding:"3px 9px"}}>{inStockCount} item{inStockCount!==1?"s":""} in stock</span>
+                            </div>
+                          )}
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid var(--border)",paddingTop:10}}>
+                            <span style={{fontSize:11,color:"var(--text-tertiary)"}}>Raised by {(r.createdBy||"engineer").split("@")[0]}</span>
+                            <span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",display:"inline-flex",alignItems:"center",gap:5}}>Continue <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Step indicator (macro stage) - shown only on the final Send step; the guided micro-flows carry their own progress bar */}
             {step===3&&(
             <div style={{display:"flex",alignItems:"center",marginBottom:24,gap:0}}>
@@ -7021,7 +7119,7 @@ Rules:
             </div>
             )}
 
-            {step===1&&(
+            {step===1&&newReqTab==="new"&&(
               <div>
                 {/* Guided micro-flow progress (full width) */}
                 <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:isMobile?22:30,minHeight:34}}>
@@ -7424,7 +7522,10 @@ Rules:
               <div style={{maxWidth:860,margin:"0 auto"}}>
                 <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px",boxShadow:"var(--shadow-sm)",marginBottom:16}}>
                   <div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)",marginBottom:4}}>Review RFQ email</div>
-                  {editingReqId&&<div style={{fontSize:12,fontWeight:600,color:"var(--amber)",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",padding:"8px 12px",marginBottom:10}}>Revising {jobRef||editingReqId} - sending this will re-send to the selected suppliers and reset their quotes for this revision.</div>}
+                  {editingReqId&&(isFirstSend
+                    ? <div style={{fontSize:12,fontWeight:600,color:"var(--green-dark)",background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:"var(--radius-sm)",padding:"8px 12px",marginBottom:10}}>Continuing {jobRef||editingReqId} from your engineer - this sends the RFQ to the selected suppliers.</div>
+                    : <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",background:"var(--amber-light)",border:"1px solid var(--amber)",borderRadius:"var(--radius-sm)",padding:"8px 12px",marginBottom:10}}>Revising {jobRef||editingReqId} - sending this will re-send to the selected suppliers and reset their quotes for this revision.</div>
+                  )}
                   <div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:14}}>This is exactly how the email will look to your {selSup.length} supplier{selSup.length!==1?"s":""}. Edit the wording below if you'd like.</div>
                   <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-md)",overflow:"hidden",marginBottom:14,background:"#F4F4F1"}}>
                     <iframe
@@ -10755,14 +10856,14 @@ Rules:
               <h2 style={{fontSize:isMobile?21:24,fontWeight:800,letterSpacing:"-0.02em",color:"#fff",margin:"0 0 4px"}}>{isSend?"Ready to send?":"Ready to issue?"}</h2>
               <p style={{fontSize:13.5,color:"rgba(255,255,255,0.72)",margin:0}}>{isSend?`Have one last look. This sends the RFQ to ${selSup.length} supplier${selSup.length!==1?"s":""}.`:"Have one last look. This issues your list to your buyer, who'll request the quotes."}</p>
             </div>
-            <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} recipients={recips} toBuyer={!isSend}/>
+            <RequestSummary jobRef={jobRef} site={site} trade={trade} items={parsed.items||[]} notes={requestNotes} deadline={rfqDeadline} deliveryMethod={deliveryMethod} deliveryDate={deliveryDate} altAddress={altAddress} collectFrom={collectFrom} recipients={recips} toBuyer={!isSend} stock={stock}/>
             <div style={{display:"flex",flexDirection:isMobile?"column-reverse":"row",gap:12,marginTop:16}}>
               <button onClick={()=>{ if(!loading) setSendConfirm(false); }} disabled={loading} style={{flex:isMobile?"none":"0 0 auto",width:isMobile?"100%":"auto",fontFamily:"inherit",fontSize:15,fontWeight:700,borderRadius:12,padding:"14px 22px",cursor:loading?"not-allowed":"pointer",border:"1px solid rgba(255,255,255,0.22)",background:"rgba(255,255,255,0.06)",color:"#fff",opacity:loading?0.5:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
                 Go back &amp; edit
               </button>
               <button onClick={()=>{ if(!loading){ isSend?handleSendEmails():handleIssueToBuyer(); } }} disabled={proceedDisabled} className="nr-btn nr-btn-primary" style={{flex:isMobile?"none":"1",width:isMobile?"100%":"auto",justifyContent:"center"}}>
-                {loading?(loadMsg||"Working..."):(isSend?<>{editingReqId?"Re-send":"Proceed & send"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>:<>Proceed &amp; issue <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>)}
+                {loading?(loadMsg||"Working..."):(isSend?<>{(editingReqId&&!isFirstSend)?"Re-send":"Proceed & send"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>:<>Proceed &amp; issue <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></>)}
               </button>
             </div>
           </div>
