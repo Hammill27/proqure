@@ -11162,6 +11162,9 @@ Rules:
         const isAwaiting = r.status==="awaiting-buyer";
         const canContinue = isAwaiting && can.sendRFQ(myRole);
         const canReviseR = can.sendRFQ(myRole) && quotesTotal>0 && !r.archived;
+        const linkedOrder = (orders||[]).find(o=>o.reqId===r.id) || null;
+        const acts = [...(r.activity||[])].reverse();
+        const recentActs = acts.slice(0,4);
         const close = ()=>setDrawerReq(null);
         const closeAnd = (fn)=>{ setDrawerReq(null); fn(); };
         const secLbl = {fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:9};
@@ -11192,10 +11195,11 @@ Rules:
               {/* body */}
               <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
                 <div style={{marginBottom:24}}>
+                  {kv("RFQ number", r.id)}
                   {kv("Site", r.site||"—")}
                   {kv("Trade", r.trade)}
                   {kv("Items", items.length)}
-                  {kv("Quotes", `${quotesIn} of ${quotesTotal} in`)}
+                  {kv("Supplier replies", `${quotesIn} of ${quotesTotal} in`)}
                   {r.budget?kv("Budget", r.budget):null}
                   {r.rfqDeadline?kv("Respond by", new Date(r.rfqDeadline).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})):null}
                   {kv("Raised by", r.createdByName||nameFor(r.createdBy))}
@@ -11216,20 +11220,42 @@ Rules:
 
                 {quotesTotal>0 && (
                   <div style={{marginBottom:24}}>
-                    <div style={secLbl}>Suppliers ({quotesTotal})</div>
+                    <div style={secLbl}>RFQ sent to ({quotesTotal})</div>
                     {(r.sentTo||[]).map((s,i)=>(
                       <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
                         <span style={{fontSize:13,color:"var(--text-primary)",overflowWrap:"anywhere"}}>{s.name||"Supplier"}</span>
-                        <span style={{fontSize:10,fontWeight:700,padding:"2px 9px",borderRadius:99,flexShrink:0,background:s.saved?"var(--green-light)":"var(--bg-subtle2)",color:s.saved?"var(--green-dark)":"var(--text-tertiary)"}}>{s.saved?"Quote in":"Awaiting"}</span>
+                        <span style={{fontSize:10,fontWeight:700,padding:"2px 9px",borderRadius:99,flexShrink:0,background:s.saved?"var(--green-light)":"var(--bg-subtle2)",color:s.saved?"var(--green-dark)":"var(--text-tertiary)"}}>{s.saved?"Replied":"Awaiting"}</span>
                       </div>
                     ))}
+                    {quotesIn>0 && <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:9,lineHeight:1.5}}>Compare replies and pick a winner in the Quotes workspace.</div>}
                   </div>
                 )}
 
                 {r.notes && (
-                  <div style={{marginBottom:6}}>
+                  <div style={{marginBottom:24}}>
                     <div style={secLbl}>Notes</div>
                     <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.55,background:"var(--bg-subtle2)",borderRadius:10,padding:"12px 14px"}}>{r.notes}</div>
+                  </div>
+                )}
+
+                {acts.length>0 && (
+                  <div style={{marginBottom:6}}>
+                    <div style={{...secLbl,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span>Activity</span>
+                      {acts.length>recentActs.length && <button onClick={()=>closeAnd(()=>setActivityModal(r))} style={{background:"none",border:"none",color:"var(--green-dark)",fontSize:10.5,fontWeight:700,cursor:"pointer",textTransform:"none",letterSpacing:0,padding:0}}>View full log</button>}
+                    </div>
+                    {recentActs.map((entry,i)=>(
+                      <div key={i} style={{display:"flex",gap:11,padding:"8px 0",borderBottom:i<recentActs.length-1?"1px solid var(--border)":"none"}}>
+                        <div style={{width:7,height:7,borderRadius:"50%",background:"var(--green-dark)",marginTop:5,flexShrink:0}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
+                            <span style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)"}}>{entry.action}</span>
+                            <span style={{fontSize:10.5,color:"var(--text-muted)",whiteSpace:"nowrap"}}>{new Date(entry.ts).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span>
+                          </div>
+                          {entry.detail&&<div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:2,lineHeight:1.45}}>{entry.detail}</div>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -11237,9 +11263,13 @@ Rules:
               <div style={{borderTop:"1px solid var(--border)",padding:"14px 22px",flexShrink:0,background:"var(--bg-card-solid)"}}>
                 {isAwaiting && !canContinue ? (
                   <button disabled style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"var(--bg-subtle2)",color:"var(--text-tertiary)",fontSize:14,fontWeight:700,cursor:"not-allowed"}}>Awaiting a buyer</button>
+                ) : linkedOrder ? (
+                  <button onClick={()=>closeAnd(()=>{ setExpandedOrder(linkedOrder.id); setView("orders"); })} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    View order <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,opacity:0.85}}>{linkedOrder.poNumber}</span> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                  </button>
                 ) : (
                   <button onClick={()=>closeAnd(()=>openRequest(r))} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                    {canContinue?"Continue this request":"Open request"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                    {canContinue?"Continue this request":quotesTotal>0?"View quotes":"Open request"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                   </button>
                 )}
                 <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:10}}>
