@@ -5090,6 +5090,7 @@ ${settings.company||""}`;
   const [reqFilterTrade, setReqFilterTrade] = useState("all");
   const [reqSearch, setReqSearch] = useState("");
   const [drawerReq, setDrawerReq] = useState(null);
+  const [collapsedGroups, setCollapsedGroups] = useState({ lastWeek:true, earlier:true });
   const [showArchived, setShowArchived] = useState(false);
   const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
@@ -6583,6 +6584,12 @@ Rules:
       .rq-act:hover{border-color:var(--green-deep);color:var(--green-dark);background:var(--bg-subtle)}
       .rq-act.danger:hover{border-color:var(--red);color:var(--red)}
       @media (prefers-reduced-motion:reduce){.rq-panel,.rq-scrim{animation:none!important}.rq-row:hover .rq-chev{transform:none!important}}
+      /* Grouped inbox: collapsible section headers + row separators */
+      .rq-group-hd{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;cursor:pointer;padding:8px 4px;font-family:inherit;text-align:left}
+      .rq-group-hd .rq-gchev{transition:transform 0.18s ease;color:var(--text-tertiary);flex-shrink:0}
+      .rq-group-hd.collapsed .rq-gchev{transform:rotate(-90deg)}
+      .rq-group-body{border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-card-solid);box-shadow:var(--shadow-sm)}
+      .rq-group-body .rq-row + .rq-row{border-top:1px solid var(--border)}
       @media (prefers-reduced-motion:reduce){
         .nr-step > *,.nr-chip.sel,.nr-bar-fill::after,.nr-mic.live .nr-ico,.nr-mic.live .nr-ring,.nr-mic.live .nr-eq i,.nr-ac{animation:none!important}
         .nr-btn-primary:hover,.nr-chip:hover,.nr-opt:hover,.nr-mic:hover,.nr-back:hover{transform:none!important}
@@ -9294,7 +9301,7 @@ Rules:
                 if(showArchived ? !r.archived : r.archived) return false;
                 if(reqFilterStatus!=="all"&&r.status!==reqFilterStatus) return false;
                 if(reqFilterTrade!=="all"&&r.trade!==reqFilterTrade) return false;
-                if(reqSearch){ const q=reqSearch.toLowerCase(); if(!((r.jobRef||"").toLowerCase().includes(q)||(r.site||"").toLowerCase().includes(q)||(r.id||"").toLowerCase().includes(q))) return false; }
+                if(reqSearch){ const q=reqSearch.toLowerCase(); if(!((r.jobRef||"").toLowerCase().includes(q)||(r.site||"").toLowerCase().includes(q)||(r.id||"").toLowerCase().includes(q)||(r.trade||"").toLowerCase().includes(q))) return false; }
                 return true;
               });
               if(requests.length===0) return (
@@ -9308,33 +9315,103 @@ Rules:
               if(list.length===0) return (
                 <Card>
                   <div style={{textAlign:"center",padding:"36px 0",color:"var(--text-tertiary)"}}>
-                    <div style={{fontSize:14,marginBottom:8}}>No requests match your filters</div>
-                    <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqSearch("");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear filters</button>
+                    <div style={{fontSize:14,marginBottom:8}}>No requests match your search</div>
+                    <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqSearch("");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear search &amp; filters</button>
                   </div>
                 </Card>
               );
+
+              // Single reusable row
+              const rowFor = (r) => {
+                const sc = STATUS[r.status]||STATUS.draft;
+                const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
+                const quotesTotal = (r.sentTo||[]).length;
+                const nItems = (r.items||[]).length;
+                return (
+                  <div key={r.id} className="rq-row" onClick={()=>setDrawerReq(r)} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px 14px 18px"}}>
+                    <span style={{width:9,height:9,borderRadius:"50%",background:sc.text,flexShrink:0,boxShadow:`0 0 0 3px ${sc.bg}`}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        <span style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.01em"}}>{r.jobRef||"TBC"}</span>
+                        <span style={{fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:99,background:sc.bg,color:sc.text}}>{sc.label}</span>
+                      </div>
+                      <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.site||"Site TBC"} · {r.trade} · {nItems} item{nItems===1?"":"s"}<span style={{opacity:0.55}}> · {r.id}</span></div>
+                    </div>
+                    <div style={{textAlign:"center",flexShrink:0,minWidth:44}}>
+                      <div style={{fontSize:13,fontWeight:700,color:quotesIn>0?"var(--green-dark)":"var(--text-secondary)",fontFamily:"'JetBrains Mono',monospace"}}>{quotesIn}/{quotesTotal}</div>
+                      <div style={{fontSize:9,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>replies</div>
+                    </div>
+                    <svg className="rq-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M9 18l6-6-6-6"/></svg>
+                  </div>
+                );
+              };
+
+              // When searching or in the Archive view, chronology matters less than the hit -
+              // show a single flat, newest-first result list.
+              if(reqSearch.trim() || showArchived){
+                return (
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"0 0 10px 4px"}}>{showArchived?"Archived":"Results"} · {list.length}</div>
+                    <div className="rq-group-body">{list.map(rowFor)}</div>
+                  </div>
+                );
+              }
+
+              // Intelligent grouping (Active, no search)
+              const dayMs = 86400000;
+              const now = new Date();
+              const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+              const startYesterday = startToday - dayMs;
+              const dow = (new Date(startToday).getDay()+6)%7; // 0 = Monday
+              const startWeek = startToday - dow*dayMs;
+              const startLastWeek = startWeek - 7*dayMs;
+              const bucketOf = (r) => {
+                const d = r.created ? new Date(r.created+"T00:00:00").getTime() : NaN;
+                if(isNaN(d)) return "earlier";
+                if(d>=startToday) return "today";
+                if(d>=startYesterday) return "yesterday";
+                if(d>=startWeek) return "thisWeek";
+                if(d>=startLastWeek) return "lastWeek";
+                return "earlier";
+              };
+              const needsAttention = (r) => {
+                if(!can.sendRFQ(myRole)) return false;
+                if((orders||[]).some(o=>o.reqId===r.id)) return false;
+                if(r.status==="awaiting-buyer") return true;
+                const qi=(r.sentTo||[]).filter(s=>s.saved).length, qt=(r.sentTo||[]).length;
+                if(qi>0 && r.status!=="approved") return true;
+                if(r.rfqDeadline){ const dl=new Date(r.rfqDeadline).getTime(); if(!isNaN(dl)&&dl<Date.now()&&qi<qt) return true; }
+                return false;
+              };
+              const g = { needs:[], today:[], yesterday:[], thisWeek:[], lastWeek:[], earlier:[] };
+              list.forEach(r=>{ if(needsAttention(r)) g.needs.push(r); else g[bucketOf(r)].push(r); });
+              const sections = [
+                { key:"needs",     label:"Needs attention", items:g.needs, attn:true },
+                { key:"today",     label:"Today",           items:g.today },
+                { key:"yesterday", label:"Yesterday",       items:g.yesterday },
+                { key:"thisWeek",  label:"This week",        items:g.thisWeek },
+                { key:"lastWeek",  label:"Last week",        items:g.lastWeek },
+                { key:"earlier",   label:"Earlier",          items:g.earlier },
+              ].filter(s=>s.items.length>0);
+              const toggle = (k)=>setCollapsedGroups(p=>({...p,[k]:!p[k]}));
+
               return (
-                <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",background:"var(--bg-card-solid)",boxShadow:"var(--shadow-sm)"}}>
-                  {list.map((r,idx)=>{
-                    const sc = STATUS[r.status]||STATUS.draft;
-                    const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
-                    const quotesTotal = (r.sentTo||[]).length;
-                    const nItems = (r.items||[]).length;
+                <div>
+                  {sections.map(sec=>{
+                    const collapsed = !!collapsedGroups[sec.key];
                     return (
-                      <div key={r.id} className="rq-row" onClick={()=>setDrawerReq(r)} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px 14px 18px",borderTop:idx===0?"none":"1px solid var(--border)"}}>
-                        <span style={{width:9,height:9,borderRadius:"50%",background:sc.text,flexShrink:0,boxShadow:`0 0 0 3px ${sc.bg}`}}/>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                            <span style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.01em"}}>{r.jobRef||"TBC"}</span>
-                            <span style={{fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:99,background:sc.bg,color:sc.text}}>{sc.label}</span>
+                      <div key={sec.key} style={{marginBottom:16}}>
+                        <button className={"rq-group-hd"+(collapsed?" collapsed":"")} onClick={()=>toggle(sec.key)} aria-expanded={!collapsed}>
+                          <svg className="rq-gchev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                          {sec.attn && <span style={{width:7,height:7,borderRadius:"50%",background:"#D97706",flexShrink:0,boxShadow:"0 0 0 3px rgba(217,119,6,0.15)"}}/>}
+                          <span style={{fontSize:13,fontWeight:700,color:sec.attn?"#D97706":"var(--text-primary)",letterSpacing:"-0.01em"}}>{sec.label}</span>
+                          <span style={{fontSize:11,fontWeight:700,padding:"1px 8px",borderRadius:99,background:sec.attn?"rgba(217,119,6,0.12)":"var(--bg-subtle2)",color:sec.attn?"#D97706":"var(--text-tertiary)"}}>{sec.items.length}</span>
+                        </button>
+                        {!collapsed && (
+                          <div className="rq-group-body" style={{marginTop:8, ...(sec.attn?{borderColor:"rgba(217,119,6,0.35)"}:{})}}>
+                            {sec.items.map(rowFor)}
                           </div>
-                          <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.site||"Site TBC"} · {r.trade} · {nItems} item{nItems===1?"":"s"}<span style={{opacity:0.55}}> · {r.id}</span></div>
-                        </div>
-                        <div style={{textAlign:"center",flexShrink:0,minWidth:44}}>
-                          <div style={{fontSize:13,fontWeight:700,color:quotesIn>0?"var(--green-dark)":"var(--text-secondary)",fontFamily:"'JetBrains Mono',monospace"}}>{quotesIn}/{quotesTotal}</div>
-                          <div style={{fontSize:9,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>quotes</div>
-                        </div>
-                        <svg className="rq-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M9 18l6-6-6-6"/></svg>
+                        )}
                       </div>
                     );
                   })}
