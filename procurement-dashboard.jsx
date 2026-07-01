@@ -204,7 +204,21 @@ async function cloudPull(userId) {
     if (error) { console.warn("cloudPull", error.message); return false; }
     (data || []).forEach(row => {
       if (SYNC_KEYS.includes(row.store_key) && row.value != null) {
-        try { localStorage.setItem(row.store_key, JSON.stringify(row.value)); } catch {}
+        let v = row.value;
+        // Never let the login pull wipe edits that haven't reached the cloud yet:
+        // overlay this device's still-dirty records (and honour pending deletions)
+        // onto the cloud copy before caching it. The dirty ids stay set, so the
+        // app pushes them up shortly after mount and the two sides converge.
+        if (MERGE_KEYS.includes(row.store_key)) {
+          try {
+            const st = loadDirtyStore()[row.store_key];
+            if (st && (st.dirty.size || st.deleted.size)) {
+              const localArr = JSON.parse(localStorage.getItem(row.store_key) || "[]");
+              v = mergeRecords(v, Array.isArray(localArr) ? localArr : [], st.dirty, st.deleted);
+            }
+          } catch {}
+        }
+        try { localStorage.setItem(row.store_key, JSON.stringify(v)); } catch {}
       }
     });
     return true;
@@ -260,6 +274,90 @@ async function cloudPush(userId, storeKey, valueObj) {
     { onConflict: "user_id,store_key" }
   );
   if (error) { console.warn("cloudPush failed", storeKey, error); throw error; }
+}
+
+// --- Multi-user safe sync (per-record merge) --------------------------------
+// The shared collections below used to sync as whole blobs: every push uploaded
+// this device's entire (possibly stale) array, silently overwriting anything a
+// colleague had saved since this device last pulled. These helpers fix that:
+// we track WHICH records this device changed (or deleted), and at push time we
+// merge only those onto the freshest cloud copy - everyone else's work survives.
+const MERGE_KEYS = ["piq_requests", "piq_orders", "piq_hires"];
+function loadDirtyStore() {
+  const empty = () => ({ dirty: new Set(), deleted: new Set() });
+  const out = {}; MERGE_KEYS.forEach(k => { out[k] = empty(); });
+  try {
+    const d = JSON.parse(localStorage.getItem("piq_dirty") || "{}");
+    MERGE_KEYS.forEach(k => {
+      if (d[k]) out[k] = { dirty: new Set(d[k].dirty || []), deleted: new Set(d[k].deleted || []) };
+    });
+  } catch {}
+  return out;
+}
+function saveDirtyStore(store) {
+  try {
+    const d = {};
+    MERGE_KEYS.forEach(k => { d[k] = { dirty: [...store[k].dirty], deleted: [...store[k].deleted] }; });
+    localStorage.setItem("piq_dirty", JSON.stringify(d));
+  } catch {}
+}
+// Merge a cloud array and a local array record-by-record:
+//  - records THIS device changed (dirty) keep the local version;
+//  - everything else takes the cloud's version (a colleague may have updated it);
+//  - records the cloud has that we've never seen are new from a colleague - include
+//    them (unless we deleted them here and that deletion hasn't synced yet);
+//  - records we know but the cloud no longer has were deleted elsewhere - drop them.
+function mergeRecords(cloudArr, localArr, dirty, deleted) {
+  const cloud = Array.isArray(cloudArr) ? cloudArr : [];
+  const local = Array.isArray(localArr) ? localArr : [];
+  const cloudById = {}; cloud.forEach(r => { if (r && r.id != null) cloudById[r.id] = r; });
+  const localIds = new Set(local.filter(r => r && r.id != null).map(r => r.id));
+  const kept = [];
+  local.forEach(r => {
+    if (!r || r.id == null) { kept.push(r); return; }
+    if (dirty.has(r.id)) { kept.push(r); return; }
+    if (cloudById[r.id]) { kept.push(cloudById[r.id]); return; }
+    // non-dirty and gone from the cloud => deleted by a colleague; let it go
+  });
+  const fresh = cloud.filter(r => r && r.id != null && !localIds.has(r.id) && !deleted.has(r.id));
+  return [...fresh, ...kept];
+}
+// Read-merge-write with optimistic concurrency: read the cloud row (value +
+// updated_at), merge our changed records onto it, then write back ONLY if the
+// row hasn't moved since we read it. If it has (a colleague pushed in between),
+// re-read and re-merge - up to three times, then fall back to a merged upsert.
+async function cloudPushMerged(userId, key, localArr, dirty, deleted) {
+  if (!supabase || !userId) return null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data, error } = await supabase.from("proqure_data")
+      .select("value,updated_at").eq("user_id", userId).eq("store_key", key).maybeSingle();
+    if (error) throw error;
+    const merged = mergeRecords(data && data.value, localArr, dirty, deleted);
+    const nowIso = new Date().toISOString();
+    if (!data) {
+      const { error: e2 } = await supabase.from("proqure_data").upsert(
+        { user_id: userId, store_key: key, value: merged, updated_at: nowIso },
+        { onConflict: "user_id,store_key" });
+      if (e2) throw e2;
+      return merged;
+    }
+    const { data: upd, error: e3 } = await supabase.from("proqure_data")
+      .update({ value: merged, updated_at: nowIso })
+      .eq("user_id", userId).eq("store_key", key).eq("updated_at", data.updated_at)
+      .select("store_key");
+    if (e3) throw e3;
+    if (upd && upd.length) return merged; // clean write - nobody moved the row under us
+    // lost the race: loop and merge onto the newer copy
+  }
+  const { data: d2, error: e4 } = await supabase.from("proqure_data")
+    .select("value").eq("user_id", userId).eq("store_key", key).maybeSingle();
+  if (e4) throw e4;
+  const merged = mergeRecords(d2 && d2.value, localArr, dirty, deleted);
+  const { error: e5 } = await supabase.from("proqure_data").upsert(
+    { user_id: userId, store_key: key, value: merged, updated_at: new Date().toISOString() },
+    { onConflict: "user_id,store_key" });
+  if (e5) throw e5;
+  return merged;
 }
 
 // --- Multi-company foundation (Step 3c) -----------------------------------------
@@ -4096,9 +4194,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
       // is written (fresh requests only - continue/revise keep their existing ref). This
       // guarantees the emailed ref and the saved record match, and picks up any refs other
       // people have committed since this draft was opened.
-      const useRef = editingReqId ? jobRef : nextJobRef();
-      if (!editingReqId && useRef !== jobRef) setJobRef(useRef);
-      const email = await generateRFQ(parsed.items, useRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress, collectFrom);
+      const refToUse = editingReqId ? jobRef : nextJobRef();
+      if (!editingReqId && refToUse !== jobRef) setJobRef(refToUse);
+      const email = await generateRFQ(parsed.items, refToUse, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress, collectFrom);
       setRfqEmail(email);
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
@@ -5697,15 +5795,131 @@ ${settings.company||""}`;
   // opening the app never echoes freshly-loaded (or stale) data back up to the cloud
   // and clobbers it. Genuine user edits after load sync normally.
   const hydratedRef = useRef(false);
+  // Per-record change tracking for the shared collections (see MERGE_KEYS): we
+  // remember exactly which records THIS device changed, so pushes merge those
+  // records onto the cloud copy instead of overwriting colleagues' work, and so
+  // edits that never reached the cloud survive the next sign-in.
+  const dirtyRef = useRef(null); if (dirtyRef.current === null) dirtyRef.current = loadDirtyStore();
+  const snapRef = useRef({});    // key -> Map(id -> JSON of last-seen record) for change detection
+  const latestRef = useRef({});  // key -> latest array (kept fresh every render below)
+  const syncFailsRef = useRef(0);
+  const markSyncTrouble = (bad) => { try { window.dispatchEvent(new CustomEvent("pq-sync-trouble", { detail: !!bad })); } catch {} };
+  const noteSyncOk   = () => { syncFailsRef.current = 0; markSyncTrouble(false); };
+  const noteSyncFail = () => { syncFailsRef.current += 1; if (syncFailsRef.current >= 3 && (typeof navigator === "undefined" || navigator.onLine !== false)) markSyncTrouble(true); };
+  const diffAndMark = (key, arr) => {
+    const prev = snapRef.current[key];
+    const next = new Map();
+    (Array.isArray(arr) ? arr : []).forEach(r => { if (r && r.id != null) next.set(r.id, JSON.stringify(r)); });
+    if (prev) {
+      const st = dirtyRef.current[key];
+      next.forEach((s, id) => { if (prev.get(id) !== s) { st.dirty.add(id); st.deleted.delete(id); } });
+      prev.forEach((s, id) => { if (!next.has(id)) { st.deleted.add(id); st.dirty.delete(id); } });
+      saveDirtyStore(dirtyRef.current);
+    }
+    snapRef.current[key] = next;
+  };
+  const pushMergedNow = useCallback(async (key) => {
+    if (!cloudEnabled || !cloudUserId) return;
+    const st = dirtyRef.current[key];
+    if (!st || (st.dirty.size === 0 && st.deleted.size === 0)) return;
+    const dirty = new Set(st.dirty), deleted = new Set(st.deleted); // freeze what this push covers
+    try {
+      await cloudPushMerged(cloudUserId, key, latestRef.current[key] || [], dirty, deleted);
+      dirty.forEach(id => st.dirty.delete(id));
+      deleted.forEach(id => st.deleted.delete(id));
+      saveDirtyStore(dirtyRef.current);
+      noteSyncOk();
+    } catch (e) {
+      console.warn("cloudPushMerged failed", key, e);
+      noteSyncFail();
+    }
+  }, [cloudUserId]);
   const queueCloudPush = useCallback((key, valueObj) => {
     if (!cloudEnabled || !cloudUserId) return;
-    if (!hydratedRef.current) return;
     // Engineers must never write the money keys - skip so a cleared/empty local
     // copy can't attempt to overwrite real cloud data (the server RLS also refuses).
     if (isEngineer && ENGINEER_BLOCKED.includes(key)) return;
-    clearTimeout(pushTimers.current[key]);
-    pushTimers.current[key] = setTimeout(() => { cloudPush(cloudUserId, key, valueObj).catch(()=>{}); }, 800);
-  }, [cloudUserId, isEngineer]);
+    if (MERGE_KEYS.includes(key)) {
+      // Per-record path: first work out what actually changed on THIS device.
+      const firstSight = !snapRef.current[key];
+      diffAndMark(key, valueObj);
+      if (firstSight) return;                 // initial hydration - nothing user-made yet
+      if (!hydratedRef.current) return;       // mount window; dirty ids are kept and flushed after
+      const st = dirtyRef.current[key];
+      if (st.dirty.size === 0 && st.deleted.size === 0) return; // e.g. a tick that changed nothing
+      const prev = pushTimers.current[key]; if (prev && prev.t) clearTimeout(prev.t);
+      const run = () => pushMergedNow(key);
+      pushTimers.current[key] = { t: setTimeout(run, 800), run };
+      return;
+    }
+    if (!hydratedRef.current) return;
+    const prev = pushTimers.current[key]; if (prev && prev.t) clearTimeout(prev.t);
+    const run = () => cloudPush(cloudUserId, key, valueObj).then(noteSyncOk).catch((e) => { console.warn("cloudPush failed", key, e); noteSyncFail(); });
+    pushTimers.current[key] = { t: setTimeout(run, 800), run };
+  }, [cloudUserId, isEngineer, pushMergedNow]);
+  // Keep the freshest arrays reachable from async pushes (assigned every render).
+  latestRef.current.piq_requests = requests;
+  latestRef.current.piq_orders   = orders;
+  latestRef.current.piq_hires    = hires;
+  // Flush anything still sitting in a debounce timer the moment the tab is hidden
+  // or closed - a change made seconds before shutting the laptop must not die there.
+  const flushAllRef = useRef(null);
+  flushAllRef.current = () => {
+    try {
+      const fired = {};
+      Object.keys(pushTimers.current).forEach(k => {
+        const p = pushTimers.current[k];
+        if (p) { if (p.t) clearTimeout(p.t); if (p.run) { p.run(); fired[k] = 1; } pushTimers.current[k] = null; }
+      });
+      MERGE_KEYS.forEach(k => {
+        if (fired[k]) return;
+        const st = dirtyRef.current[k];
+        if (st && (st.dirty.size || st.deleted.size)) pushMergedNow(k);
+      });
+    } catch {}
+  };
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden" && flushAllRef.current) flushAllRef.current(); };
+    const onUnload = () => { if (flushAllRef.current) flushAllRef.current(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("beforeunload", onUnload);
+    return () => { document.removeEventListener("visibilitychange", onHide); window.removeEventListener("beforeunload", onUnload); };
+  }, []);
+  // Periodic catch-up pull: bring colleagues' changes - including their locks -
+  // into this session without waiting for the next sign-in. Records this device
+  // has unsynced edits to always keep the local version.
+  const applyCloudMerge = useCallback((key, cloudVal) => {
+    const setter = key === "piq_requests" ? setRequests : key === "piq_orders" ? setOrders : key === "piq_hires" ? setHires : null;
+    if (!setter) return;
+    setter(prevArr => {
+      const st = dirtyRef.current[key];
+      const merged = mergeRecords(cloudVal, prevArr, st.dirty, st.deleted);
+      if (JSON.stringify(merged) === JSON.stringify(prevArr)) return prevArr; // nothing new
+      // Update the change-detection snapshot FIRST, so the push effect doesn't
+      // mistake a colleague's changes for local edits and echo them back up.
+      const next = new Map();
+      merged.forEach(r => { if (r && r.id != null) next.set(r.id, JSON.stringify(r)); });
+      snapRef.current[key] = next;
+      return merged;
+    });
+  }, []);
+  const pullMergeNow = useCallback(async () => {
+    if (!cloudEnabled || !cloudUserId || !supabase) return;
+    try {
+      const { data, error } = await supabase.from("proqure_data")
+        .select("store_key,value").eq("user_id", cloudUserId).in("store_key", MERGE_KEYS);
+      if (error) return;
+      (data || []).forEach(row => { if (row.value != null) applyCloudMerge(row.store_key, row.value); });
+    } catch {}
+  }, [cloudUserId, applyCloudMerge]);
+  useEffect(() => {
+    if (!cloudEnabled || !cloudUserId) return;
+    const iv = setInterval(() => { if (typeof document === "undefined" || document.visibilityState !== "hidden") pullMergeNow(); }, 90000);
+    const onVis = () => { if (document.visibilityState === "visible") pullMergeNow(); };
+    document.addEventListener("visibilitychange", onVis);
+    const t = setTimeout(pullMergeNow, 20000); // first catch-up shortly after load
+    return () => { clearInterval(iv); clearTimeout(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [cloudUserId, pullMergeNow]);
 
   // Client hygiene matching the server RBAC: an engineer must not retain price/
   // cost data cached from a previous higher-privileged session (e.g. a role
@@ -5732,14 +5946,20 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_returns", returns); }, [returns, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_assets", assets); }, [assets, queueCloudPush]);
   // Compute hire-vs-buy suggestions (only for cost-viewers, only with enough history)
+  const hireTipsKeyRef = useRef(null);
   useEffect(()=>{
     if (!can.viewCosts(myRole)) { setHireBuyTips([]); return; }
     const counts = {};
     hires.forEach(h=>{ const k=(h.description||"").toLowerCase().trim(); if(k) counts[k]=(counts[k]||0)+1; });
     const hasRepeat = Object.values(counts).some(n=>n>=3);
     if (!hasRepeat) { setHireBuyTips([]); return; }
+    // Only spend a metered AI call when the hire mix has actually changed -
+    // not on every edit to any hire. Cached across reloads too.
+    const key = Object.keys(counts).sort().map(k=>k+":"+counts[k]).join("|");
+    if (key === hireTipsKeyRef.current) return;
+    try { const cached = JSON.parse(localStorage.getItem("piq_hirebuy")||"null"); if (cached && cached.key===key) { hireTipsKeyRef.current = key; setHireBuyTips(cached.tips||[]); return; } } catch {}
     let active = true;
-    aiHireVsBuy(hires).then(tips=>{ if(active) setHireBuyTips(tips||[]); }).catch(()=>{});
+    aiHireVsBuy(hires).then(tips=>{ if(active){ hireTipsKeyRef.current = key; setHireBuyTips(tips||[]); try{ localStorage.setItem("piq_hirebuy", JSON.stringify({ key, tips: tips||[] })); }catch{} } }).catch(()=>{});
     return ()=>{ active=false; };
   }, [hires, myRole]);
   useEffect(()=>{ queueCloudPush("piq_suppliers", suppliers); }, [suppliers, queueCloudPush]);
@@ -5832,7 +6052,9 @@ ${settings.company||""}`;
   useEffect(()=>{ queueCloudPush("piq_team", team); }, [team, queueCloudPush]);
   useEffect(()=>{ queueCloudPush("piq_activity", activityLog.slice(0,500)); }, [activityLog, queueCloudPush]);
   // Allow real changes to sync only after the initial mount pushes above have run (and been skipped).
-  useEffect(()=>{ const t = setTimeout(()=>{ hydratedRef.current = true; }, 1000); return ()=>clearTimeout(t); }, []);
+  // Then immediately push any records still marked dirty from a previous session
+  // (e.g. edits made offline, or in a tab that closed before its save landed).
+  useEffect(()=>{ const t = setTimeout(()=>{ hydratedRef.current = true; MERGE_KEYS.forEach(k=>{ const st=dirtyRef.current[k]; if(st&&(st.dirty.size||st.deleted.size)) pushMergedNow(k); }); }, 1000); return ()=>clearTimeout(t); }, []);
 
   // Spend by trade (from approved orders)
   const spendByTrade = (() => {
@@ -13243,7 +13465,7 @@ function AppInner() {
       const nextId = s?.user?.id || null;
       // Signed out (or arriving with no session): wipe cached company data so a shared
       // device can't expose the previous user's suppliers/invoices/costs via localStorage.
-      if (!nextId) { try { SYNC_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} }); localStorage.removeItem("piq_scope"); } catch (e) {} }
+      if (!nextId) { try { SYNC_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} }); localStorage.removeItem("piq_scope"); localStorage.removeItem("piq_dirty"); } catch (e) {} }
       setSession(prev => {
         const prevId = prev?.user?.id || null;
         if (prevId === nextId) return prev; // no real change - keep the same object
@@ -13291,6 +13513,7 @@ function AppInner() {
         try {
           if (resolved && localStorage.getItem("piq_scope") !== scope) {
             SYNC_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+            localStorage.removeItem("piq_dirty");
             localStorage.setItem("piq_scope", scope);
           }
         } catch (e) {}
@@ -13540,6 +13763,24 @@ function OfflineBanner() {
   );
 }
 
+// --- Companion to OfflineBanner: shown when the device is ONLINE but cloud saves
+// keep failing (expired session, blocked network, server trouble). Without this a
+// user could work a whole session with nothing saving and never know. ---
+function SyncTroubleBanner() {
+  const [bad, setBad] = useState(false);
+  useEffect(() => {
+    const h = (e) => setBad(!!(e && e.detail));
+    window.addEventListener("pq-sync-trouble", h);
+    return () => window.removeEventListener("pq-sync-trouble", h);
+  }, []);
+  if (!bad) return null;
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 99998, background: "#B45309", color: "#fff", fontSize: 12.5, fontWeight: 600, textAlign: "center", padding: "calc(6px + env(safe-area-inset-top)) 12px 6px", letterSpacing: "-.01em" }}>
+      Changes aren't saving to the cloud right now — your work is safe on this device and will sync automatically once the connection recovers
+    </div>
+  );
+}
+
 // --- Tasteful one-time prompt shown only in iOS Safari (not the installed app),
 // guiding the person to add ProQure to their home screen. ---
 function InstallHint() {
@@ -13600,5 +13841,5 @@ export default function App() {
   const inner = !cloudEnabled
     ? <ErrorBoundary><ProQureApp session={null} /></ErrorBoundary>
     : <ErrorBoundary><AppInner /></ErrorBoundary>;
-  return (<><LaunchOverlay /><PullToRefresh /><OfflineBanner /><InstallHint />{inner}</>);
+  return (<><LaunchOverlay /><PullToRefresh /><OfflineBanner /><SyncTroubleBanner /><InstallHint />{inner}</>);
 }
