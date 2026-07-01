@@ -4371,6 +4371,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
       jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
       status: "awaiting-buyer",
       createdBy: myEmail, createdByRole: myRole,
+      createdByName: settings.contactName || (myMember&&myMember.name) || myEmail,
       buyerNote: requestNotes,
       created: new Date().toISOString().split("T")[0],
       items: parsed.items,
@@ -4548,6 +4549,22 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     setNewReqTab("new");
     setStep(2); setCfgStep(1);
     setView("new");
+  }
+
+  // Open a request from a list/row. Engineer-issued lists ("awaiting-buyer") route into
+  // the Raised material requests continuation (buyer/manager) rather than the Quotes page,
+  // which only holds sent RFQs. Everything else opens its quotes card as before.
+  function openRequest(r) {
+    if (r.status === "awaiting-buyer") {
+      if (can.sendRFQ(myRole)) { handleContinueList(r); }
+      else { showToast("This list is with your buyer - they'll send the RFQ.","warn"); }
+      return;
+    }
+    const savedSet = savedQuoteSets.find(s=>s.reqId===r.id);
+    setActiveReq(r);
+    if (savedSet) { setAllAnalyses(savedSet.analyses); setApprovedQuoteId(savedSet.approvedId); setExpandedQuote(savedSet.analyses[0]?._id||null); setQuoteViewMode("cards"); }
+    else { setAllAnalyses([]); }
+    setView("quotes");
   }
 
   function handleDuplicate(r) {
@@ -6988,7 +7005,7 @@ Rules:
                   const sc = STATUS[r.status]||STATUS.draft;
                   return(
                     <div key={r.id}
-                      onClick={()=>{setActiveReq(r);setView("quotes");}}
+                      onClick={()=>openRequest(r)}
                       onMouseEnter={e=>e.currentTarget.style.background=darkMode?"rgba(34,197,94,0.04)":"rgba(34,197,94,0.02)"}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}
                       style={{display:"flex",alignItems:"center",gap:16,padding:"12px 24px",borderTop:idx===0?"none":"1px solid var(--border)",cursor:"pointer",transition:"background 0.15s"}}>
@@ -7063,7 +7080,7 @@ Rules:
             {/* Entry tabs (buyer/manager only, when engineer lists are waiting) */}
             {step===1 && can.sendRFQ(myRole) && awaitingLists.length>0 && (
               <div style={{display:"inline-flex",gap:4,background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:12,padding:4,marginBottom:22}}>
-                {[{k:"new",l:"Start new"},{k:"engineers",l:`From your engineers · ${awaitingLists.length}`}].map(t=>(
+                {[{k:"new",l:"Start new"},{k:"engineers",l:`Raised material requests · ${awaitingLists.length}`}].map(t=>(
                   <button key={t.k} onClick={()=>setNewReqTab(t.k)} style={{fontFamily:"inherit",fontSize:13,fontWeight:700,padding:"8px 16px",borderRadius:9,border:"none",cursor:"pointer",transition:"all 0.18s",background:newReqTab===t.k?"var(--bg-card-solid)":"transparent",color:newReqTab===t.k?"var(--green-dark)":"var(--text-secondary)",boxShadow:newReqTab===t.k?"var(--shadow-sm)":"none"}}>{t.l}</button>
                 ))}
               </div>
@@ -7093,7 +7110,7 @@ Rules:
                             </div>
                           )}
                           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid var(--border)",paddingTop:10}}>
-                            <span style={{fontSize:11,color:"var(--text-tertiary)"}}>Raised by {(r.createdBy||"engineer").split("@")[0]}</span>
+                            <span style={{fontSize:11,color:"var(--text-tertiary)"}}>Raised by {r.createdByName || nameFor(r.createdBy)}</span>
                             <span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",display:"inline-flex",alignItems:"center",gap:5}}>Continue <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
                           </div>
                         </button>
@@ -9246,20 +9263,7 @@ Rules:
                         <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
                         <span style={{fontSize:12,color:"var(--text-secondary)"}}>{quotesIn}/{quotesTotal}</span>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                          <button onClick={()=>{
-                            const savedSet = savedQuoteSets.find(s=>s.reqId===r.id);
-                            if(savedSet){
-                              setActiveReq(r);
-                              setAllAnalyses(savedSet.analyses);
-                              setApprovedQuoteId(savedSet.approvedId);
-                              setExpandedQuote(savedSet.analyses[0]?._id||null);
-                              setQuoteViewMode("cards");
-                            } else {
-                              setActiveReq(r);
-                              setAllAnalyses([]);
-                            }
-                            setView("quotes");
-                          }} style={{fontSize:11,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View</button>
+                          <button onClick={()=>openRequest(r)} style={{fontSize:11,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>{r.status==="awaiting-buyer"&&can.sendRFQ(myRole)?"Continue":"View"}</button>
                           <button onClick={()=>handleDuplicate(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
                           {can.sendRFQ(myRole)&&(r.sentTo||[]).length>0&&!r.archived&&(
                             <button onClick={()=>handleRevise(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Revise{r.revision?` (v${r.revision})`:""}</button>
