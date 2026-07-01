@@ -5089,6 +5089,7 @@ ${settings.company||""}`;
   const [reqFilterStatus, setReqFilterStatus] = useState("all");
   const [reqFilterTrade, setReqFilterTrade] = useState("all");
   const [reqSearch, setReqSearch] = useState("");
+  const [drawerReq, setDrawerReq] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
   const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
@@ -6567,6 +6568,21 @@ Rules:
       .qp-hero .nr-opt:hover{border-color:#D97706;box-shadow:0 10px 24px rgba(217,119,6,0.12)}
       .qp-hero .nr-field:hover:not(:focus){border-color:#E8890B}
       .qp-hero .nr-field:focus{border-color:#D97706;box-shadow:0 0 0 4px rgba(217,119,6,0.16)}
+      /* All-requests: clickable rows + right-hand detail drawer */
+      .rq-row{transition:background 0.15s ease,box-shadow 0.15s ease,border-color 0.15s ease;cursor:pointer;position:relative}
+      .rq-row:hover{background:var(--bg-subtle)}
+      .rq-row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent;transition:background 0.15s ease}
+      .rq-row:hover::before{background:var(--green-deep)}
+      .rq-row .rq-chev{transition:transform 0.16s ease,color 0.16s ease;color:var(--text-tertiary)}
+      .rq-row:hover .rq-chev{transform:translateX(3px);color:var(--green-dark)}
+      @keyframes rqFade{from{opacity:0}to{opacity:1}}
+      @keyframes rqSlide{from{transform:translateX(100%)}to{transform:translateX(0)}}
+      .rq-scrim{animation:rqFade 0.2s ease}
+      .rq-panel{animation:rqSlide 0.28s cubic-bezier(0.16,1,0.3,1)}
+      .rq-act{display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:1 1 auto;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card-solid);color:var(--text-secondary);font-size:12.5px;font-weight:600;font-family:inherit;cursor:pointer;transition:border-color 0.14s,background 0.14s,color 0.14s}
+      .rq-act:hover{border-color:var(--green-deep);color:var(--green-dark);background:var(--bg-subtle)}
+      .rq-act.danger:hover{border-color:var(--red);color:var(--red)}
+      @media (prefers-reduced-motion:reduce){.rq-panel,.rq-scrim{animation:none!important}.rq-row:hover .rq-chev{transform:none!important}}
       @media (prefers-reduced-motion:reduce){
         .nr-step > *,.nr-chip.sel,.nr-bar-fill::after,.nr-mic.live .nr-ico,.nr-mic.live .nr-ring,.nr-mic.live .nr-eq i,.nr-ac{animation:none!important}
         .nr-btn-primary:hover,.nr-chip:hover,.nr-opt:hover,.nr-mic:hover,.nr-back:hover{transform:none!important}
@@ -9273,61 +9289,58 @@ Rules:
               <button onClick={()=>setShowArchived(false)} style={{fontSize:12,fontWeight:600,padding:"7px 16px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:!showArchived?"var(--green-dark)":"var(--bg-card-solid)",color:!showArchived?"white":"var(--text-secondary)"}}>Active</button>
               <button onClick={()=>setShowArchived(true)} style={{fontSize:12,fontWeight:600,padding:"7px 16px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:showArchived?"var(--green-dark)":"var(--bg-card-solid)",color:showArchived?"white":"var(--text-secondary)"}}>Archived ({requests.filter(r=>r.archived).length})</button>
             </div>
-            <Card>
-              {requests.length===0?(
-                <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
-                  <div style={{fontSize:15,marginBottom:8}}>No requests yet</div>
-                  <div style={{fontSize:13}}>Create your first material request to get started</div>
-                </div>
-              ):(
-                <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-                  <div style={{minWidth:760}}>
-                  <div style={{display:"grid",gridTemplateColumns:"80px 1fr 120px 100px 80px 140px",gap:8,padding:"10px 16px",background:"var(--bg-subtle)",fontSize:11,fontWeight:600,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em",borderRadius:"var(--radius-sm) var(--radius-sm) 0 0"}}>
-                    <span>ID</span><span>Job ref</span><span>Trade</span><span>Status</span><span>Quotes</span><span>Actions</span>
+            {(()=>{
+              const list = (can.viewAllJobs(myRole)?requests:requests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail)).filter(r=>{
+                if(showArchived ? !r.archived : r.archived) return false;
+                if(reqFilterStatus!=="all"&&r.status!==reqFilterStatus) return false;
+                if(reqFilterTrade!=="all"&&r.trade!==reqFilterTrade) return false;
+                if(reqSearch){ const q=reqSearch.toLowerCase(); if(!((r.jobRef||"").toLowerCase().includes(q)||(r.site||"").toLowerCase().includes(q)||(r.id||"").toLowerCase().includes(q))) return false; }
+                return true;
+              });
+              if(requests.length===0) return (
+                <Card>
+                  <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-tertiary)"}}>
+                    <div style={{fontSize:15,marginBottom:8}}>No requests yet</div>
+                    <div style={{fontSize:13}}>Create your first material request to get started</div>
                   </div>
-                  {(can.viewAllJobs(myRole)?requests:requests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail)).filter(r=>{
-                    if(showArchived ? !r.archived : r.archived) return false;
-                    if(reqFilterStatus!=="all"&&r.status!==reqFilterStatus) return false;
-                    if(reqFilterTrade!=="all"&&r.trade!==reqFilterTrade) return false;
-                    if(reqSearch){
-                      const q=reqSearch.toLowerCase();
-                      if(!((r.jobRef||"").toLowerCase().includes(q)||(r.site||"").toLowerCase().includes(q)||(r.id||"").toLowerCase().includes(q))) return false;
-                    }
-                    return true;
-                  }).map((r,idx)=>{
+                </Card>
+              );
+              if(list.length===0) return (
+                <Card>
+                  <div style={{textAlign:"center",padding:"36px 0",color:"var(--text-tertiary)"}}>
+                    <div style={{fontSize:14,marginBottom:8}}>No requests match your filters</div>
+                    <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqSearch("");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear filters</button>
+                  </div>
+                </Card>
+              );
+              return (
+                <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden",background:"var(--bg-card-solid)",boxShadow:"var(--shadow-sm)"}}>
+                  {list.map((r,idx)=>{
                     const sc = STATUS[r.status]||STATUS.draft;
                     const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
                     const quotesTotal = (r.sentTo||[]).length;
-                    return(
-                      <div key={r.id} style={{display:"grid",gridTemplateColumns:"80px 1fr 120px 100px 80px 140px",gap:8,padding:"12px 16px",borderTop:"1px solid var(--border)",alignItems:"center",fontSize:13}}>
-                        <span style={{fontFamily:"'JetBrains Mono',monospace",color:"var(--green-dark)",fontWeight:600,fontSize:12}}>{r.id}</span>
-                        <div>
-                          <div style={{fontWeight:500,color:"var(--text-primary)"}}>{r.jobRef}</div>
-                          <div style={{fontSize:11,color:"var(--text-tertiary)",marginTop:1}}>{r.site}{r.notes&&<span style={{marginLeft:6,color:"var(--amber)",fontStyle:"italic"}}>· {r.notes.slice(0,35)}{r.notes.length>35?"...":""}</span>}</div>
+                    const nItems = (r.items||[]).length;
+                    return (
+                      <div key={r.id} className="rq-row" onClick={()=>setDrawerReq(r)} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px 14px 18px",borderTop:idx===0?"none":"1px solid var(--border)"}}>
+                        <span style={{width:9,height:9,borderRadius:"50%",background:sc.text,flexShrink:0,boxShadow:`0 0 0 3px ${sc.bg}`}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <span style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.01em"}}>{r.jobRef||"TBC"}</span>
+                            <span style={{fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:99,background:sc.bg,color:sc.text}}>{sc.label}</span>
+                          </div>
+                          <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.site||"Site TBC"} · {r.trade} · {nItems} item{nItems===1?"":"s"}<span style={{opacity:0.55}}> · {r.id}</span></div>
                         </div>
-                        <span style={{fontSize:12,color:"var(--text-secondary)"}}>{r.trade}</span>
-                        <Badge bg={sc.bg} text={sc.text}>{sc.label}</Badge>
-                        <span style={{fontSize:12,color:"var(--text-secondary)"}}>{quotesIn}/{quotesTotal}</span>
-                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                          <button onClick={()=>openRequest(r)} style={{fontSize:11,color:"var(--indigo)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>{r.status==="awaiting-buyer"&&can.sendRFQ(myRole)?"Continue":"View"}</button>
-                          <button onClick={()=>handleDuplicate(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer"}}>Duplicate</button>
-                          {can.sendRFQ(myRole)&&(r.sentTo||[]).length>0&&!r.archived&&(
-                            <button onClick={()=>handleRevise(r)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Revise{r.revision?` (v${r.revision})`:""}</button>
-                          )}
-                          <button onClick={()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});}} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Edit</button>
-                          <button onClick={()=>setActivityModal(r)} style={{fontSize:11,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer"}}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
-                          {can.deleteItems(myRole) && (r.archived
-                            ? <button onClick={()=>handleRestore(r.id)} style={{fontSize:11,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Restore</button>
-                            : <button onClick={()=>setDeleteConfirm(r)} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer"}}>Archive</button>
-                          )}
+                        <div style={{textAlign:"center",flexShrink:0,minWidth:44}}>
+                          <div style={{fontSize:13,fontWeight:700,color:quotesIn>0?"var(--green-dark)":"var(--text-secondary)",fontFamily:"'JetBrains Mono',monospace"}}>{quotesIn}/{quotesTotal}</div>
+                          <div style={{fontSize:9,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>quotes</div>
                         </div>
+                        <svg className="rq-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M9 18l6-6-6-6"/></svg>
                       </div>
                     );
                   })}
-                  </div>
                 </div>
-              )}
-            </Card>
+              );
+            })()}
           </div>
         )}
 
@@ -11139,6 +11152,110 @@ Rules:
           </div>
         </div>
       )}
+
+      {drawerReq && (()=>{
+        const r = drawerReq;
+        const sc = STATUS[r.status]||STATUS.draft;
+        const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
+        const quotesTotal = (r.sentTo||[]).length;
+        const items = r.items||[];
+        const isAwaiting = r.status==="awaiting-buyer";
+        const canContinue = isAwaiting && can.sendRFQ(myRole);
+        const canReviseR = can.sendRFQ(myRole) && quotesTotal>0 && !r.archived;
+        const close = ()=>setDrawerReq(null);
+        const closeAnd = (fn)=>{ setDrawerReq(null); fn(); };
+        const secLbl = {fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:9};
+        const kv = (label,val)=> (val==null||val==="") ? null : (
+          <div style={{display:"flex",justifyContent:"space-between",gap:16,padding:"9px 0",borderBottom:"1px solid var(--border)"}}>
+            <span style={{fontSize:12.5,color:"var(--text-tertiary)",flexShrink:0}}>{label}</span>
+            <span style={{fontSize:12.5,fontWeight:600,color:"var(--text-primary)",textAlign:"right",overflowWrap:"anywhere"}}>{val}</span>
+          </div>
+        );
+        return (
+          <div className="rq-scrim" onClick={close} style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.5)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:1400,display:"flex",justifyContent:"flex-end"}}>
+            <div className="rq-panel" onClick={e=>e.stopPropagation()} style={{width:"min(440px,100%)",height:"100%",background:"var(--bg-card-solid)",borderLeft:"1px solid var(--border)",boxShadow:"var(--shadow-lg)",display:"flex",flexDirection:"column"}}>
+              {/* header */}
+              <div style={{padding:"20px 22px 16px",borderBottom:"1px solid var(--border)",flexShrink:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+                      <span style={{fontSize:19,fontWeight:800,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.02em"}}>{r.jobRef||"TBC"}</span>
+                      <span style={{fontSize:10.5,fontWeight:700,padding:"2px 9px",borderRadius:99,background:sc.bg,color:sc.text}}>{sc.label}</span>
+                    </div>
+                    <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{r.id}{r.revision?` · v${r.revision}`:""}</div>
+                  </div>
+                  <button onClick={close} aria-label="Close" style={{background:"var(--bg-subtle2)",border:"none",borderRadius:9,width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"var(--text-secondary)",flexShrink:0}}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              </div>
+              {/* body */}
+              <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
+                <div style={{marginBottom:24}}>
+                  {kv("Site", r.site||"—")}
+                  {kv("Trade", r.trade)}
+                  {kv("Items", items.length)}
+                  {kv("Quotes", `${quotesIn} of ${quotesTotal} in`)}
+                  {r.budget?kv("Budget", r.budget):null}
+                  {r.rfqDeadline?kv("Respond by", new Date(r.rfqDeadline).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})):null}
+                  {kv("Raised by", r.createdByName||nameFor(r.createdBy))}
+                  {r.created?kv("Created", new Date(r.created).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})):null}
+                </div>
+
+                {items.length>0 && (
+                  <div style={{marginBottom:24}}>
+                    <div style={secLbl}>Materials</div>
+                    {items.map((it,i)=>{ const m=stockMatchesFor(it.description, stock); return (
+                      <div key={i} style={{display:"flex",alignItems:"baseline",gap:10,padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
+                        <span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0,minWidth:52}}>{it.quantity||"—"} {it.unit||""}</span>
+                        <span style={{fontSize:13,color:"var(--text-primary)",flex:1,minWidth:0,overflowWrap:"anywhere"}}>{it.description}{m.length>0 && <span style={{display:"inline-flex",alignItems:"center",gap:3,marginLeft:8,fontSize:9.5,fontWeight:700,color:"var(--green-deep)",background:"var(--green-light)",borderRadius:99,padding:"1px 7px",verticalAlign:"middle"}}><Icon name="package" size={9}/>In stock</span>}</span>
+                      </div>
+                    );})}
+                  </div>
+                )}
+
+                {quotesTotal>0 && (
+                  <div style={{marginBottom:24}}>
+                    <div style={secLbl}>Suppliers ({quotesTotal})</div>
+                    {(r.sentTo||[]).map((s,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+                        <span style={{fontSize:13,color:"var(--text-primary)",overflowWrap:"anywhere"}}>{s.name||"Supplier"}</span>
+                        <span style={{fontSize:10,fontWeight:700,padding:"2px 9px",borderRadius:99,flexShrink:0,background:s.saved?"var(--green-light)":"var(--bg-subtle2)",color:s.saved?"var(--green-dark)":"var(--text-tertiary)"}}>{s.saved?"Quote in":"Awaiting"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {r.notes && (
+                  <div style={{marginBottom:6}}>
+                    <div style={secLbl}>Notes</div>
+                    <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.55,background:"var(--bg-subtle2)",borderRadius:10,padding:"12px 14px"}}>{r.notes}</div>
+                  </div>
+                )}
+              </div>
+              {/* footer actions */}
+              <div style={{borderTop:"1px solid var(--border)",padding:"14px 22px",flexShrink:0,background:"var(--bg-card-solid)"}}>
+                {isAwaiting && !canContinue ? (
+                  <button disabled style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"var(--bg-subtle2)",color:"var(--text-tertiary)",fontSize:14,fontWeight:700,cursor:"not-allowed"}}>Awaiting a buyer</button>
+                ) : (
+                  <button onClick={()=>closeAnd(()=>openRequest(r))} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    {canContinue?"Continue this request":"Open request"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                  </button>
+                )}
+                <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:10}}>
+                  <button className="rq-act" onClick={()=>closeAnd(()=>handleDuplicate(r))}>Duplicate</button>
+                  {canReviseR && <button className="rq-act" onClick={()=>closeAnd(()=>handleRevise(r))}>Revise</button>}
+                  <button className="rq-act" onClick={()=>closeAnd(()=>{setEditModal(r);setEditForm({jobRef:r.jobRef,site:r.site,status:r.status,notes:r.notes||""});})}>Edit</button>
+                  <button className="rq-act" onClick={()=>closeAnd(()=>setActivityModal(r))}>Log{r.activity?.length?` (${r.activity.length})`:""}</button>
+                  {can.deleteItems(myRole) && (r.archived
+                    ? <button className="rq-act" onClick={()=>closeAnd(()=>handleRestore(r.id))}>Restore</button>
+                    : <button className="rq-act danger" onClick={()=>closeAnd(()=>setDeleteConfirm(r))}>Archive</button>)}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {needsOnboarding && (
         <CompanyOnboarding session={session} initial={settings} multiCompany={myCompanies.length > 1} onChooseDifferent={onRechoose} onComplete={async (vals)=>{ const next = {...settings, ...vals}; saveSettings(vals); if (cloudEnabled && cloudUserId) { try { await cloudPush(cloudUserId, "piq_settings", next); } catch { showToast("Set up on this device, but cloud sync failed - check your connection and re-save in Settings.","warn"); } } }} />
