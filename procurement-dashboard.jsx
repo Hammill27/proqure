@@ -2442,6 +2442,17 @@ function fmtOrderMoney(v) {
   return "£" + num.toLocaleString("en-GB", hasDec?{minimumFractionDigits:2,maximumFractionDigits:2}:{maximumFractionDigits:0});
 }
 
+// ---- Multi-buyer soft lock (lease model) ------------------------------------
+// A record (request/order) carries an optional lock {by, byName, at}. It is a
+// LEASE, not a check-out: a heartbeat refreshes `at` while the holder works, and
+// the lock is considered active only while fresh. If the holder leaves, crashes
+// or forgets, it silently expires after LOCK_LEASE_MS and frees itself. Anyone
+// can "Take over" a live lock too, so nothing ever gets stuck. Buyer-space only.
+const LOCK_LEASE_MS = 3 * 60 * 1000;
+function lockActive(lock){ return !!(lock && lock.by && lock.at && (Date.now() - new Date(lock.at).getTime() < LOCK_LEASE_MS)); }
+function lockHeldByOther(lock, myEmail){ return lockActive(lock) && (lock.by||"").toLowerCase() !== (myEmail||"").toLowerCase(); }
+function lockIsMine(lock, myEmail){ return lockActive(lock) && (lock.by||"").toLowerCase() === (myEmail||"").toLowerCase(); }
+
 // ---- Project cost capture (Phase 1 financials) ------------------------------
 // Manual project costs live in piq_costs as an array of entries. They sit ALONGSIDE
 // the procurement orders (which stay the source of truth for materials), so the
@@ -2928,6 +2939,7 @@ const ICON_PATHS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7 1.1V21a2 2 0 01-4 0v-.1A1.6 1.6 0 007.3 19l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00-1.1-2.7H3a2 2 0 010-4h.1A1.6 1.6 0 004.8 7.3l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9.4a1.6 1.6 0 001-1.5V3a2 2 0 014 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9.4a1.6 1.6 0 001.5 1H21a2 2 0 010 4h-.1a1.6 1.6 0 00-1.5 1z"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
   clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   truck: '<path d="M1 3h13v10H1z"/><path d="M14 6h4l3 3v4h-7z"/><circle cx="6" cy="17" r="2"/><circle cx="17" cy="17" r="2"/>',
   store: '<path d="M3 9l1.5-5h15L21 9M4 9v10a1 1 0 001 1h14a1 1 0 001-1V9M3 9h18"/>',
   question: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 0c0 1.7-2.5 2-2.5 4"/><line x1="12" y1="17" x2="12" y2="17.01"/>',
@@ -4649,8 +4661,31 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   // continues it into the wizard at the review step (step 2). editingReqId is set to the
   // same id so, on send, handleSendEmails updates THIS request in place as a first send
   // (not a revision) — it then flows into Quotes exactly like a from-scratch request.
-  function handleContinueList(r) {
+  // ---- Soft-lock claim / release / heartbeat (buyers only) ------------------
+  const lockName = settings.contactName || (myMember&&myMember.name) || myEmail;
+  const claimRequest = (id, force=false) => {
+    if (!can.sendRFQ(myRole)) return;
+    setRequests(p=>p.map(r=>{
+      if (r.id!==id) return r;
+      if (!force && lockHeldByOther(r.lock, myEmail)) return r;
+      return {...r, lock:{by:myEmail, byName:lockName, at:new Date().toISOString()}};
+    }));
+  };
+  const releaseRequest = (id) => { if(!id) return; setRequests(p=>p.map(r=> r.id===id && lockIsMine(r.lock,myEmail) ? {...r, lock:null} : r)); };
+  const claimOrder = (id, force=false) => {
+    if (!can.sendRFQ(myRole)) return;
+    setOrders(p=>p.map(o=>{
+      if (o.id!==id) return o;
+      if (!force && lockHeldByOther(o.lock, myEmail)) return o;
+      return {...o, lock:{by:myEmail, byName:lockName, at:new Date().toISOString()}};
+    }));
+  };
+  const releaseOrder = (id) => { if(!id) return; setOrders(p=>p.map(o=> o.id===id && lockIsMine(o.lock,myEmail) ? {...o, lock:null} : o)); };
+
+  function handleContinueList(r, opts={}) {
     if (!can.sendRFQ(myRole)) { showToast("Only a Buyer or Manager can send RFQs.","warn"); return; }
+    if (!opts.force && lockHeldByOther(r.lock, myEmail)) { showToast(`Being worked on by ${r.lock.byName||"another buyer"}. Use Take over to claim it.`,"warn"); return; }
+    claimRequest(r.id, !!opts.force);
     setEditingReqId(r.id);
     setJobRef(r.jobRef||"");
     setSite(r.site||"");
@@ -4674,12 +4709,14 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   // Open a request from a list/row. Engineer-issued lists ("awaiting-buyer") route into
   // the Raised material requests continuation (buyer/manager) rather than the Quotes page,
   // which only holds sent RFQs. Everything else opens its quotes card as before.
-  function openRequest(r) {
+  function openRequest(r, opts={}) {
     if (r.status === "awaiting-buyer") {
-      if (can.sendRFQ(myRole)) { handleContinueList(r); }
+      if (can.sendRFQ(myRole)) { handleContinueList(r, opts); }
       else { showToast("This list is with your buyer - they'll send the RFQ.","warn"); }
       return;
     }
+    if (can.sendRFQ(myRole) && !opts.force && lockHeldByOther(r.lock, myEmail)) { showToast(`Being worked on by ${r.lock.byName||"another buyer"}. Use Take over to claim it.`,"warn"); return; }
+    if (can.sendRFQ(myRole)) claimRequest(r.id, !!opts.force);
     const savedSet = savedQuoteSets.find(s=>s.reqId===r.id);
     setActiveReq(r);
     if (savedSet) { setAllAnalyses(savedSet.analyses); setApprovedQuoteId(savedSet.approvedId); setExpandedQuote(savedSet.analyses[0]?._id||null); setQuoteViewMode("cards"); }
@@ -4740,6 +4777,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   }
 
   function resetNewRequest() {
+    releaseRequest(editingReqId);
     setStep(1); setRawInput(""); setParsed(null); setJobRef(nextJobRef()); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
     setNrStep(1); setNrTradePicked(false); setCfgStep(1); setSendConfirm(false);
     setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
@@ -4915,6 +4953,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     setActiveReq(prev=>({...prev,status:"approved",documents:[...(prev.documents||[]),doc]}));
     setApprovedQuoteId(qa?._id||null);
     setSavedQuoteSets(prev => prev.map(s => s.reqId===activeReq.id ? {...s, status:"approved", approvedId:qa?._id||null, analyses:allAnalyses.length?allAnalyses:s.analyses} : s));
+    releaseRequest(activeReq.id);
     // Clear the active in-progress view so the page shows the saved list
     setTimeout(()=>{ setActiveReq(null); setAllAnalyses([]); setExpandedQuote(null); }, 1200);
     logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});meter("posRaised");meter("posMaterials");
@@ -5201,6 +5240,24 @@ ${settings.company||""}`;
   const [drawerOrderId, setDrawerOrderId] = useState(null);
   const [orderNoteDraft, setOrderNoteDraft] = useState("");
   const [collapsedOrderGroups, setCollapsedOrderGroups] = useState({ lastWeek:true, earlier:true });
+
+  // Keep my lock warm while I'm actively working a request (wizard/quotes) or an order.
+  useEffect(()=>{
+    if (!can.sendRFQ(myRole)) return;
+    const reqId = editingReqId || (activeReq&&activeReq.id) || null;
+    const ordId = drawerOrderId || null;
+    if (!reqId && !ordId) return;
+    const beat = ()=>{
+      const now = new Date().toISOString();
+      if (reqId) setRequests(p=>p.map(r=> r.id===reqId && lockIsMine(r.lock,myEmail) ? {...r, lock:{...r.lock, at:now}} : r));
+      if (ordId) setOrders(p=>p.map(o=> o.id===ordId && lockIsMine(o.lock,myEmail) ? {...o, lock:{...o.lock, at:now}} : o));
+    };
+    const t = setInterval(beat, 60000);
+    return ()=>clearInterval(t);
+  }, [editingReqId, activeReq&&activeReq.id, drawerOrderId, myRole, myEmail]);
+
+  // A buyer opening an order to work it claims the lease.
+  useEffect(()=>{ if (drawerOrderId && can.sendRFQ(myRole)) claimOrder(drawerOrderId); }, [drawerOrderId]);
   const [fullOrderSections, setFullOrderSections] = useState({});
   const [orderSearch, setOrderSearch] = useState("");
   const [orderStatusFilter, setOrderStatusFilter] = useState("all");
@@ -7900,7 +7957,7 @@ Rules:
               ):(
                 <div>
                   {/* Back to saved list */}
-                  <button onClick={()=>{setActiveReq(null);setAllAnalyses([]);setExpandedQuote(null);}} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"transparent",border:"none",cursor:"pointer",padding:"4px 0",marginBottom:12}}>
+                  <button onClick={()=>{releaseRequest(activeReq?.id);setActiveReq(null);setAllAnalyses([]);setExpandedQuote(null);}} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,fontWeight:600,color:"var(--text-secondary)",background:"transparent",border:"none",cursor:"pointer",padding:"4px 0",marginBottom:12}}>
                     <Icon name="arrow_right" size={15} style={{transform:"rotate(180deg)"}}/> Back to all quotes
                   </button>
                   {/* Request header */}
@@ -9172,6 +9229,7 @@ Rules:
                         <span style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.01em"}}>{o.poNumber}</span>
                         <OrderPill o={o}/>
                         {o.isQuickPO && <QuickPOTag/>}
+                        {can.sendRFQ(myRole) && lockHeldByOther(o.lock, myEmail) && <span title={`Being worked on by ${o.lock.byName}`} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:700,color:"#B45309",background:"rgba(217,119,6,0.12)",border:"1px solid rgba(217,119,6,0.25)",borderRadius:20,padding:"2px 8px"}}><Icon name="lock" size={9} color="#B45309"/>{o.lock.byName}</span>}
                       </div>
                       <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.supplier||"Supplier"} · {o.jobRef||"—"}{o.site?` · ${o.site}`:""}{active&&dueTxt?` · due ${dueTxt}`:""}</div>
                       {reason && <div style={{fontSize:11,fontWeight:600,color:"#D97706",marginTop:4,display:"inline-flex",alignItems:"center",gap:4}}><Icon name="flag" size={10} color="#D97706"/>{reason}</div>}
@@ -9467,6 +9525,7 @@ Rules:
                       <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
                         <span style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.01em"}}>{r.jobRef||"TBC"}</span>
                         <StatusPill r={r} orders={orders}/>
+                        {can.sendRFQ(myRole) && lockHeldByOther(r.lock, myEmail) && <span title={`Being worked on by ${r.lock.byName}`} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:700,color:"#B45309",background:"rgba(217,119,6,0.12)",border:"1px solid rgba(217,119,6,0.25)",borderRadius:20,padding:"2px 8px"}}><Icon name="lock" size={9} color="#B45309"/>{r.lock.byName}</span>}
                       </div>
                       <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.site||"Site TBC"} · {r.trade} · {nItems} item{nItems===1?"":"s"}<span style={{opacity:0.55}}> · {r.id}</span></div>
                       {reason && <div style={{fontSize:11,fontWeight:600,color:"#D97706",marginTop:4,display:"inline-flex",alignItems:"center",gap:4}}><Icon name="flag" size={10} color="#D97706"/>{reason}</div>}
@@ -11481,17 +11540,29 @@ Rules:
               </div>
               {/* footer actions */}
               <div style={{borderTop:"1px solid var(--border)",padding:"14px 22px",flexShrink:0,background:"var(--bg-card-solid)"}}>
-                {isAwaiting && !canContinue ? (
-                  <button disabled style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"var(--bg-subtle2)",color:"var(--text-tertiary)",fontSize:14,fontWeight:700,cursor:"not-allowed"}}>Awaiting a buyer</button>
-                ) : linkedOrder ? (
+                {linkedOrder ? (
                   <button onClick={()=>closeAnd(()=>{ setView("orders"); setDrawerOrderId(linkedOrder.id); })} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
                     View order <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,opacity:0.85}}>{linkedOrder.poNumber}</span> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                   </button>
+                ) : isAwaiting && !canContinue ? (
+                  <button disabled style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"var(--bg-subtle2)",color:"var(--text-tertiary)",fontSize:14,fontWeight:700,cursor:"not-allowed"}}>Awaiting a buyer</button>
+                ) : can.sendRFQ(myRole) && lockHeldByOther(r.lock, myEmail) ? (
+                  <div>
+                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderRadius:12,background:"rgba(217,119,6,0.10)",border:"1px solid rgba(217,119,6,0.28)",marginBottom:10}}>
+                      <Icon name="lock" size={16} color="#B45309"/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:"#B45309"}}>Being worked on by {r.lock.byName}</div>
+                        <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:1}}>Started {relTime(r.lock.at)} · locked to avoid two people working it at once</div>
+                      </div>
+                    </div>
+                    <button onClick={()=>{ if(window.confirm(`${r.lock.byName} currently has this request open. Take it over and start working on it yourself?`)) closeAnd(()=>openRequest(r,{force:true})); }} style={{width:"100%",padding:"12px",borderRadius:12,border:"1px solid var(--border)",background:"var(--bg-subtle2)",color:"var(--text-primary)",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Take over</button>
+                  </div>
                 ) : (
                   <button onClick={()=>closeAnd(()=>openRequest(r))} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 18px rgba(30,158,99,0.28)",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8}}>
                     {canContinue?"Continue this request":quotesTotal>0?"View quotes":"Open request"} <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                   </button>
                 )}
+                {can.sendRFQ(myRole) && lockIsMine(r.lock, myEmail) && <button onClick={()=>releaseRequest(r.id)} style={{marginTop:8,width:"100%",padding:"9px",borderRadius:10,border:"none",background:"transparent",color:"var(--text-tertiary)",fontSize:12,fontWeight:600,cursor:"pointer"}}>You have this open · Release lock</button>}
                 <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:10}}>
                   <button className="rq-act" onClick={()=>closeAnd(()=>handleDuplicate(r))}>Duplicate</button>
                   {canReviseR && <button className="rq-act" onClick={()=>closeAnd(()=>handleRevise(r))}>Revise</button>}
@@ -11509,8 +11580,9 @@ Rules:
       {drawerOrderId && (()=>{
         const o = (orders||[]).find(x=>x.id===drawerOrderId);
         if(!o) return null;
-        const close = ()=>setDrawerOrderId(null);
-        const canAct = can.viewCosts(myRole);
+        const close = ()=>{ releaseOrder(drawerOrderId); setDrawerOrderId(null); };
+        const lockedOtherO = can.sendRFQ(myRole) && lockHeldByOther(o.lock, myEmail);
+        const canAct = can.viewCosts(myRole) && !lockedOtherO;
         const steps = [{key:"pending-send",label:"Ready to send"},{key:"sent",label:"Sent"},{key:"confirmed",label:"Confirmed"},{key:"delivered",label:"Delivered"}];
         const isCancelled = o.status==="cancelled";
         const stepIdx = isCancelled ? -1 : steps.findIndex(s=>s.key===o.status);
@@ -11576,6 +11648,20 @@ Rules:
                   </div>
                 )}
 
+                {/* Lock banner */}
+                {lockedOtherO && (
+                  <div style={{marginBottom:20}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderRadius:12,background:"rgba(217,119,6,0.10)",border:"1px solid rgba(217,119,6,0.28)"}}>
+                      <Icon name="lock" size={16} color="#B45309"/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:"#B45309"}}>Being worked on by {o.lock.byName}</div>
+                        <div style={{fontSize:11.5,color:"var(--text-tertiary)",marginTop:1}}>Started {relTime(o.lock.at)} · actions are paused to avoid a clash</div>
+                      </div>
+                      <button onClick={()=>{ if(window.confirm(`${o.lock.byName} currently has this order open. Take it over?`)) claimOrder(o.id, true); }} style={{flexShrink:0,padding:"8px 12px",borderRadius:10,border:"1px solid var(--border)",background:"var(--bg-card-solid)",color:"var(--text-primary)",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Take over</button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Overview */}
                 <div style={{marginBottom:22}}>
                   {kv("Supplier", o.supplier||"—")}
@@ -11606,7 +11692,7 @@ Rules:
                   <div style={{marginBottom:22}}>
                     <div style={secLbl}>{o.status==="delivered"?"Delivery":"Next step"}</div>
 
-                    {o.status==="pending-send" && !canAct && (
+                    {o.status==="pending-send" && !canAct && !lockedOtherO && (
                       <div style={{fontSize:12.5,color:"var(--text-secondary)",padding:"12px 14px",background:"var(--bg-subtle2)",borderRadius:10,border:"1px solid var(--border)",lineHeight:1.5}}>The buyer is arranging this order. You'll be able to sign off the delivery here once it's on its way.</div>
                     )}
 
