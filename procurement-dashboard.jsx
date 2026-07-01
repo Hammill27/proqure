@@ -3978,7 +3978,13 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     if (!can.sendRFQ(myRole)) { handleIssueToBuyer(); return; }
     setLoading(true); setLoadMsg("Generating RFQ email...");
     try {
-      const email = await generateRFQ(parsed.items, jobRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress, collectFrom);
+      // Finalise the job ref against the very latest committed data right before the email
+      // is written (fresh requests only - continue/revise keep their existing ref). This
+      // guarantees the emailed ref and the saved record match, and picks up any refs other
+      // people have committed since this draft was opened.
+      const useRef = editingReqId ? jobRef : nextJobRef();
+      if (!editingReqId && useRef !== jobRef) setJobRef(useRef);
+      const email = await generateRFQ(parsed.items, useRef, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress, collectFrom);
       setRfqEmail(email);
       setStep(3);
     } catch(e) { showToast("AI error: "+e.message,"warn"); }
@@ -4052,7 +4058,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   // Launch the guided Quick PO wizard as its own page (buyers/managers only).
   function openQuickPO() {
     if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
-    setQuickPO({ items:[{ description:"", quantity:"", unit:"", unitPrice:"" }], deliveryMethod:"direct" });
+    setQuickPO({ items:[{ description:"", quantity:"", unit:"", unitPrice:"" }], deliveryMethod:"direct", jobRefAuto:true });
     setView("quickpo");
   }
 
@@ -4064,6 +4070,10 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     if (!itemsValid && !(form.summary||"").trim()) { showToast("Add at least one item or a description.","warn"); return; }
     const hasSupplier = (form.newSupplier && (form.newSupplierName||"").trim()) || (!form.newSupplier && form.supplierId);
     if (!hasSupplier) { showToast("Pick a supplier (or add one) before raising the PO.","warn"); return; }
+    // Finalise the job ref at the moment of raising: auto = next in the shared sequence
+    // (so it reverts/advances based on what's actually been committed by then); a manual
+    // ref (used to link to an existing job) is respected as typed.
+    const finalJobRef = form.jobRefAuto ? nextJobRef() : ((form.jobRef||"").trim() || nextJobRef());
 
     // Resolve or create the supplier
     let supplier = null;
@@ -4096,7 +4106,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     }));
     const order = {
       id: poNum, reqId: null, createdBy: myEmail,
-      jobRef: (form.jobRef||"").trim() || "Quick PO",
+      jobRef: finalJobRef,
       site: (form.site||"").trim() || "",
       trade: form.trade || "",
       supplier: supplier?.name || form.newSupplierName || "",
@@ -4371,10 +4381,12 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   function handleIssueToBuyer() {
     if (!parsed || !(parsed.items||[]).length) { showToast("Add some materials first.","warn"); return; }
     const newId = `RFQ-${Date.now().toString().slice(-6)}`;
+    // Finalise the job ref against the latest committed data at the moment of issue.
+    const finalRef = editingReqId ? (jobRef||"TBC") : nextJobRef();
     const r = {
       id: newId,
       pqRef: makePqRef(),
-      jobRef:jobRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
+      jobRef:finalRef||"TBC", site:site||"Site TBC", trade, notes:requestNotes, budget:requestBudget,
       status: "awaiting-buyer",
       createdBy: myEmail, createdByRole: myRole,
       createdByName: settings.contactName || (myMember&&myMember.name) || myEmail,
@@ -4618,7 +4630,10 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     const yr = new Date().getFullYear();
     const re = new RegExp("^JOB-" + yr + "-(\\d+)$");
     let max = 0;
-    (requests||[]).forEach(r=>{ const m=(r.jobRef||"").trim().match(re); if(m){ const n=parseInt(m[1],10); if(n>max) max=n; } });
+    const scan = (arr) => (arr||[]).forEach(r=>{ const m=(r.jobRef||"").trim().match(re); if(m){ const n=parseInt(m[1],10); if(n>max) max=n; } });
+    // Draw from every committed source so requests, Quick PO orders and hires share
+    // one sequence and can never be handed the same number.
+    scan(requests); scan(orders); scan(hires);
     return "JOB-" + yr + "-" + String(max+1).padStart(3,"0");
   }
 
@@ -8870,6 +8885,7 @@ Rules:
             suppliers={suppliers}
             stock={stock}
             isMobile={isMobile}
+            nextJobRef={nextJobRef}
             onRaise={handleQuickPO}
             onBack={()=>{ setQuickPO(null); setView("orders"); }}
             onAiFill={aiParseQuickPO}
@@ -8953,6 +8969,7 @@ Rules:
                           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
                             <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{order.poNumber}</span>
                             <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:curStep.bg,color:curStep.color}}>{curStep.label}</span>
+                            {order.isQuickPO && <span title="Raised directly as a Quick PO - did not go through the RFQ/quote process" style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"rgba(217,119,6,0.12)",color:"#D97706",letterSpacing:"0.03em",textTransform:"uppercase"}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>Quick PO</span>}
                           </div>
                           <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{order.supplier} · {order.jobRef} · {order.site}</div>
                         </div>
@@ -9000,6 +9017,7 @@ Rules:
                               <div style={{marginTop:12}}>
                                 <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Supplier</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{order.supplier}</span></div>
                                 <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Job ref</span><span style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{order.jobRef}</span></div>
+                                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Order type</span><span style={{fontSize:12,fontWeight:700,color:order.isQuickPO?"#D97706":"var(--green-dark)"}}>{order.isQuickPO?"Quick PO (direct)":"Standard (RFQ)"}</span></div>
                                 {order.estimatedTotal&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:12,color:"var(--text-secondary)"}}>Total</span><span style={{fontSize:12,fontWeight:700,color:"var(--green-dark)",fontFamily:"monospace"}}>{order.estimatedTotal}</span></div>}
                               </div>
                             </div>
@@ -11246,7 +11264,7 @@ Rules:
 // Request experience (two-pane, progress bar, nr-* styling) but captures a phone-agreed
 // order. Opens as its own view (does not touch the Orders page); on raise it hands off
 // to handleQuickPO, which fires the ProQure success animation. ---
-function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, onBack, onAiFill, onScan }) {
+function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, nextJobRef, onRaise, onBack, onAiFill, onScan }) {
   const TOTAL = 6;
   const [qp, setQp] = useState(1);
   const upd = (patch) => setForm(f => ({ ...f, ...patch }));
@@ -11299,6 +11317,8 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
   const lbl = { fontSize:11, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6, display:"block" };
   const deliveryLabel = form.deliveryMethod==="collect" ? "Collection" : form.deliveryMethod==="alternative" ? "Alternative address" : "Deliver to site";
   const filledItems = items.filter(i=>(i.description||"").trim());
+  const provisionalRef = nextJobRef ? nextJobRef() : "";
+  const displayRef = form.jobRefAuto ? provisionalRef : (form.jobRef||"");
 
   return (
     <div className="stagger-in" style={{maxWidth:1120}}>
@@ -11419,7 +11439,21 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
             <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
               <div style={{flex:"1 1 160px"}}>
                 <label style={lbl}>Job ref</label>
-                <input className="nr-field" style={{fontSize:15}} value={form.jobRef||""} onChange={e=>upd({jobRef:e.target.value})} placeholder="e.g. JOB-104"/>
+                {form.jobRefAuto ? (
+                  <div>
+                    <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"var(--green-light)",border:"1px solid var(--green-deep)",borderRadius:12,padding:"11px 14px"}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green-deep)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                      <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:700,color:"var(--green-dark)"}}>{provisionalRef}</span>
+                      <span style={{fontSize:10.5,fontWeight:700,color:"var(--green-deep)",textTransform:"uppercase",letterSpacing:"0.04em"}}>Auto</span>
+                    </div>
+                    <button onClick={()=>upd({jobRefAuto:false,jobRef:""})} style={{display:"block",marginTop:7,background:"none",border:"none",color:"var(--text-secondary)",fontSize:12,cursor:"pointer",textDecoration:"underline",padding:0}}>Link to an existing job instead</button>
+                  </div>
+                ) : (
+                  <div>
+                    <input className="nr-field" style={{fontSize:15}} value={form.jobRef||""} onChange={e=>upd({jobRef:e.target.value})} placeholder="e.g. JOB-2026-003"/>
+                    <button onClick={()=>upd({jobRefAuto:true,jobRef:""})} style={{display:"block",marginTop:7,background:"none",border:"none",color:"var(--text-secondary)",fontSize:12,cursor:"pointer",textDecoration:"underline",padding:0}}>Use an auto number instead</button>
+                  </div>
+                )}
               </div>
               <div style={{flex:"1 1 160px"}}>
                 <label style={lbl}>Site (optional)</label>
@@ -11449,7 +11483,7 @@ function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, on
               </div>
               <div style={{padding:"16px 18px",background:"var(--bg-card-solid)"}}>
                 <SummaryRow label="Supplier" value={supplierName || <span style={{color:"var(--red)"}}>Not selected</span>}/>
-                {form.jobRef && <SummaryRow label="Job ref" value={form.jobRef}/>}
+                {displayRef && <SummaryRow label="Job ref" value={<span>{displayRef}{form.jobRefAuto && <span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:600,marginLeft:6}}>auto</span>}</span>}/>}
                 {form.site && <SummaryRow label="Site" value={form.site}/>}
                 {filledItems.length>0 && (
                   <div style={{borderTop:"1px solid var(--border)",marginTop:10,paddingTop:10}}>
