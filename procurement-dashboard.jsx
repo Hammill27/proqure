@@ -470,6 +470,58 @@ const STATUS = {
   approved: { bg:"var(--green-light)",   text:"var(--green-deep)",label:"Approved" },
 };
 
+// --- Unified request status design language (reused across BuildFlow) ---------
+// Colour carries the meaning before the label is even read. Icon reinforces it.
+const STATUS_UI = {
+  needs:            { label:"Needs attention", color:"#D97706", bg:"rgba(217,119,6,0.12)",  icon:"flag" },
+  overdue:          { label:"Overdue",         color:"#DC2626", bg:"rgba(220,38,38,0.12)",  icon:"clock" },
+  "awaiting-buyer": { label:"With buyer",      color:"#2563EB", bg:"rgba(37,99,235,0.12)",  icon:"inbox" },
+  "awaiting-approval":{ label:"Awaiting approval", color:"#B45309", bg:"rgba(180,83,9,0.12)", icon:"clock" },
+  pending:          { label:"Pending quotes",  color:"#7C3AED", bg:"rgba(124,58,237,0.12)", icon:"send" },
+  received:         { label:"Quotes in",       color:"#15824F", bg:"var(--green-light)",    icon:"check" },
+  approved:         { label:"Ready to order",  color:"#0F766E", bg:"rgba(15,118,110,0.12)", icon:"check_circle" },
+  ordered:          { label:"Ordered",         color:"#0891B2", bg:"rgba(8,145,178,0.12)",  icon:"truck" },
+  draft:            { label:"Draft",           color:"#64748B", bg:"rgba(100,116,139,0.14)",icon:"edit" },
+  archived:         { label:"Archived",        color:"#94A3B8", bg:"rgba(148,163,184,0.16)",icon:"package" },
+};
+// Resolve a request's *effective* status, folding in derived states (overdue,
+// ordered, archived) that aren't stored on the record itself.
+function reqStatusKey(r, orders) {
+  if (r.archived) return "archived";
+  if ((orders||[]).some(o=>o.reqId===r.id)) return "ordered";
+  const qi=(r.sentTo||[]).filter(s=>s.saved).length, qt=(r.sentTo||[]).length;
+  if (r.status==="pending" && r.rfqDeadline) { const dl=new Date(r.rfqDeadline).getTime(); if(!isNaN(dl)&&dl<Date.now()&&qi<qt) return "overdue"; }
+  return STATUS_UI[r.status] ? r.status : "draft";
+}
+function StatusPill({ r, orders, big=false }) {
+  const m = STATUS_UI[reqStatusKey(r, orders)] || STATUS_UI.draft;
+  const fs = big?11.5:10.5;
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:fs,fontWeight:700,padding:"2px 9px 2px 7px",borderRadius:99,background:m.bg,color:m.color,lineHeight:1.5,whiteSpace:"nowrap"}}>
+      <Icon name={m.icon} size={fs+1} color={m.color}/>{m.label}
+    </span>
+  );
+}
+// Relative "time ago" for the request inbox - keeps it feeling alive.
+function relTime(ts) {
+  if (!ts) return "";
+  const d = typeof ts==="number"?ts:new Date(ts).getTime();
+  if (isNaN(d)) return "";
+  const diff = Date.now()-d, mins=Math.floor(diff/60000), hrs=Math.floor(diff/3600000), days=Math.floor(diff/86400000);
+  if (diff<60000) return "just now";
+  if (mins<60) return mins+"m ago";
+  if (hrs<24) return hrs+"h ago";
+  if (days===1) return "yesterday";
+  if (days<7) return days+"d ago";
+  return new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+}
+// Most recent moment on a request: latest activity entry, else created date.
+function lastActivityTs(r) {
+  let t = r.created ? new Date(r.created+"T00:00:00").getTime() : 0;
+  (r.activity||[]).forEach(a=>{ const x=new Date(a.ts).getTime(); if(!isNaN(x)&&x>t) t=x; });
+  return t;
+}
+
 // --- AI helpers ---------------------------------------------------------------
 // Per-company AI usage metering. The app component registers a recorder on
 // mount; callAI / callAIWeb and the raw /api/ai vision callsites report the
@@ -5091,6 +5143,8 @@ ${settings.company||""}`;
   const [reqSearch, setReqSearch] = useState("");
   const [drawerReq, setDrawerReq] = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState({ lastWeek:true, earlier:true });
+  const [reqFilterBuyer, setReqFilterBuyer] = useState("all");
+  const [fullSections, setFullSections] = useState({});
   const [showArchived, setShowArchived] = useState(false);
   const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
@@ -6570,12 +6624,13 @@ Rules:
       .qp-hero .nr-field:hover:not(:focus){border-color:#E8890B}
       .qp-hero .nr-field:focus{border-color:#D97706;box-shadow:0 0 0 4px rgba(217,119,6,0.16)}
       /* All-requests: clickable rows + right-hand detail drawer */
-      .rq-row{transition:background 0.15s ease,box-shadow 0.15s ease,border-color 0.15s ease;cursor:pointer;position:relative}
-      .rq-row:hover{background:var(--bg-subtle)}
-      .rq-row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent;transition:background 0.15s ease}
-      .rq-row:hover::before{background:var(--green-deep)}
-      .rq-row .rq-chev{transition:transform 0.16s ease,color 0.16s ease;color:var(--text-tertiary)}
-      .rq-row:hover .rq-chev{transform:translateX(3px);color:var(--green-dark)}
+      .rq-row{transition:background 0.16s ease,box-shadow 0.16s ease,transform 0.14s ease;cursor:pointer;position:relative;outline:none}
+      .rq-row:hover{background:var(--bg-subtle);transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,0,0,0.07);z-index:1}
+      .rq-row:focus-visible{background:var(--bg-subtle);box-shadow:0 0 0 2px var(--green-deep) inset;z-index:1}
+      .rq-row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--rowaccent,var(--green-deep));opacity:0;transition:opacity 0.16s ease}
+      .rq-row:hover::before,.rq-row:focus-visible::before{opacity:1}
+      .rq-row .rq-chev{transition:transform 0.18s ease,color 0.16s ease;color:var(--text-tertiary)}
+      .rq-row:hover .rq-chev,.rq-row:focus-visible .rq-chev{transform:translateX(3px);color:var(--rowaccent,var(--green-dark))}
       @keyframes rqFade{from{opacity:0}to{opacity:1}}
       @keyframes rqSlide{from{transform:translateX(100%)}to{transform:translateX(0)}}
       .rq-scrim{animation:rqFade 0.2s ease}
@@ -6588,8 +6643,11 @@ Rules:
       .rq-group-hd{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;cursor:pointer;padding:8px 4px;font-family:inherit;text-align:left}
       .rq-group-hd .rq-gchev{transition:transform 0.18s ease;color:var(--text-tertiary);flex-shrink:0}
       .rq-group-hd.collapsed .rq-gchev{transform:rotate(-90deg)}
-      .rq-group-body{border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-card-solid);box-shadow:var(--shadow-sm)}
+      .rq-group-body{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--bg-card-solid);box-shadow:var(--shadow-sm)}
       .rq-group-body .rq-row + .rq-row{border-top:1px solid var(--border)}
+      .rq-group-body .rq-row:first-child{border-top-left-radius:var(--radius-lg);border-top-right-radius:var(--radius-lg)}
+      .rq-group-body .rq-row:last-child{border-bottom-left-radius:var(--radius-lg);border-bottom-right-radius:var(--radius-lg)}
+      @media (prefers-reduced-motion:reduce){.rq-row:hover{transform:none!important;box-shadow:none!important}}
       @media (prefers-reduced-motion:reduce){
         .nr-step > *,.nr-chip.sel,.nr-bar-fill::after,.nr-mic.live .nr-ico,.nr-mic.live .nr-ring,.nr-mic.live .nr-eq i,.nr-ac{animation:none!important}
         .nr-btn-primary:hover,.nr-chip:hover,.nr-opt:hover,.nr-mic:hover,.nr-back:hover{transform:none!important}
@@ -9275,20 +9333,33 @@ Rules:
             {/* Filter bar */}
             {requests.length>0&&(
               <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
-                <input value={reqSearch} onChange={e=>setReqSearch(e.target.value)} placeholder="Search job ref or site..." style={{flex:"1 1 200px",minWidth:160,padding:"9px 14px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
+                <input value={reqSearch} onChange={e=>setReqSearch(e.target.value)} placeholder="Search job ref, site or trade..." style={{flex:"1 1 200px",minWidth:160,padding:"9px 14px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none"}}/>
                 <select value={reqFilterStatus} onChange={e=>setReqFilterStatus(e.target.value)} style={{padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",cursor:"pointer"}}>
                   <option value="all">All statuses</option>
-                  <option value="draft">Draft</option>
+                  <option value="awaiting-buyer">With buyer</option>
                   <option value="pending">Pending quotes</option>
-                  <option value="received">Quotes received</option>
-                  <option value="approved">Approved</option>
+                  <option value="overdue">Overdue</option>
+                  <option value="received">Quotes in</option>
+                  <option value="approved">Ready to order</option>
+                  <option value="ordered">Ordered</option>
+                  <option value="draft">Draft</option>
                 </select>
                 <select value={reqFilterTrade} onChange={e=>setReqFilterTrade(e.target.value)} style={{padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",cursor:"pointer"}}>
                   <option value="all">All trades</option>
                   {TRADES.map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
-                {(reqFilterStatus!=="all"||reqFilterTrade!=="all"||reqSearch)&&(
-                  <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqSearch("");}} style={{fontSize:12,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer"}}>Clear</button>
+                {can.viewAllJobs(myRole) && (()=>{
+                  const buyers = [...new Map(requests.filter(r=>!r.archived).map(r=>[(r.createdBy||"").toLowerCase(), r.createdByName||nameFor(r.createdBy)||r.createdBy])).entries()].filter(([e])=>e);
+                  if (buyers.length<2) return null;
+                  return (
+                    <select value={reqFilterBuyer} onChange={e=>setReqFilterBuyer(e.target.value)} style={{padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",cursor:"pointer"}}>
+                      <option value="all">All buyers</option>
+                      {buyers.map(([email,name])=><option key={email} value={email}>{name}</option>)}
+                    </select>
+                  );
+                })()}
+                {(reqFilterStatus!=="all"||reqFilterTrade!=="all"||reqFilterBuyer!=="all"||reqSearch)&&(
+                  <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqFilterBuyer("all");setReqSearch("");}} style={{fontSize:12,color:"var(--text-secondary)",background:"var(--bg-subtle2)",border:"none",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer"}}>Clear</button>
                 )}
               </div>
             )}
@@ -9297,10 +9368,12 @@ Rules:
               <button onClick={()=>setShowArchived(true)} style={{fontSize:12,fontWeight:600,padding:"7px 16px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:showArchived?"var(--green-dark)":"var(--bg-card-solid)",color:showArchived?"white":"var(--text-secondary)"}}>Archived ({requests.filter(r=>r.archived).length})</button>
             </div>
             {(()=>{
+              const CAP = 25; // rows rendered per section before "show more" (keeps the DOM small at scale)
               const list = (can.viewAllJobs(myRole)?requests:requests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail)).filter(r=>{
                 if(showArchived ? !r.archived : r.archived) return false;
-                if(reqFilterStatus!=="all"&&r.status!==reqFilterStatus) return false;
-                if(reqFilterTrade!=="all"&&r.trade!==reqFilterTrade) return false;
+                if(reqFilterStatus!=="all" && reqStatusKey(r, orders)!==reqFilterStatus) return false;
+                if(reqFilterTrade!=="all" && r.trade!==reqFilterTrade) return false;
+                if(reqFilterBuyer!=="all" && (r.createdBy||"").toLowerCase()!==reqFilterBuyer) return false;
                 if(reqSearch){ const q=reqSearch.toLowerCase(); if(!((r.jobRef||"").toLowerCase().includes(q)||(r.site||"").toLowerCase().includes(q)||(r.id||"").toLowerCase().includes(q)||(r.trade||"").toLowerCase().includes(q))) return false; }
                 return true;
               });
@@ -9316,75 +9389,94 @@ Rules:
                 <Card>
                   <div style={{textAlign:"center",padding:"36px 0",color:"var(--text-tertiary)"}}>
                     <div style={{fontSize:14,marginBottom:8}}>No requests match your search</div>
-                    <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqSearch("");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear search &amp; filters</button>
+                    <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqFilterBuyer("all");setReqSearch("");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear search &amp; filters</button>
                   </div>
                 </Card>
               );
 
-              // Single reusable row
-              const rowFor = (r) => {
-                const sc = STATUS[r.status]||STATUS.draft;
-                const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
-                const quotesTotal = (r.sentTo||[]).length;
+              // Needs-attention: a *tightly defined* triage bucket, each with a reason the
+              // user can see, so it's never a dumping ground for anything with a badge.
+              const attnReason = (r) => {
+                if(!can.sendRFQ(myRole)) return null;
+                if((orders||[]).some(o=>o.reqId===r.id)) return null;
+                const qi=(r.sentTo||[]).filter(s=>s.saved).length, qt=(r.sentTo||[]).length;
+                if(r.rfqDeadline){ const dl=new Date(r.rfqDeadline).getTime(); if(!isNaN(dl)&&dl<Date.now()&&qi<qt) return "RFQ deadline passed"; }
+                if(r.status==="awaiting-buyer") return "Buyer action needed";
+                if(r.status==="returned"||r.returnedToBuyer) return "Returned to buyer";
+                if(qi>0 && r.status!=="approved") return qt>0&&qi>=qt ? "All replies in - ready to review" : "Replies in - ready to review";
+                return null;
+              };
+
+              // Keyboard navigation across visible rows (Linear/Notion feel).
+              const onRowKey = (e, r) => {
+                if(e.key==="Enter"||e.key===" "){ e.preventDefault(); setDrawerReq(r); return; }
+                if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+                  e.preventDefault();
+                  const rows=[...document.querySelectorAll(".rq-row")];
+                  const i=rows.indexOf(e.currentTarget);
+                  const next = e.key==="ArrowDown"?rows[i+1]:rows[i-1];
+                  if(next) next.focus();
+                }
+              };
+
+              const rowFor = (r, reason) => {
+                const accent = (STATUS_UI[reqStatusKey(r, orders)]||STATUS_UI.draft).color;
                 const nItems = (r.items||[]).length;
+                const updated = relTime(lastActivityTs(r));
                 return (
-                  <div key={r.id} className="rq-row" onClick={()=>setDrawerReq(r)} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px 14px 18px"}}>
-                    <span style={{width:9,height:9,borderRadius:"50%",background:sc.text,flexShrink:0,boxShadow:`0 0 0 3px ${sc.bg}`}}/>
+                  <div key={r.id} className="rq-row" tabIndex={0} role="button" onKeyDown={e=>onRowKey(e,r)} onClick={()=>setDrawerReq(r)} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px 13px 18px","--rowaccent":accent}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
                         <span style={{fontSize:14.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.01em"}}>{r.jobRef||"TBC"}</span>
-                        <span style={{fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:99,background:sc.bg,color:sc.text}}>{sc.label}</span>
+                        <StatusPill r={r} orders={orders}/>
                       </div>
                       <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.site||"Site TBC"} · {r.trade} · {nItems} item{nItems===1?"":"s"}<span style={{opacity:0.55}}> · {r.id}</span></div>
+                      {reason && <div style={{fontSize:11,fontWeight:600,color:"#D97706",marginTop:4,display:"inline-flex",alignItems:"center",gap:4}}><Icon name="flag" size={10} color="#D97706"/>{reason}</div>}
                     </div>
-                    <div style={{textAlign:"center",flexShrink:0,minWidth:44}}>
-                      <div style={{fontSize:13,fontWeight:700,color:quotesIn>0?"var(--green-dark)":"var(--text-secondary)",fontFamily:"'JetBrains Mono',monospace"}}>{quotesIn}/{quotesTotal}</div>
-                      <div style={{fontSize:9,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>replies</div>
-                    </div>
+                    {updated && <span style={{fontSize:11,color:"var(--text-tertiary)",flexShrink:0,whiteSpace:"nowrap"}}>{updated}</span>}
                     <svg className="rq-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M9 18l6-6-6-6"/></svg>
                   </div>
                 );
               };
 
-              // When searching or in the Archive view, chronology matters less than the hit -
-              // show a single flat, newest-first result list.
+              // A capped body: renders first CAP rows, with a "show all" toggle beyond that.
+              const bodyFor = (key, items, reasonMap) => {
+                const full = !!fullSections[key];
+                const shown = full ? items : items.slice(0, CAP);
+                return (
+                  <div className="rq-group-body">
+                    {shown.map(r=>rowFor(r, reasonMap?reasonMap.get(r.id):null))}
+                    {items.length>CAP && (
+                      <button onClick={()=>setFullSections(p=>({...p,[key]:!full}))} style={{width:"100%",padding:"11px",background:"var(--bg-subtle)",border:"none",borderTop:"1px solid var(--border)",color:"var(--green-dark)",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{full?"Show less":`Show all ${items.length}`}</button>
+                    )}
+                  </div>
+                );
+              };
+
+              // Searching or Archive view -> single flat, newest-first result list.
               if(reqSearch.trim() || showArchived){
+                const flat = [...list].sort((a,b)=>lastActivityTs(b)-lastActivityTs(a));
                 return (
                   <div>
-                    <div style={{fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"0 0 10px 4px"}}>{showArchived?"Archived":"Results"} · {list.length}</div>
-                    <div className="rq-group-body">{list.map(rowFor)}</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"0 0 10px 4px"}}>{showArchived?"Archived":"Results"} · {flat.length}</div>
+                    {bodyFor("flat", flat, null)}
                   </div>
                 );
               }
 
-              // Intelligent grouping (Active, no search)
-              const dayMs = 86400000;
-              const now = new Date();
+              // Intelligent grouping by most-recent activity (Active, no search).
+              const dayMs = 86400000, now = new Date();
               const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
               const startYesterday = startToday - dayMs;
               const dow = (new Date(startToday).getDay()+6)%7; // 0 = Monday
               const startWeek = startToday - dow*dayMs;
               const startLastWeek = startWeek - 7*dayMs;
-              const bucketOf = (r) => {
-                const d = r.created ? new Date(r.created+"T00:00:00").getTime() : NaN;
-                if(isNaN(d)) return "earlier";
-                if(d>=startToday) return "today";
-                if(d>=startYesterday) return "yesterday";
-                if(d>=startWeek) return "thisWeek";
-                if(d>=startLastWeek) return "lastWeek";
-                return "earlier";
-              };
-              const needsAttention = (r) => {
-                if(!can.sendRFQ(myRole)) return false;
-                if((orders||[]).some(o=>o.reqId===r.id)) return false;
-                if(r.status==="awaiting-buyer") return true;
-                const qi=(r.sentTo||[]).filter(s=>s.saved).length, qt=(r.sentTo||[]).length;
-                if(qi>0 && r.status!=="approved") return true;
-                if(r.rfqDeadline){ const dl=new Date(r.rfqDeadline).getTime(); if(!isNaN(dl)&&dl<Date.now()&&qi<qt) return true; }
-                return false;
-              };
+              const bucketOf = (t) => t>=startToday?"today":t>=startYesterday?"yesterday":t>=startWeek?"thisWeek":t>=startLastWeek?"lastWeek":"earlier";
+
+              const sorted = [...list].sort((a,b)=>lastActivityTs(b)-lastActivityTs(a));
+              const reasonMap = new Map();
               const g = { needs:[], today:[], yesterday:[], thisWeek:[], lastWeek:[], earlier:[] };
-              list.forEach(r=>{ if(needsAttention(r)) g.needs.push(r); else g[bucketOf(r)].push(r); });
+              sorted.forEach(r=>{ const rs=attnReason(r); if(rs){ reasonMap.set(r.id,rs); g.needs.push(r); } else { g[bucketOf(lastActivityTs(r))].push(r); } });
               const sections = [
                 { key:"needs",     label:"Needs attention", items:g.needs, attn:true },
                 { key:"today",     label:"Today",           items:g.today },
@@ -9407,11 +9499,7 @@ Rules:
                           <span style={{fontSize:13,fontWeight:700,color:sec.attn?"#D97706":"var(--text-primary)",letterSpacing:"-0.01em"}}>{sec.label}</span>
                           <span style={{fontSize:11,fontWeight:700,padding:"1px 8px",borderRadius:99,background:sec.attn?"rgba(217,119,6,0.12)":"var(--bg-subtle2)",color:sec.attn?"#D97706":"var(--text-tertiary)"}}>{sec.items.length}</span>
                         </button>
-                        {!collapsed && (
-                          <div className="rq-group-body" style={{marginTop:8, ...(sec.attn?{borderColor:"rgba(217,119,6,0.35)"}:{})}}>
-                            {sec.items.map(rowFor)}
-                          </div>
-                        )}
+                        {!collapsed && <div style={{marginTop:8}}>{bodyFor(sec.key, sec.items, sec.attn?reasonMap:null)}</div>}
                       </div>
                     );
                   })}
@@ -11232,7 +11320,6 @@ Rules:
 
       {drawerReq && (()=>{
         const r = drawerReq;
-        const sc = STATUS[r.status]||STATUS.draft;
         const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
         const quotesTotal = (r.sentTo||[]).length;
         const items = r.items||[];
@@ -11260,7 +11347,7 @@ Rules:
                   <div style={{minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
                       <span style={{fontSize:19,fontWeight:800,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.02em"}}>{r.jobRef||"TBC"}</span>
-                      <span style={{fontSize:10.5,fontWeight:700,padding:"2px 9px",borderRadius:99,background:sc.bg,color:sc.text}}>{sc.label}</span>
+                      <StatusPill r={r} orders={orders} big/>
                     </div>
                     <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{r.id}{r.revision?` · v${r.revision}`:""}</div>
                   </div>
@@ -11281,6 +11368,7 @@ Rules:
                   {r.rfqDeadline?kv("Respond by", new Date(r.rfqDeadline).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})):null}
                   {kv("Raised by", r.createdByName||nameFor(r.createdBy))}
                   {r.created?kv("Created", new Date(r.created).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})):null}
+                  {(()=>{ const t=lastActivityTs(r); return t?kv("Last updated", relTime(t)):null; })()}
                 </div>
 
                 {items.length>0 && (
