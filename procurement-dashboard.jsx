@@ -5199,6 +5199,7 @@ ${settings.company||""}`;
   const [reqTab, setReqTab] = useState("active"); // active | completed | archived
   const [orderTab, setOrderTab] = useState("active"); // active | completed | archived
   const [drawerOrderId, setDrawerOrderId] = useState(null);
+  const [orderNoteDraft, setOrderNoteDraft] = useState("");
   const [collapsedOrderGroups, setCollapsedOrderGroups] = useState({ lastWeek:true, earlier:true });
   const [fullOrderSections, setFullOrderSections] = useState({});
   const [orderSearch, setOrderSearch] = useState("");
@@ -11514,6 +11515,12 @@ Rules:
         const isCancelled = o.status==="cancelled";
         const stepIdx = isCancelled ? -1 : steps.findIndex(s=>s.key===o.status);
         const acts = [...(o.activity||[])].reverse();
+        const addOrderNote = () => {
+          const text = orderNoteDraft.trim(); if(!text) return;
+          const c = { ts:new Date().toISOString(), user: settings.contactName || (myMember&&myMember.name) || myEmail, text };
+          setOrders(p=>p.map(x=>x.id===o.id?{...x, comments:[...(x.comments||[]), c]}:x));
+          setOrderNoteDraft("");
+        };
         const secLbl = {fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:9};
         const kv = (label,val)=> (val==null||val==="") ? null : (
           <div style={{display:"flex",justifyContent:"space-between",gap:16,padding:"9px 0",borderBottom:"1px solid var(--border)"}}>
@@ -11662,6 +11669,25 @@ Rules:
                     )}
                   </div>
                 )}
+
+                {/* Notes & comments - anyone on the job can post; separate from the activity log */}
+                <div style={{marginBottom:22}}>
+                  <div style={secLbl}>Notes</div>
+                  {o.notes && (
+                    <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.55,background:"var(--bg-subtle2)",borderRadius:10,padding:"12px 14px",marginBottom:10}}>{o.notes}</div>
+                  )}
+                  {(o.comments||[]).map((c,i)=>(
+                    <div key={i} style={{background:"var(--bg-subtle2)",borderRadius:10,padding:"10px 14px",marginBottom:8}}>
+                      <div style={{fontSize:13,color:"var(--text-primary)",lineHeight:1.5,overflowWrap:"anywhere"}}>{c.text}</div>
+                      <div style={{fontSize:10.5,color:"var(--text-muted)",marginTop:5}}>{c.user||"Someone"} · {relTime(c.ts)}</div>
+                    </div>
+                  ))}
+                  {!o.notes && !(o.comments||[]).length && <div style={{fontSize:12.5,color:"var(--text-tertiary)",marginBottom:10}}>No notes yet. Leave one for the site team or buyer - delivery issues, part-loads, anything worth recording.</div>}
+                  <div style={{display:"flex",gap:8,alignItems:"flex-end",marginTop:4}}>
+                    <textarea value={orderNoteDraft} onChange={e=>setOrderNoteDraft(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); addOrderNote(); } }} placeholder="Add a note..." rows={2} style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:10,fontSize:13,outline:"none",resize:"none",fontFamily:"inherit",background:"var(--bg-card-solid)",color:"var(--text-primary)"}}/>
+                    <button onClick={addOrderNote} disabled={!orderNoteDraft.trim()} style={{flexShrink:0,padding:"10px 14px",borderRadius:10,border:"none",background:orderNoteDraft.trim()?"var(--green-dark)":"var(--bg-subtle2)",color:orderNoteDraft.trim()?"#fff":"var(--text-muted)",fontSize:13,fontWeight:700,cursor:orderNoteDraft.trim()?"pointer":"default",fontFamily:"inherit"}}>Add</button>
+                  </div>
+                </div>
 
                 {/* Activity */}
                 {acts.length>0 && (
