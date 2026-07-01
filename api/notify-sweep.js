@@ -14,6 +14,11 @@
 // Scheduled an hour before the digest (vercel.json) so a morning's overdue items
 // are already present and roll into that day's digest email.
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
+function secretEq(a, b) {
+  const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -38,7 +43,7 @@ function workflowArgs(company, n) {
 export default async function handler(req, res) {
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!CRON_SECRET) return res.status(500).json({ error: "Sweep not configured (set CRON_SECRET)." });
-  if (bearer !== CRON_SECRET) return res.status(401).json({ error: "Unauthorised." });
+  if (!secretEq(bearer, CRON_SECRET)) return res.status(401).json({ error: "Unauthorised." });
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: "Server not configured." });
 
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
