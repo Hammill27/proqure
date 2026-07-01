@@ -12,6 +12,13 @@
 // Service role (bypasses RLS); secured by CRON_SECRET exactly like notify-sweep /
 // notify-digest. Scheduled in vercel.json.
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
+// Constant-time secret comparison so the CRON_SECRET can't be recovered by timing
+// how long a wrong guess takes (a plain !== leaks a match byte-by-byte).
+function secretEq(a, b) {
+  const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -22,7 +29,7 @@ const DAY = 86400000;
 export default async function handler(req, res) {
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!CRON_SECRET) return res.status(500).json({ error: "Sweep not configured (set CRON_SECRET)." });
-  if (bearer !== CRON_SECRET) return res.status(401).json({ error: "Unauthorised." });
+  if (!secretEq(bearer, CRON_SECRET)) return res.status(401).json({ error: "Unauthorised." });
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: "Server not configured." });
 
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
