@@ -3299,7 +3299,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     // backstop behind handleNav's VIEW_MIN_ROLE check and must list EVERY restricted
     // view. NB: "quotes" is intentionally omitted — engineers get a cost-stripped
     // quotes view reached from dashboard/request cards (prices gated by can.viewCosts).
-    const need = ({ suppliers:2, om:2, reports:2, library:2, team:3, settings:3 })[view];
+    const need = ({ suppliers:2, om:2, reports:2, library:2, quickpo:2, team:3, settings:3 })[view];
     if (!need) return;
     const teamLoaded = Array.isArray(team) && team.length > 0;
     const meKnown = !!myMember;
@@ -4049,6 +4049,13 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     } catch(e){ showToast("Scan failed: "+e.message,"warn"); return null; }
   };
 
+  // Launch the guided Quick PO wizard as its own page (buyers/managers only).
+  function openQuickPO() {
+    if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
+    setQuickPO({ items:[{ description:"", quantity:"", unit:"", unitPrice:"" }], deliveryMethod:"direct" });
+    setView("quickpo");
+  }
+
   // Quick PO - raise a purchase order directly from a phone-agreed price, skipping the RFQ/quote flow.
   // Buyers & Managers only. Skips manager approval (emergency). Logged as a direct/phone order.
   function handleQuickPO(form) {
@@ -4112,8 +4119,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     meter("posRaised");
     meter("posMaterials");
     logActivity("Quick PO raised", `${poNum} - ${supplier?.name||form.newSupplierName||"supplier"} (direct/phone order)${form.total?` - ${form.total}`:""}`, { entity:"order", jobRef:order.jobRef });
-    setQuickPO(null);
-    setSuccessOverlay({ message:`Quick PO ${poNum} raised`, onReveal:()=>{ setView("orders"); } });
+    setSuccessOverlay({ message:`Quick PO ${poNum} raised`, onReveal:()=>{ setQuickPO(null); setView("orders"); } });
     // Advisory price sanity-check (non-blocking) - compares to past orders for similar items
     if (form.total && can.viewCosts(myRole)) {
       const itemsText = lineItems.map(i=>`${i.quantity} ${i.description}`).join(", ") || form.summary || "";
@@ -6979,7 +6985,7 @@ Rules:
                 {label:"New request",  sub:"Voice or type",         icon:"mic", action:()=>{setView("new");resetNewRequest();}, accent:"#5B5BD6"},
                 {label:"Analyse",      sub:"Compare quotes",        icon:"search", action:()=>{setView("quotes");}, accent:"#7E6DD6"},
                 {label:"Orders",       sub:`${orders.filter(o=>o.status==="pending-send").length} ready to send`, icon:"package", action:()=>setView("orders"), accent:"#1E9E63"},
-                ...(can.raisePO(myRole) ? [{label:"Quick PO", sub:"Phone-agreed order", icon:"clock", action:()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]}), accent:"#D97706"}] : [{label:"Measure", sub:"Estimate materials", icon:"ruler", action:()=>setView("measure"), accent:"#C77D2E"}]),
+                ...(can.raisePO(myRole) ? [{label:"Quick PO", sub:"Phone-agreed order", icon:"clock", action:openQuickPO, accent:"#D97706"}] : [{label:"Measure", sub:"Estimate materials", icon:"ruler", action:()=>setView("measure"), accent:"#C77D2E"}]),
               ].map((q,qi)=>(
                 <button key={q.label} onClick={q.action} className="stagger-in" style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:isMobile?"14px 16px":"18px 22px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",cursor:"pointer",textAlign:"left",boxShadow:"var(--shadow-sm)",transition:"transform 0.2s cubic-bezier(0.16,1,0.3,1),box-shadow 0.2s",position:"relative",overflow:"hidden",minHeight:isMobile?90:104,animationDelay:`${0.2+qi*0.04}s`}}
                   onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
@@ -8849,6 +8855,20 @@ Rules:
           </div>
         )}
 
+        {view==="quickpo"&&quickPO&&(
+          <QuickPOFlow
+            form={quickPO}
+            setForm={setQuickPO}
+            suppliers={suppliers}
+            stock={stock}
+            isMobile={isMobile}
+            onRaise={handleQuickPO}
+            onBack={()=>{ setQuickPO(null); setView("orders"); }}
+            onAiFill={aiParseQuickPO}
+            onScan={scanQuickPO}
+          />
+        )}
+
         {view==="orders"&&(
           <div className="stagger-in" style={{maxWidth:900}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
@@ -8858,7 +8878,7 @@ Rules:
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                 {can.raisePO(myRole)&&(
-                  <button onClick={()=>setQuickPO({items:[{description:"",quantity:"",unitPrice:""}]})} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"#fff",background:"#D97706",border:"none",borderRadius:"var(--radius-sm)",padding:"8px 15px",cursor:"pointer",fontWeight:700}}>
+                  <button onClick={openQuickPO} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:13,color:"#fff",background:"#D97706",border:"none",borderRadius:"var(--radius-sm)",padding:"8px 15px",cursor:"pointer",fontWeight:700}}>
                     <Icon name="clock" size={13} style={{verticalAlign:"-2px"}}/>Quick PO
                   </button>
                 )}
@@ -10875,19 +10895,7 @@ Rules:
         );
       })()}
 
-      {quickPO&&(
-        <QuickPOModal
-          form={quickPO}
-          setForm={setQuickPO}
-          suppliers={suppliers}
-          stock={stock}
-          isMobile={isMobile}
-          onSubmit={handleQuickPO}
-          onClose={()=>setQuickPO(null)}
-          onAiFill={aiParseQuickPO}
-          onScan={scanQuickPO}
-        />
-      )}
+      {/* Quick PO is now a guided full-page flow (view==="quickpo"), not a modal */}
 
       {editSup&&(
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1002,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setEditSup(null)}>
@@ -11226,6 +11234,252 @@ Rules:
 }
 
 // --- Quick PO modal (emergency direct PO) ------------------------------------
+// --- Quick PO guided flow: a full-page, step-by-step wizard that mirrors the New
+// Request experience (two-pane, progress bar, nr-* styling) but captures a phone-agreed
+// order. Opens as its own view (does not touch the Orders page); on raise it hands off
+// to handleQuickPO, which fires the ProQure success animation. ---
+function QuickPOFlow({ form, setForm, suppliers, stock=[], isMobile, onRaise, onBack, onAiFill, onScan }) {
+  const TOTAL = 5;
+  const [qp, setQp] = useState(1);
+  const upd = (patch) => setForm(f => ({ ...f, ...patch }));
+  const items = form.items || [{ description:"", quantity:"", unit:"", unitPrice:"" }];
+  const setItem = (idx, patch) => upd({ items: items.map((it,i)=>i===idx?{...it,...patch}:it) });
+  const addItem = () => upd({ items: [...items, { description:"", quantity:"", unit:"", unitPrice:"" }] });
+  const removeItem = (idx) => upd({ items: items.filter((_,i)=>i!==idx) });
+
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+
+  const approvedSuppliers = suppliers.filter(s => s.tier !== "ad-hoc");
+  const adhocSuppliers = suppliers.filter(s => s.tier === "ad-hoc");
+  const supplierName = form.newSupplier ? (form.newSupplierName||"") : (suppliers.find(s=>String(s.id)===String(form.supplierId))?.name || "");
+  const hasSupplier = !!(form.supplierId || (form.newSupplier && (form.newSupplierName||"").trim()));
+
+  const applyAi = (r) => {
+    if (!r) return;
+    const patch = {};
+    if (r.items && r.items.length) patch.items = r.items.map(it=>({description:it.description||"",quantity:it.quantity||"",unit:it.unit||"",unitPrice:it.unitPrice||""}));
+    if (r.total) patch.total = r.total;
+    if (r.summary) patch.summary = r.summary;
+    if (r.supplierName) {
+      const match = suppliers.find(s => s.name.toLowerCase() === r.supplierName.toLowerCase())
+                 || suppliers.find(s => s.name.toLowerCase().includes(r.supplierName.toLowerCase()) || r.supplierName.toLowerCase().includes(s.name.toLowerCase()));
+      if (match) { patch.supplierId = match.id; patch.newSupplier = false; }
+      else { patch.newSupplier = true; patch.newSupplierName = r.supplierName; }
+    }
+    upd(patch);
+  };
+  const runAi = async () => { if (!aiText.trim() || !onAiFill) return; setAiBusy(true); try { applyAi(await onAiFill(aiText.trim(), suppliers.map(s=>s.name))); } catch {} setAiBusy(false); };
+  const runScan = async (file) => { if (!file || !onScan) return; setScanBusy(true); try { applyAi(await onScan(file)); } catch {} setScanBusy(false); };
+  const { listening, supported:voiceOk, start:micStart, stop:micStop } = useSpeechRecognition({ onTranscript:(t)=>setAiText(t), onFinal:(t)=>setAiText(t) });
+
+  const canNext = qp===1 ? hasSupplier : true;
+  const back = () => { if (qp>1) setQp(s=>s-1); else onBack(); };
+  const next = () => setQp(s=>Math.min(TOTAL, s+1));
+
+  const frames = [
+    { eyebrow:"Supplier",       title:"Who's this order with?",         sub:"Pick a merchant you already use, or add one on the spot. You can also say, type or scan the order and let AI fill it all in." },
+    { eyebrow:"Items",          title:"What did they agree to supply?", sub:"Add each line here, or skip it and just describe the order with a total on the next step - whichever's quicker." },
+    { eyebrow:"Agreed price",   title:"What's the phone-agreed total?",  sub:"The price you settled on the call. Add any notes for the record while it's fresh." },
+    { eyebrow:"Job & delivery", title:"Where's it going?",              sub:"Tag the job this is for, then choose delivery or collection." },
+    { eyebrow:"Review",         title:"Ready to raise?",                sub:"Check it over. This creates a numbered PO straight into Orders and logs it as a direct/phone order - no approval needed." },
+  ];
+  const fr = frames[qp-1];
+
+  const lbl = { fontSize:11, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6, display:"block" };
+  const deliveryLabel = form.deliveryMethod==="collect" ? "Collection" : form.deliveryMethod==="alternative" ? "Alternative address" : "Deliver to site";
+  const filledItems = items.filter(i=>(i.description||"").trim());
+
+  return (
+    <div className="stagger-in" style={{maxWidth:1120}}>
+      <div style={{marginBottom:18}}>
+        <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"4px 11px",borderRadius:99,background:"rgba(217,119,6,0.12)",marginBottom:10}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span style={{fontSize:11,fontWeight:700,color:"#D97706",letterSpacing:"0.06em",textTransform:"uppercase"}}>Quick PO</span>
+        </div>
+        <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Raise a quick purchase order</h1>
+      </div>
+
+      {/* progress bar + back */}
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:isMobile?22:30,minHeight:34}}>
+        <button className="nr-back" aria-label="Back" onClick={back}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg></button>
+        <div className="nr-bar"><div className="nr-bar-fill" style={{width:(qp/TOTAL*100)+"%"}}/></div>
+        <div className="num" style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:600,flexShrink:0,minWidth:64,textAlign:"right"}}>Step {qp} of {TOTAL}</div>
+      </div>
+
+      <div className="nr-step" key={qp} style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,0.82fr) minmax(0,1.1fr)",gap:isMobile?20:56,alignItems:"start"}}>
+        {/* LEFT framing */}
+        <div>
+          <div style={{fontSize:12,fontWeight:700,color:"#D97706",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>{fr.eyebrow}</div>
+          <h2 style={{fontSize:isMobile?24:30,fontWeight:800,letterSpacing:"-0.03em",lineHeight:1.1,margin:"0 0 12px",color:"var(--text-primary)"}}>{fr.title}</h2>
+          <p style={{fontSize:14.5,color:"var(--text-secondary)",lineHeight:1.6,margin:0,maxWidth:360}}>{fr.sub}</p>
+          {supplierName && qp>1 && (
+            <div style={{marginTop:20,display:"inline-flex",alignItems:"center",gap:8,background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:99,padding:"6px 13px"}}>
+              <span style={{fontSize:11.5,fontWeight:600,color:"var(--text-tertiary)"}}>With</span>
+              <span style={{fontSize:12.5,fontWeight:700,color:"var(--text-primary)"}}>{supplierName}</span>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT interaction */}
+        <div>
+          {/* STEP 1 - Supplier + AI fill */}
+          {qp===1 && (<>
+            <div style={{background:"var(--bg-subtle2)",border:"1px solid var(--border)",borderRadius:14,padding:"14px 16px",marginBottom:18}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#D97706",marginBottom:8,textTransform:"uppercase",letterSpacing:"0.04em"}}>Say, type or scan the order - AI fills it in</div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <input className="nr-field" style={{flex:1,fontSize:14,padding:"12px 14px"}} value={aiText} onChange={e=>setAiText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")runAi();}} placeholder='e.g. "10 lengths 22mm copper, £340 with Travis Perkins"'/>
+                {voiceOk && (
+                  <button onClick={()=>listening?micStop():micStart()} title={listening?"Stop":"Dictate"} style={{padding:"11px 12px",borderRadius:12,border:"1px solid var(--border)",background:listening?"#DC2626":"var(--bg-card-solid)",color:listening?"#fff":"var(--text-secondary)",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  </button>
+                )}
+                <label title="Scan a quote or delivery note" style={{padding:"11px 12px",borderRadius:12,border:"1px solid var(--border)",background:scanBusy?"var(--border)":"var(--bg-card-solid)",color:"var(--text-secondary)",cursor:scanBusy?"wait":"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+                  <input type="file" accept="image/*,.pdf" capture="environment" disabled={scanBusy} style={{display:"none"}} onChange={e=>{if(e.target.files?.[0])runScan(e.target.files[0]);e.target.value="";}}/>
+                </label>
+                <button onClick={runAi} disabled={aiBusy||!aiText.trim()} style={{padding:"11px 16px",borderRadius:12,border:"none",background:aiBusy||!aiText.trim()?"var(--border)":"#D97706",color:"#fff",fontSize:13,fontWeight:700,cursor:aiBusy?"wait":"pointer",whiteSpace:"nowrap",flexShrink:0}}>{aiBusy?"...":"AI fill"}</button>
+              </div>
+              {listening && <div style={{fontSize:11,color:"#DC2626",marginTop:7,fontWeight:600}}>Listening… speak the order, then tap the mic again.</div>}
+              {scanBusy && <div style={{fontSize:11,color:"var(--text-secondary)",marginTop:7}}>Reading document…</div>}
+            </div>
+
+            <label style={lbl}>Supplier</label>
+            {!form.newSupplier ? (
+              <select className="nr-field" value={form.supplierId||""} onChange={e=>{ const v=e.target.value; if(v==="__new__"){upd({newSupplier:true,supplierId:null});} else {upd({supplierId:v,newSupplier:false});} }} style={{cursor:"pointer",appearance:"auto",fontSize:15}}>
+                <option value="">Select a supplier...</option>
+                {approvedSuppliers.length>0&&(<optgroup label="Approved suppliers">{approvedSuppliers.map(sp=><option key={sp.id} value={String(sp.id)}>{sp.name}</option>)}</optgroup>)}
+                {adhocSuppliers.length>0&&(<optgroup label="Ad-hoc suppliers">{adhocSuppliers.map(sp=><option key={sp.id} value={String(sp.id)}>{sp.name} (ad-hoc)</option>)}</optgroup>)}
+                <option value="__new__">+ Add a new supplier on the spot</option>
+              </select>
+            ) : (
+              <div style={{padding:"14px",border:"1px dashed var(--border)",borderRadius:12,background:"var(--bg-subtle2)"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <span style={{fontSize:12.5,fontWeight:700,color:"#D97706"}}>New ad-hoc supplier</span>
+                  <button onClick={()=>upd({newSupplier:false,newSupplierName:"",newSupplierEmail:""})} style={{background:"none",border:"none",color:"var(--text-secondary)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>pick existing instead</button>
+                </div>
+                <input className="nr-field" style={{marginBottom:10,fontSize:14}} value={form.newSupplierName||""} onChange={e=>upd({newSupplierName:e.target.value})} placeholder="Supplier name"/>
+                <input className="nr-field" style={{fontSize:14}} value={form.newSupplierEmail||""} onChange={e=>upd({newSupplierEmail:e.target.value})} placeholder="Email (optional)"/>
+                <div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:9,lineHeight:1.45}}>Saved as an <strong>ad-hoc</strong> supplier you can reuse. After 5 uses you'll be asked whether to add them to your approved list.</div>
+              </div>
+            )}
+          </>)}
+
+          {/* STEP 2 - Items */}
+          {qp===2 && (<>
+            {items.map((it,idx)=>(
+              <div key={idx} style={{border:"1px solid var(--border)",borderRadius:12,padding:12,marginBottom:10,background:"var(--bg-subtle2)"}}>
+                <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                  <input className="nr-field" style={{flex:1,fontSize:14,padding:"11px 13px"}} value={it.description||""} onChange={e=>setItem(idx,{description:e.target.value})} placeholder="Item description"/>
+                  {items.length>1 && <button onClick={()=>removeItem(idx)} title="Remove line" style={{background:"none",border:"none",color:"var(--text-secondary)",fontSize:22,cursor:"pointer",lineHeight:1,padding:"6px 4px 0",flexShrink:0}}>&times;</button>}
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <input className="nr-field" style={{flex:1,minWidth:0,fontSize:14,padding:"11px 13px"}} value={it.quantity||""} onChange={e=>setItem(idx,{quantity:e.target.value})} placeholder="Qty"/>
+                  <input className="nr-field" style={{flex:1,minWidth:0,fontSize:14,padding:"11px 13px"}} value={it.unit||""} onChange={e=>setItem(idx,{unit:e.target.value})} placeholder="Unit"/>
+                  <input className="nr-field" style={{flex:1,minWidth:0,fontSize:14,padding:"11px 13px"}} value={it.unitPrice||""} onChange={e=>setItem(idx,{unitPrice:e.target.value})} placeholder="Price"/>
+                </div>
+                {(()=>{ const m=stockMatchesFor(it.description, stock); if(!m.length) return null; const tq=m.reduce((s,x)=>s+(Number(x.qty)||0),0); const locs=[...new Set(m.map(x=>(x.location||"").trim()).filter(Boolean))]; return (
+                  <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:8,fontSize:10.5,fontWeight:700,color:"var(--green-deep)",background:"var(--green-light)",borderRadius:99,padding:"3px 9px"}} title={`Already in company stock${locs.length?` at ${locs.join(", ")}`:""} - you may not need to order this`}><Icon name="package" size={11}/>In stock: {tq}{locs.length?` · ${locs.join(", ")}`:""}</div>
+                ); })()}
+              </div>
+            ))}
+            <button onClick={addItem} style={{background:"none",border:"1px dashed var(--border)",color:"var(--green-dark)",fontSize:13,fontWeight:700,cursor:"pointer",borderRadius:10,padding:"11px",width:"100%"}}>+ Add another line</button>
+            <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:10}}>Prefer to keep it simple? Skip this and just enter a description and total on the next step.</div>
+          </>)}
+
+          {/* STEP 3 - Price & notes */}
+          {qp===3 && (<>
+            <label style={lbl}>Agreed total (the phone-quoted price)</label>
+            <input className="nr-field" style={{marginBottom:18,fontSize:17,fontFamily:"'JetBrains Mono',monospace"}} value={form.total||""} onChange={e=>upd({total:e.target.value})} placeholder="e.g. £420.00"/>
+            <label style={lbl}>Description / notes (optional)</label>
+            <textarea className="nr-field" style={{minHeight:96,resize:"vertical",fontSize:14}} value={form.summary||""} onChange={e=>upd({summary:e.target.value})} placeholder="e.g. Replacement pump agreed on phone with branch manager"></textarea>
+          </>)}
+
+          {/* STEP 4 - Job & delivery */}
+          {qp===4 && (<>
+            <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+              <div style={{flex:"1 1 160px"}}>
+                <label style={lbl}>Job ref</label>
+                <input className="nr-field" style={{fontSize:15}} value={form.jobRef||""} onChange={e=>upd({jobRef:e.target.value})} placeholder="e.g. JOB-104"/>
+              </div>
+              <div style={{flex:"1 1 160px"}}>
+                <label style={lbl}>Site (optional)</label>
+                <input className="nr-field" style={{fontSize:15}} value={form.site||""} onChange={e=>upd({site:e.target.value})} placeholder="Site / address"/>
+              </div>
+            </div>
+            <label style={lbl}>Delivery or collection</label>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(3,1fr)",gap:10,marginBottom:14}}>
+              {[["direct","Deliver to site"],["collect","Collection"],["alternative","Alternative address"]].map(([val,lab])=>{
+                const active=(form.deliveryMethod||"direct")===val;
+                return <button key={val} className={"nr-chip"+(active?" sel":"")} onClick={()=>upd({deliveryMethod:val})}>{lab}</button>;
+              })}
+            </div>
+            {(form.deliveryMethod||"direct")==="direct" && <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:14}}>Delivered to the site address entered above.</div>}
+            {form.deliveryMethod==="alternative" && <input className="nr-field" style={{marginBottom:14,fontSize:15}} value={form.collectFrom||""} onChange={e=>upd({collectFrom:e.target.value})} placeholder="Alternative delivery address"/>}
+            {form.deliveryMethod==="collect" && <input className="nr-field" style={{marginBottom:14,fontSize:15}} value={form.collectFrom||""} onChange={e=>upd({collectFrom:e.target.value})} placeholder="Collect from (branch / depot)"/>}
+            <label style={lbl}>Required by (optional)</label>
+            <input type="date" className="nr-field" style={{fontSize:15}} value={form.deliveryDate||""} onChange={e=>upd({deliveryDate:e.target.value})}/>
+          </>)}
+
+          {/* STEP 5 - Review */}
+          {qp===5 && (
+            <div style={{border:"1px solid var(--border)",borderRadius:14,overflow:"hidden",boxShadow:"var(--shadow-sm)"}}>
+              <div style={{background:"linear-gradient(135deg,#E8890B,#D97706)",padding:"14px 18px"}}>
+                <div style={{fontSize:14,fontWeight:800,color:"#fff"}}>Purchase order summary</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.85)"}}>Direct / phone order · no approval needed</div>
+              </div>
+              <div style={{padding:"16px 18px",background:"var(--bg-card-solid)"}}>
+                <SummaryRow label="Supplier" value={supplierName || <span style={{color:"var(--red)"}}>Not selected</span>}/>
+                {form.jobRef && <SummaryRow label="Job ref" value={form.jobRef}/>}
+                {form.site && <SummaryRow label="Site" value={form.site}/>}
+                {filledItems.length>0 && (
+                  <div style={{borderTop:"1px solid var(--border)",marginTop:10,paddingTop:10}}>
+                    {filledItems.map((it,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"baseline",gap:10,padding:"4px 0"}}>
+                        <span style={{fontSize:12.5,fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace",flexShrink:0,minWidth:54}}>{it.quantity||"—"} {it.unit||""}</span>
+                        <span style={{fontSize:13,color:"var(--text-primary)",flex:1,minWidth:0,overflowWrap:"anywhere"}}>{it.description}</span>
+                        {it.unitPrice && <span style={{fontSize:12.5,color:"var(--text-secondary)",fontFamily:"'JetBrains Mono',monospace"}}>{it.unitPrice}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {form.summary && <div style={{fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.55,marginTop:10,paddingTop:10,borderTop:"1px solid var(--border)"}}>{form.summary}</div>}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.04em"}}>Agreed total</span>
+                  <span style={{fontSize:20,fontWeight:800,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{form.total||"—"}</span>
+                </div>
+                <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid var(--border)"}}>
+                  <SummaryRow label="Delivery" value={deliveryLabel}/>
+                  {(form.deliveryMethod==="collect"||form.deliveryMethod==="alternative") && form.collectFrom && <SummaryRow label={form.deliveryMethod==="collect"?"From":"To"} value={form.collectFrom}/>}
+                  {form.deliveryDate && <SummaryRow label="Required by" value={new Date(form.deliveryDate).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}/>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* footer action */}
+          <div style={{marginTop:22,display:"flex",justifyContent:"flex-end"}}>
+            {qp<TOTAL
+              ? <button className="nr-btn nr-btn-primary" disabled={!canNext} onClick={next}>Next <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+              : <button className="nr-btn nr-btn-primary" disabled={!hasSupplier} onClick={()=>onRaise(form)}>Raise PO <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small label/value row used by the Quick PO review card.
+function SummaryRow({ label, value }) {
+  return (
+    <div style={{display:"flex",justifyContent:"space-between",gap:16,padding:"4px 0"}}>
+      <span style={{fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.04em",flexShrink:0}}>{label}</span>
+      <span style={{fontSize:13,color:"var(--text-primary)",fontWeight:600,textAlign:"right",minWidth:0,overflowWrap:"anywhere"}}>{value}</span>
+    </div>
+  );
+}
+
 function QuickPOModal({ form, setForm, suppliers, isMobile, onSubmit, onClose, onAiFill, onScan, stock=[] }) {
   const upd = (patch) => setForm(f => ({ ...f, ...patch }));
   const items = form.items || [{ description:"", quantity:"", unit:"", unitPrice:"" }];
