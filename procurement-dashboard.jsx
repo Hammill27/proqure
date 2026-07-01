@@ -472,33 +472,45 @@ const STATUS = {
 
 // --- Unified request status design language (reused across BuildFlow) ---------
 // Colour carries the meaning before the label is even read. Icon reinforces it.
+// IMPORTANT: Requests never track fulfilment. "Ordered" and "Completed" are
+// READ-ONLY reflections derived from the linked Order - the Request lifecycle
+// itself stops at Approved. Orders remains the system of record for fulfilment.
 const STATUS_UI = {
-  needs:            { label:"Needs attention", color:"#D97706", bg:"rgba(217,119,6,0.12)",  icon:"flag" },
-  overdue:          { label:"Overdue",         color:"#DC2626", bg:"rgba(220,38,38,0.12)",  icon:"clock" },
-  "awaiting-buyer": { label:"With buyer",      color:"#2563EB", bg:"rgba(37,99,235,0.12)",  icon:"inbox" },
+  needs:             { label:"Needs attention", color:"#D97706", bg:"rgba(217,119,6,0.12)",  icon:"flag" },
+  overdue:           { label:"Overdue",         color:"#DC2626", bg:"rgba(220,38,38,0.12)",  icon:"clock" },
+  draft:             { label:"Draft",           color:"#64748B", bg:"rgba(100,116,139,0.14)",icon:"edit" },
+  "awaiting-buyer":  { label:"With buyer",      color:"#2563EB", bg:"rgba(37,99,235,0.12)",  icon:"inbox" },
+  pending:           { label:"Pending quotes",  color:"#7C3AED", bg:"rgba(124,58,237,0.12)", icon:"send" },
+  received:          { label:"Quotes in",       color:"#0891B2", bg:"rgba(8,145,178,0.12)",  icon:"mail" },
+  "quotes-complete": { label:"Quotes complete", color:"#0F766E", bg:"rgba(15,118,110,0.12)", icon:"check" },
   "awaiting-approval":{ label:"Awaiting approval", color:"#B45309", bg:"rgba(180,83,9,0.12)", icon:"clock" },
-  pending:          { label:"Pending quotes",  color:"#7C3AED", bg:"rgba(124,58,237,0.12)", icon:"send" },
-  received:         { label:"Quotes in",       color:"#15824F", bg:"var(--green-light)",    icon:"check" },
-  approved:         { label:"Ready to order",  color:"#0F766E", bg:"rgba(15,118,110,0.12)", icon:"check_circle" },
-  ordered:          { label:"Ordered",         color:"#0891B2", bg:"rgba(8,145,178,0.12)",  icon:"truck" },
-  draft:            { label:"Draft",           color:"#64748B", bg:"rgba(100,116,139,0.14)",icon:"edit" },
-  archived:         { label:"Archived",        color:"#94A3B8", bg:"rgba(148,163,184,0.16)",icon:"package" },
+  approved:          { label:"Approved",        color:"#0F766E", bg:"rgba(15,118,110,0.12)", icon:"check_circle" },
+  ordered:           { label:"Ordered",         color:"#4F46E5", bg:"rgba(79,70,229,0.12)",  icon:"truck" },
+  completed:         { label:"Completed",       color:"#15824F", bg:"var(--green-light)",    icon:"check_circle" },
+  archived:          { label:"Archived",        color:"#94A3B8", bg:"rgba(148,163,184,0.16)",icon:"package" },
 };
-// Resolve a request's *effective* status, folding in derived states (overdue,
-// ordered, archived) that aren't stored on the record itself.
+// Resolve a request's *effective* status. Fulfilment states are derived from the
+// linked (non-cancelled) Order and never stored on the request itself.
 function reqStatusKey(r, orders) {
   if (r.archived) return "archived";
-  if ((orders||[]).some(o=>o.reqId===r.id)) return "ordered";
+  const linked = (orders||[]).find(o=>o.reqId===r.id && o.status!=="cancelled");
+  if (linked) return linked.status==="delivered" ? "completed" : "ordered";
   const qi=(r.sentTo||[]).filter(s=>s.saved).length, qt=(r.sentTo||[]).length;
   if (r.status==="pending" && r.rfqDeadline) { const dl=new Date(r.rfqDeadline).getTime(); if(!isNaN(dl)&&dl<Date.now()&&qi<qt) return "overdue"; }
+  if (r.status==="received") return (qt>0 && qi>=qt) ? "quotes-complete" : "received";
   return STATUS_UI[r.status] ? r.status : "draft";
 }
+// True once the linked Order has been delivered/signed off (drives the Completed tab).
+function reqIsCompleted(r, orders) { return reqStatusKey(r, orders)==="completed"; }
 function StatusPill({ r, orders, big=false }) {
-  const m = STATUS_UI[reqStatusKey(r, orders)] || STATUS_UI.draft;
+  const key = reqStatusKey(r, orders);
+  const m = STATUS_UI[key] || STATUS_UI.draft;
   const fs = big?11.5:10.5;
+  let label = m.label;
+  if (key==="received") { const qi=(r.sentTo||[]).filter(s=>s.saved).length, qt=(r.sentTo||[]).length; label = `Quotes ${qi}/${qt}`; }
   return (
     <span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:fs,fontWeight:700,padding:"2px 9px 2px 7px",borderRadius:99,background:m.bg,color:m.color,lineHeight:1.5,whiteSpace:"nowrap"}}>
-      <Icon name={m.icon} size={fs+1} color={m.color}/>{m.label}
+      <Icon name={m.icon} size={fs+1} color={m.color}/>{label}
     </span>
   );
 }
@@ -5145,7 +5157,7 @@ ${settings.company||""}`;
   const [collapsedGroups, setCollapsedGroups] = useState({ lastWeek:true, earlier:true });
   const [reqFilterBuyer, setReqFilterBuyer] = useState("all");
   const [fullSections, setFullSections] = useState({});
-  const [showArchived, setShowArchived] = useState(false);
+  const [reqTab, setReqTab] = useState("active"); // active | completed | archived
   const [cancelOrderConfirm, setCancelOrderConfirm] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
   const [trialResetConfirm, setTrialResetConfirm] = useState(false);
@@ -6989,7 +7001,7 @@ Rules:
                     const tradeColors={Plumbing:"#5B5BD6",HVAC:"#1E9E63",Electrical:"#C77D2E",Mechanical:"#7E6DD6",Ventilation:"#2BB873",Gas:"#D14343",Other:"#908F86"};
                     const col=tradeColors[s.trade]||"#5B5BD6";
                     return(
-                      <div key={s.trade} onClick={()=>{ setReqFilterTrade(s.trade); setReqFilterStatus("all"); setReqSearch(""); setShowArchived(false); setView("requests"); }} title={`View ${s.trade} requests`} style={{cursor:"pointer",borderRadius:8,padding:"5px 7px",margin:"0 -7px",transition:"background 0.15s"}}
+                      <div key={s.trade} onClick={()=>{ setReqFilterTrade(s.trade); setReqFilterStatus("all"); setReqSearch(""); setReqTab("active"); setView("requests"); }} title={`View ${s.trade} requests`} style={{cursor:"pointer",borderRadius:8,padding:"5px 7px",margin:"0 -7px",transition:"background 0.15s"}}
                         onMouseEnter={e=>{e.currentTarget.style.background="var(--bg-subtle2)";}}
                         onMouseLeave={e=>{e.currentTarget.style.background="transparent";}}>
                         <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
@@ -7051,7 +7063,7 @@ Rules:
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:10,flex:1,minWidth:120}}>
                         {pipeline.map(p=>(
-                          <div key={p.label} onClick={()=>{ setReqFilterStatus(p.status); setReqFilterTrade("all"); setReqSearch(""); setShowArchived(false); setView("requests"); }} title={`View ${p.label.toLowerCase()} requests`} style={{display:"flex",alignItems:"center",gap:9,cursor:"pointer",borderRadius:8,padding:"3px 6px",margin:"0 -6px",transition:"background 0.15s"}}
+                          <div key={p.label} onClick={()=>{ setReqFilterStatus(p.status); setReqFilterTrade("all"); setReqSearch(""); setReqTab("active"); setView("requests"); }} title={`View ${p.label.toLowerCase()} requests`} style={{display:"flex",alignItems:"center",gap:9,cursor:"pointer",borderRadius:8,padding:"3px 6px",margin:"0 -6px",transition:"background 0.15s"}}
                             onMouseEnter={e=>{e.currentTarget.style.background="var(--bg-subtle2)";}}
                             onMouseLeave={e=>{e.currentTarget.style.background="transparent";}}>
                             <span style={{width:10,height:10,borderRadius:3,background:p.color,flexShrink:0}}/>
@@ -9363,15 +9375,34 @@ Rules:
                 )}
               </div>
             )}
-            <div style={{display:"flex",gap:8,marginBottom:14}}>
-              <button onClick={()=>setShowArchived(false)} style={{fontSize:12,fontWeight:600,padding:"7px 16px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:!showArchived?"var(--green-dark)":"var(--bg-card-solid)",color:!showArchived?"white":"var(--text-secondary)"}}>Active</button>
-              <button onClick={()=>setShowArchived(true)} style={{fontSize:12,fontWeight:600,padding:"7px 16px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:showArchived?"var(--green-dark)":"var(--bg-card-solid)",color:showArchived?"white":"var(--text-secondary)"}}>Archived ({requests.filter(r=>r.archived).length})</button>
-            </div>
+            {(()=>{
+              const scoped = can.viewAllJobs(myRole)?requests:requests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail);
+              const nArchived = scoped.filter(r=>r.archived).length;
+              const nCompleted = scoped.filter(r=>!r.archived && reqIsCompleted(r, orders)).length;
+              const nActive = scoped.filter(r=>!r.archived && !reqIsCompleted(r, orders)).length;
+              const tabs = [
+                { id:"active", label:"Active", count:nActive },
+                { id:"completed", label:"Completed", count:nCompleted },
+                { id:"archived", label:"Archived", count:nArchived },
+              ];
+              return (
+                <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+                  {tabs.map(t=>{ const on=reqTab===t.id; return (
+                    <button key={t.id} onClick={()=>setReqTab(t.id)} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12,fontWeight:600,padding:"7px 15px",borderRadius:99,border:"1px solid var(--border)",cursor:"pointer",background:on?"var(--green-dark)":"var(--bg-card-solid)",color:on?"white":"var(--text-secondary)"}}>
+                      {t.label}
+                      <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:99,background:on?"rgba(255,255,255,0.22)":"var(--bg-subtle2)",color:on?"white":"var(--text-muted)"}}>{t.count}</span>
+                    </button>
+                  ); })}
+                </div>
+              );
+            })()}
             {(()=>{
               const CAP = 25; // rows rendered per section before "show more" (keeps the DOM small at scale)
               const list = (can.viewAllJobs(myRole)?requests:requests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail)).filter(r=>{
-                if(showArchived ? !r.archived : r.archived) return false;
-                if(reqFilterStatus!=="all" && reqStatusKey(r, orders)!==reqFilterStatus) return false;
+                if(reqTab==="archived"){ if(!r.archived) return false; }
+                else if(reqTab==="completed"){ if(r.archived || !reqIsCompleted(r, orders)) return false; }
+                else { if(r.archived || reqIsCompleted(r, orders)) return false; }
+                if(reqFilterStatus!=="all" && r.status!==reqFilterStatus && reqStatusKey(r, orders)!==reqFilterStatus) return false;
                 if(reqFilterTrade!=="all" && r.trade!==reqFilterTrade) return false;
                 if(reqFilterBuyer!=="all" && (r.createdBy||"").toLowerCase()!==reqFilterBuyer) return false;
                 if(reqSearch){ const q=reqSearch.toLowerCase(); if(!((r.jobRef||"").toLowerCase().includes(q)||(r.site||"").toLowerCase().includes(q)||(r.id||"").toLowerCase().includes(q)||(r.trade||"").toLowerCase().includes(q))) return false; }
@@ -9388,8 +9419,8 @@ Rules:
               if(list.length===0) return (
                 <Card>
                   <div style={{textAlign:"center",padding:"36px 0",color:"var(--text-tertiary)"}}>
-                    <div style={{fontSize:14,marginBottom:8}}>No requests match your search</div>
-                    <button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqFilterBuyer("all");setReqSearch("");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear search &amp; filters</button>
+                    <div style={{fontSize:14,marginBottom:8}}>{reqSearch.trim()?"No requests match your search":reqTab==="completed"?"No completed requests yet":reqTab==="archived"?"Nothing archived":"No active requests"}</div>
+                    {(reqSearch.trim()||reqFilterStatus!=="all"||reqFilterTrade!=="all"||reqFilterBuyer!=="all")&&<button onClick={()=>{setReqFilterStatus("all");setReqFilterTrade("all");setReqFilterBuyer("all");setReqSearch("");}} style={{fontSize:12.5,color:"var(--green-dark)",background:"none",border:"none",cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Clear search &amp; filters</button>}
                   </div>
                 </Card>
               );
@@ -9453,12 +9484,14 @@ Rules:
                 );
               };
 
-              // Searching or Archive view -> single flat, newest-first result list.
-              if(reqSearch.trim() || showArchived){
+              // Grouped triage only makes sense for Active. Search, Completed and
+              // Archived are browse/lookup views -> single flat, newest-first list.
+              if(reqSearch.trim() || reqTab!=="active"){
                 const flat = [...list].sort((a,b)=>lastActivityTs(b)-lastActivityTs(a));
+                const heading = reqSearch.trim() ? "Results" : reqTab==="archived" ? "Archived" : "Completed";
                 return (
                   <div>
-                    <div style={{fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"0 0 10px 4px"}}>{showArchived?"Archived":"Results"} · {flat.length}</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.06em",margin:"0 0 10px 4px"}}>{heading} · {flat.length}</div>
                     {bodyFor("flat", flat, null)}
                   </div>
                 );
@@ -11326,7 +11359,7 @@ Rules:
         const isAwaiting = r.status==="awaiting-buyer";
         const canContinue = isAwaiting && can.sendRFQ(myRole);
         const canReviseR = can.sendRFQ(myRole) && quotesTotal>0 && !r.archived;
-        const linkedOrder = (orders||[]).find(o=>o.reqId===r.id) || null;
+        const linkedOrder = (orders||[]).find(o=>o.reqId===r.id && o.status!=="cancelled") || null;
         const acts = [...(r.activity||[])].reverse();
         const recentActs = acts.slice(0,4);
         const close = ()=>setDrawerReq(null);
