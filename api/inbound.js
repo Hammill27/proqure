@@ -181,6 +181,42 @@ function extractEmail(str) {
   return m ? m[0] : "";
 }
 
+// Branded HTML wrapper for ProQure -> user notification emails (forwarded
+// supplier replies, order confirmations). Matches the app's email look:
+// white card on #F4F4F1, ProQure wordmark, green rule, table-based (Outlook-safe).
+// The raw supplier text sits in a quoted panel, HTML-escaped and pre-wrapped.
+function escapeHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function notificationHtml({ title, intro, replyText, metaRows }) {
+  const accent = "#15824F", ink = "#1A1A17", muted = "#6B6A62";
+  const meta = (metaRows || []).filter(r => r && r[1]).map(([k, v]) =>
+    `<tr><td style="padding:3px 14px 3px 0;font-size:11px;font-weight:700;color:${muted};text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap;vertical-align:top">${escapeHtml(k)}</td><td style="padding:3px 0;font-size:13px;color:${ink}">${escapeHtml(v)}</td></tr>`).join("");
+  const metaBlock = meta ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px">${meta}</table>` : "";
+  const replyBlock = (replyText || "").trim()
+    ? `<div style="margin:0 0 4px;font-size:11px;font-weight:700;color:${muted};text-transform:uppercase;letter-spacing:0.04em">Their reply</div>
+       <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:#F8F8F5;border:1px solid #EAE9E3;border-left:3px solid ${accent};border-radius:8px"><tr><td style="padding:14px 16px;font-size:13.5px;line-height:1.6;color:${ink};white-space:pre-wrap;font-family:'Helvetica Neue',Arial,sans-serif">${escapeHtml(String(replyText).slice(0, 6000))}</td></tr></table>`
+    : "";
+  return `<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#F4F4F1;-webkit-text-size-adjust:100%;font-family:'Helvetica Neue',Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F4F1"><tr><td align="center" style="padding:24px 16px">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FFFFFF;border:1px solid #E8E7E1;border-radius:12px;overflow:hidden">
+      <tr><td align="left" style="padding:22px 32px 16px 32px;background:#FFFFFF"><span style="font-size:20px;font-weight:800;letter-spacing:-0.01em;color:${ink}">Pro<span style="color:${accent}">Qure</span></span></td></tr>
+      <tr><td style="height:3px;background:${accent};line-height:3px;font-size:0">&nbsp;</td></tr>
+      <tr><td style="padding:24px 32px 28px 32px">
+        <div style="font-size:17px;font-weight:800;color:${ink};letter-spacing:-0.01em;margin:0 0 10px">${escapeHtml(title)}</div>
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.55;color:${ink}">${escapeHtml(intro)}</p>
+        ${metaBlock}
+        ${replyBlock}
+      </td></tr>
+    </table>
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%"><tr><td align="center" style="padding:14px 12px 0">
+      <span style="font-size:11px;color:#908F86"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${accent};vertical-align:middle;margin-right:5px"></span>Sent with <strong style="color:${accent};font-weight:700">ProQure</strong></span>
+    </td></tr></table>
+  </td></tr></table>
+</body></html>`;
+}
+
 async function forwardCopy(inbox, supName, fromAddr, subject, replyText) {
   try {
     await fetchT("https://api.resend.com/emails", {
@@ -192,6 +228,12 @@ async function forwardCopy(inbox, supName, fromAddr, subject, replyText) {
         reply_to: fromAddr,
         subject: `[ProQure] Supplier reply: ${subject || supName || "quote"}`,
         text: `${supName || fromAddr} has replied to your quote request. It's been added to the quote box in ProQure.\n\n${replyText || ""}`,
+        html: notificationHtml({
+          title: "A supplier has replied",
+          intro: `${supName || fromAddr} has replied to your quote request. The reply has been captured and added to the quote box in ProQure \u2014 a copy is below. Replying to this email goes straight to the supplier.`,
+          metaRows: [["Supplier", supName || fromAddr], ["Subject", subject || ""]],
+          replyText,
+        }),
       }),
     });
   } catch (e) { console.warn("api/inbound: forward failed (non-fatal)", e && e.message); }
@@ -426,6 +468,12 @@ export default async function handler(req, res) {
                 reply_to: fromEmail || undefined,
                 subject: `[ProQure] Order ${wasAlready ? "reply" : "confirmed"}: ${ord.poNumber || subject || ""}`,
                 text: `${fromEmail || "The supplier"} has replied to purchase order ${ord.poNumber || ""}${wasAlready ? "." : " \u2014 it has been marked as Confirmed in ProQure."}\n\n${replyText || ""}`,
+                html: notificationHtml({
+                  title: wasAlready ? "Reply on your order" : "Order confirmed",
+                  intro: `${fromEmail || "The supplier"} has replied to purchase order ${ord.poNumber || ""}${wasAlready ? ". A copy of the reply is below." : " \u2014 it has been automatically marked as Confirmed in ProQure. A copy of the reply is below."} Replying to this email goes straight to the supplier.`,
+                  metaRows: [["PO number", ord.poNumber || ""], ["Supplier", ord.supplier || fromEmail || ""]],
+                  replyText,
+                }),
               }),
             });
           }
