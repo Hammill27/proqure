@@ -4216,8 +4216,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"delivered",deliveredAt:new Date().toISOString(),...(img?{deliveryPhoto:img,signedOffBy:myEmail}:{})}:o));
     logActivity(img?"Delivery signed off":"Order delivered",`${order.poNumber} (${order.supplier}) ${img?`signed off by ${myEmail} with delivery photo`:"marked as delivered"}`,{entity:"order",jobRef:order.jobRef});
     if(img) meter("deliveriesSignedOff");
-    showToast(img?"Delivery signed off — back to dashboard":"Order delivered — back to dashboard");
-    setView("dashboard");
+    // Finale: the full-screen ProQure success animation (matching the other
+    // flows), then drop the user back to the dashboard as it fades out.
+    setSuccessOverlay({ message: img?"Delivery signed off":"Order delivered", onReveal: ()=>setView("dashboard") });
   }
   function deliverWithPhoto(order, file) {
     if(!file) return;
@@ -5226,7 +5227,10 @@ function validateQuickPO(form) {
       setQuoteLibrary(prev=>{ const n=[libEntry,...prev].slice(0,500); try{localStorage.setItem("piq_quote_library",JSON.stringify(n));}catch{} return n; });
     });
 
-    await generatePO({ poNumber:poNum, jobRef:activeReq?.jobRef, site:activeReq?.site, supplier:sup, items:activeReq?.items||[], analysis, company:settings.company||"Your Company", contactName:settings.contactName||settings.company||"Your Company", contactEmail:settings.fromEmail||"", date:dateStr });
+    // NB: we no longer generate a local PDF download here. The PO PDF is built
+    // on demand (as a base64 attachment) when the order is sent to the supplier
+    // — see handleSendOrder / generatePO({ output:"base64" }). This stops a PDF
+    // being auto-downloaded to the user's device every time a quote is approved.
 
     const doc = { id:poNum, type:"generated", label:`PO ${poNum}`, supplier:sup?.name||"", supplierEmail:poEmail, date:dateStr, status:"approved" };
     const poEntry = {
@@ -5260,9 +5264,13 @@ function validateQuickPO(form) {
     };
     setOrders(p=>[order,...p]);
 
-    // Show success state
+    // Show success state.
+    // Play the full-screen ProQure success animation (same one used after
+    // sending an RFQ / issuing to a buyer / raising a Quick PO), then reveal
+    // the approval confirmation card beneath it as the overlay fades out.
     setApproveConfirm(null);
     setApproveSuccess({ poNum, supplier:sup?.name||"", reqId:activeReq.id, jobRef:activeReq.jobRef, estimatedTotal:analysis?.estimatedTotal||"" });
+    setSuccessOverlay({ message:"Quote approved \u00B7 PO generated" });
   }
 
   function handleUndoApproval() {
