@@ -4098,6 +4098,27 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   // Active (non-archived) requests power all the normal views; archived are kept but hidden.
   const liveRequests = requests.filter(r=>!r.archived);
   // Engineers only see jobs they created; buyers and managers see everything.
+  // --- Lapsed plan / grace period (C) --------------------------------------
+  // Trial: 30 days read-only after trialEndsAt. Paying: 90 days after Stripe
+  // reports the subscription ended (settings.graceEndsAt, written server-side by
+  // the webhook). During grace: log in, view everything, export - but no new
+  // procurement actions. AI is already blocked server-side on expiry.
+  const _trialOver = settings.plan==="trial" && settings.trialEndsAt && Date.now() > new Date(settings.trialEndsAt).getTime();
+  const graceEnd = settings.graceEndsAt ? new Date(settings.graceEndsAt)
+    : (_trialOver ? new Date(new Date(settings.trialEndsAt).getTime() + 30*86400000) : null);
+  const lapsed = !!graceEnd;
+  const graceOver = !!(graceEnd && Date.now() > graceEnd.getTime());
+  const guardLapsed = () => { if (lapsed) { showToast("Your plan has ended - ProQure is read-only. Export your data or choose a plan to continue.","warn"); return true; } return false; };
+  const exportAllData = () => {
+    const dl = (name, text, type) => { const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); };
+    const csv = (rows, cols) => [cols.join(","), ...rows.map(r=>cols.map(c=>{ const v=r[c]; const t=v==null?"":(typeof v==="object"?JSON.stringify(v):String(v)); return '"'+t.replace(/"/g,'""')+'"'; }).join(","))].join("\n");
+    const day = new Date().toISOString().slice(0,10);
+    dl(`proqure-export-${day}.json`, JSON.stringify({ exportedAt:new Date().toISOString(), company:settings.company||"", requests, orders, hires, suppliers, invoices: (typeof invoices!=="undefined"?invoices:[]) }, null, 2), "application/json");
+    dl(`proqure-requests-${day}.csv`, csv(requests, ["id","jobRef","status","trade","site","createdBy","createdAt","items"]), "text/csv");
+    dl(`proqure-orders-${day}.csv`, csv(orders, ["id","poNumber","jobRef","status","supplier","supplierEmail","total","sentAt","confirmedAt","deliveredAt","items"]), "text/csv");
+    dl(`proqure-hires-${day}.csv`, csv(hires, ["id","jobRef","description","supplier","status","weeklyRate","startDate","offHireDate"]), "text/csv");
+    showToast("Export started - check your downloads (1 JSON + 3 CSV files).");
+  };
   const visibleRequests = can.viewAllJobs(myRole) ? liveRequests : liveRequests.filter(r=>(r.createdBy||"").toLowerCase()===myEmail);
   // Engineer-issued materials lists waiting for a Buyer/Manager to send the RFQ.
   const awaitingLists = liveRequests.filter(r=>r.status==="awaiting-buyer");
@@ -4279,6 +4300,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
 
 
   async function handleGenRFQ() {
+    if (guardLapsed()) return;
     window.__piq_or_key__ = settings.openRouterKey;
     if (!can.sendRFQ(myRole)) { handleIssueToBuyer(); return; }
     setLoading(true); setLoadMsg("Generating RFQ email...");
@@ -4402,6 +4424,7 @@ function validateQuickPO(form) {
 
 // Launch the guided Quick PO wizard as its own page (buyers/managers only).
   function openQuickPO() {
+    if (guardLapsed()) return;
     if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
     setQuickPO({ items:[{ description:"", quantity:"", unit:"", unitPrice:"" }], deliveryMethod:"direct", jobRefAuto:true });
     setView("quickpo");
@@ -4410,6 +4433,7 @@ function validateQuickPO(form) {
   // Quick PO - raise a purchase order directly from a phone-agreed price, skipping the RFQ/quote flow.
   // Buyers & Managers only. Skips manager approval (emergency). Logged as a direct/phone order.
   async function handleQuickPO(form, ack=false) {
+    if (guardLapsed()) return;
     if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
     const itemsValid = (form.items||[]).some(i => (i.description||"").trim());
     if (!itemsValid && !(form.summary||"").trim()) { showToast("Add at least one item or a description.","warn"); return; }
@@ -4730,6 +4754,7 @@ function validateQuickPO(form) {
   }
 
   async function handleIssueToBuyer() {
+    if (guardLapsed()) return;
     if (!parsed || !(parsed.items||[]).length) { showToast("Add some materials first.","warn"); return; }
     const newId = `RFQ-${Date.now().toString().slice(-6)}`;
     // Finalise the job ref against the latest committed data at the moment of issue.
@@ -5151,6 +5176,7 @@ function validateQuickPO(form) {
   }
 
   async function handleApprovePO(qa) {
+    if (guardLapsed()) return;
     const analysis = qa || quoteAnalysis;
     // Permission: only Buyer and above can approve POs
     if (!can.approvePO(myRole)) {
@@ -8245,6 +8271,18 @@ Rules:
           </div>
         )}
 
+        {lapsed&&(
+          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",background:graceOver?"var(--red-light)":"#FFF7ED",border:`1px solid ${graceOver?"var(--red)":"#FED7AA"}`,borderRadius:"var(--radius-lg)",padding:"12px 16px",marginBottom:16}}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={graceOver?"var(--red)":"#C77D2E"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>
+            <div style={{flex:1,minWidth:220,fontSize:12.5,color:graceOver?"var(--red)":"#9A5B16",fontWeight:600}}>
+              {graceOver
+                ? "Your grace period has ended - this workspace is scheduled for deletion. Export your data now."
+                : `Your ${settings.graceEndsAt?"subscription":"trial"} has ended - ProQure is read-only until ${graceEnd.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}. Export your data or choose a plan to keep working.`}
+            </div>
+            <button onClick={exportAllData} style={{background:"var(--bg-card-solid)",border:"1px solid var(--border-solid)",borderRadius:"var(--radius-sm)",padding:"8px 14px",fontSize:12,fontWeight:700,color:"var(--text-primary)",cursor:"pointer"}}>Export my data</button>
+            <button onClick={()=>setView("settings")} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",border:"none",borderRadius:"var(--radius-sm)",padding:"8px 14px",fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>Choose a plan</button>
+          </div>
+        )}
         {view==="quotes"&&(
           <div style={{animation:"fadeIn 0.25s ease",minHeight:"60vh"}}>
 
