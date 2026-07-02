@@ -158,7 +158,10 @@ export default async function handler(req, res) {
         const companyId = (sub.metadata && sub.metadata.companyId) || await companyByCustomer(sub.customer);
         if (companyId) {
           await mergeBilling(companyId, { status: "cancelled" });
-          await mergeSettings(companyId, { plan: "trial", subscriptionStatus: "cancelled", renewsAt: null });
+          // Start the 90-day read-only grace window (C): the client shows the grace
+          // banner + export, and the retention sweep deletes after it passes.
+          const graceEndsAt = new Date(Date.now() + 90 * 86400000).toISOString();
+          await mergeSettings(companyId, { plan: "trial", subscriptionStatus: "cancelled", renewsAt: null, graceEndsAt });
         }
         break;
       }
