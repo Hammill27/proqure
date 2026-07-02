@@ -164,6 +164,16 @@ function extractSupportToken(toField) {
   }
   return null;
 }
+// Purchase-order reply token: suppliers reply to o-<token>@<capture-domain> when a PO
+// was emailed with capture enabled. Matching flips the order to Confirmed automatically.
+function extractOrderToken(to) {
+  const list = Array.isArray(to) ? to : [to];
+  for (const addr of list) {
+    const m = String(addr).toLowerCase().match(/o-([a-z0-9]+)@/);
+    if (m) return m[1];
+  }
+  return null;
+}
 
 // Pull the bare email address out of a "Name <addr@x>" string.
 function extractEmail(str) {
@@ -365,6 +375,64 @@ export default async function handler(req, res) {
         console.log("api/inbound: SUPPORT reply filed | ticket", t.ref || t.id, "| from", fromEmail);
       } catch (e) { console.error("api/inbound: support handler error", e && e.message); }
       return res.status(200).json({ ok: true, support: true });
+    }
+
+    // --- Purchase-order replies (o-<token>@<capture-domain>) --------------------
+    // A supplier replying to a PO email lands here. Match the token to the exact
+    // order, mark it Confirmed (the tracker step buyers previously clicked by hand),
+    // and forward the reply to the buyer's own inbox so nothing changes for them.
+    const ordTok = extractOrderToken((email && email.to) || data.to);
+    if (ordTok) {
+      try {
+        const { data: oRows, error: oErr } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_orders");
+        if (oErr) { console.error("api/inbound: orders load error", oErr.message); return res.status(200).json({ ok: true }); }
+        let oHit = null;
+        for (const row of (oRows || [])) {
+          const list = Array.isArray(row.value) ? row.value : [];
+          const ix = list.findIndex((o) => o && o.replyToken === ordTok);
+          if (ix !== -1) { oHit = { userId: row.user_id, ix }; break; }
+        }
+        if (!oHit) { console.warn("api/inbound: order reply not matched - token", ordTok, "from", fromEmail); return res.status(200).json({ ok: true, note: "order not matched" }); }
+        // Re-read fresh immediately before writing so a concurrent edit isn't lost.
+        const { data: freshRow } = await supabase.from("proqure_data").select("value").eq("user_id", oHit.userId).eq("store_key", "piq_orders").maybeSingle();
+        const oList = Array.isArray(freshRow && freshRow.value) ? freshRow.value : [];
+        const oIx = oList.findIndex((o) => o && o.replyToken === ordTok);
+        if (oIx === -1) { console.warn("api/inbound: order vanished on re-read - token", ordTok); return res.status(200).json({ ok: true }); }
+        const ord = { ...oList[oIx] };
+        const nowIso = new Date().toISOString();
+        const wasAlready = ord.status === "confirmed" || ord.status === "acknowledged" || ord.status === "delivered" || ord.status === "cancelled";
+        if (!wasAlready) { ord.status = "confirmed"; ord.confirmedAt = nowIso; }
+        ord.supplierReply = { ts: nowIso, from: fromEmail || "supplier", text: String(replyText || "").slice(0, 4000) };
+        ord.activity = [...(Array.isArray(ord.activity) ? ord.activity : []), {
+          ts: nowIso,
+          action: wasAlready ? "Supplier replied" : "Order confirmed",
+          detail: wasAlready ? `Reply received from ${fromEmail || "supplier"}` : `Supplier replied by email \u2014 auto-confirmed (${fromEmail || "supplier"})`,
+          user: "supplier-reply",
+        }];
+        oList[oIx] = ord;
+        const { error: oUpErr } = await supabase.from("proqure_data").upsert({ user_id: oHit.userId, store_key: "piq_orders", value: oList, updated_at: nowIso }, { onConflict: "user_id,store_key" });
+        if (oUpErr) { console.error("api/inbound: order save error", oUpErr.message); return res.status(200).json({ ok: true }); }
+        // Forward the reply to the buyer's inbox (from orders@, reply-to the supplier).
+        try {
+          const { data: st } = await supabase.from("proqure_data").select("value").eq("user_id", oHit.userId).eq("store_key", "piq_settings").maybeSingle();
+          const inbox = st && st.value && (st.value.replyToEmail || st.value.fromEmail);
+          if (inbox && RESEND_API_KEY) {
+            await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_API_KEY}` },
+              body: JSON.stringify({
+                from: "ProQure <orders@proqure.co.uk>",
+                to: [inbox],
+                reply_to: fromEmail || undefined,
+                subject: `[ProQure] Order ${wasAlready ? "reply" : "confirmed"}: ${ord.poNumber || subject || ""}`,
+                text: `${fromEmail || "The supplier"} has replied to purchase order ${ord.poNumber || ""}${wasAlready ? "." : " \u2014 it has been marked as Confirmed in ProQure."}\n\n${replyText || ""}`,
+              }),
+            });
+          }
+        } catch (e) { console.error("api/inbound: order forward error", e && e.message); }
+        console.log("api/inbound: ORDER reply filed | po", ord.poNumber, "| confirmed:", !wasAlready, "| from", fromEmail);
+      } catch (e) { console.error("api/inbound: order handler error", e && e.message); }
+      return res.status(200).json({ ok: true, order: true });
     }
 
     const { data: rows, error } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_requests");
