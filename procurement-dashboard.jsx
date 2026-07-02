@@ -701,13 +701,64 @@ async function authHeaders() {
 // safety net. /api/ai also forces a vision model for any image request as a backstop.
 const VISION_MODELS = ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "openai/gpt-4o-mini"];
 
-async function callAI(system, user, history=[], temperature=0.1) {
+// --- Model selection by stakes (AI audit H-02 / L-02) ------------------------
+// One place to change model choices. Low-stakes text parsing (material lists,
+// hire descriptions, RFQ prose) uses the fast/cheap chain. MONEY work - reading
+// prices from a quote, matching lines - uses stronger, more consistent models,
+// because a misread price feeds a real purchasing decision. Every list keeps a
+// fallback so one model being retired/unavailable never breaks the feature.
+const DEFAULT_TEXT_MODELS = [
+  "deepseek/deepseek-chat",
+  "meta-llama/llama-3.1-8b-instruct",
+  "google/gemini-2.5-flash-lite",
+];
+const MONEY_MODELS = [
+  "google/gemini-2.5-flash",   // strong, consistent, good at structured extraction
+  "openai/gpt-4o-mini",
+  "deepseek/deepseek-chat",
+];
+// Bump when a money-critical prompt changes, so results can be traced to the
+// prompt+model that produced them (AI audit M-05 foundation).
+const PROMPT_VERSION = "2026-07-02";
+// Shared instruction so wording stays identical across structured prompts (M-06).
+const JSON_ONLY = "Return ONLY valid JSON - no markdown, no code fences, no commentary.";
+
+// Robustly turn a model's reply into JSON (AI audit M-02/M-03). Models sometimes
+// wrap JSON in prose or fences; this strips fences, then extracts the first
+// balanced {...} or [...] block, and (optionally) checks required keys exist.
+// Returns null on any failure so callers fall back to their safe path - a parse
+// failure must never be mistaken for "no data".
+function safeJson(txt, required = null) {
+  if (txt == null) return null;
+  let s = String(txt).replace(/```json|```/gi, "").trim();
+  const tryParse = (str) => { try { return JSON.parse(str); } catch { return undefined; } };
+  let out = tryParse(s);
+  if (out === undefined) {
+    // Find the first plausible JSON block by scanning for balanced braces/brackets.
+    const start = s.search(/[[{]/);
+    if (start >= 0) {
+      const open = s[start], close = open === "{" ? "}" : "]";
+      let depth = 0, inStr = false, esc = false, end = -1;
+      for (let i = start; i < s.length; i++) {
+        const c = s[i];
+        if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; }
+        else if (c === '"') inStr = true;
+        else if (c === open) depth++;
+        else if (c === close) { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end > start) out = tryParse(s.slice(start, end + 1));
+    }
+  }
+  if (out === undefined || out === null) return null;
+  if (required && Array.isArray(required)) {
+    const obj = Array.isArray(out) ? { _arr: out } : out;
+    for (const k of required) { if (!(k in obj)) return null; }
+  }
+  return out;
+}
+
+async function callAI(system, user, history=[], temperature=0, models=DEFAULT_TEXT_MODELS) {
   if (!aiBudgetOk()) throw new Error(AI_BUDGET_MSG);
-  const models = [
-    "deepseek/deepseek-chat",
-    "meta-llama/llama-3.1-8b-instruct",
-    "google/gemini-2.5-flash-lite",
-  ];
   const messages = [
     {role:"system",content:system},
     ...history.slice(-8),
@@ -755,7 +806,7 @@ async function parseMaterialList(raw) {
 Each item's "category" must be the single best-fit trade from this list: ${TRADES.join("|")}.
 Format: {"items":[{"id":1,"description":"...","quantity":N,"unit":"...","category":"...","notes":"..."}],"jobRef":"...","urgency":"standard|urgent|next-day"}`;
   const txt = await callAI(sys, `Parse this material request: ${raw}`);
-  try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
+  try { return safeJson(txt); } catch { return null; }
 }
 
 // ---- AI helpers for Quick PO & Hire features --------------------------------
@@ -765,7 +816,7 @@ async function aiParseHire(raw) {
 Format: {"description":"the equipment, tidied up","category":"plant|tool","jobRef":"if mentioned else empty","site":"if mentioned else empty","suggestedReturnDays":N or null,"missingReturnDate":true/false}
 "plant" = larger machinery (excavators, dumpers, scaffolding, generators). "tool" = smaller items (breakers, drills, saws). missingReturnDate is true if no return/collection date or duration was stated.`;
   const txt = await callAI(sys, `Hire description: ${raw}`);
-  try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
+  try { return safeJson(txt); } catch { return null; }
 }
 
 // Analyse hire history and surface hire-vs-buy suggestions.
@@ -784,7 +835,7 @@ async function aiHireVsBuy(hires) {
 Format: {"suggestions":[{"description":"...","reason":"one short sentence with the numbers","strength":"strong|worth-a-look"}]}
 Only include items where repeated hiring plausibly costs more than buying. Be realistic and brief. Do not invent purchase prices you don't know - frame as "worth checking the purchase price".`;
   const txt = await callAI(sys, `Hire history (item, times hired, weekly rate): ${JSON.stringify(list)}`);
-  try { const j = JSON.parse(txt.replace(/```json|```/g,"").trim()); return j.suggestions||[]; } catch { return []; }
+  try { const j = safeJson(txt); return j.suggestions||[]; } catch { return []; }
 }
 
 // Turn a spoken/typed emergency order into Quick PO fields.
@@ -793,7 +844,7 @@ async function aiParseQuickPO(raw, supplierNames) {
 Format: {"supplierName":"best match from the known list, or the name said, or empty","items":[{"description":"...","quantity":"...","unitPrice":""}],"total":"the agreed total if stated else empty","summary":"short note"}
 Known suppliers: ${(supplierNames||[]).join(", ")||"none"}. Match the supplier loosely (e.g. "Travis" -> "Travis Perkins"). Put per-item prices only if clearly stated, otherwise leave unitPrice empty and rely on total.`;
   const txt = await callAI(sys, `Order: ${raw}`);
-  try { return JSON.parse(txt.replace(/```json|```/g,"").trim()); } catch { return null; }
+  try { return safeJson(txt); } catch { return null; }
 }
 
 // Sanity-check a phone-agreed price against past quotes/orders for similar items.
@@ -803,7 +854,7 @@ async function aiPriceCheck(itemsText, total, pastText) {
 Format: {"flag":true/false,"message":"one short sentence, only if flag is true"}
 Only flag if the new price looks clearly high (roughly 15%+ above comparable past prices). If you can't compare confidently, flag false. Never block - this is advisory.`;
   const txt = await callAI(sys, `New order: ${itemsText} total ${total}. Past prices for similar items: ${pastText}`);
-  try { const j = JSON.parse(txt.replace(/```json|```/g,"").trim()); return j.flag ? j.message : null; } catch { return null; }
+  try { const j = safeJson(txt); return j.flag ? j.message : null; } catch { return null; }
 }
 
 // Vision: read a hire delivery/collection photo and describe the equipment + visible condition.
@@ -824,7 +875,7 @@ Format: {"equipment":"short name of the item(s)","condition":"one short factual 
     const d = await res.json();
     reportAiUsage(d.cost, false);
     if (!d.text) return null;
-    return JSON.parse(d.text.replace(/```json|```/g,"").trim());
+    return safeJson(d.text);
   } catch { return null; }
 }
 
@@ -854,7 +905,7 @@ function preprocessQuoteText(raw) {
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^(from|regards|thanks|sent from|dear|hi |hello|to:|cc:|subject:|date:).*/gim, "")
-    .replace(/[^\x20-\x7E\n\u00A3\u20AC$]/g, " ")
+    .replace(/[^\x20-\x7E\n\u00A3\u20AC$\u00C0-\u017F]/g, " ")
     .trim();
 }
 
@@ -960,6 +1011,27 @@ function validateAndFix(analysis, requestedItems) {
     ? `£${(computedSubtotal + carriageAmt).toFixed(2)}`
     : analysis.estimatedTotal || finalSubtotal;
 
+  // --- VAT handled deterministically (AI audit H-03) ------------------------
+  // The AI only tells us the STATED basis; the app does the 20% arithmetic, so
+  // an inc/ex-VAT mix-up (a 20% error - larger than almost any misread line)
+  // can't slip through on a warning alone. We show both ex- and inc-VAT totals.
+  const VAT_RATE = 0.20;
+  const netBeforeVat = computedSubtotal + (carriageAmt || 0);
+  const vatBlob = `${analysis.vatNote||""} ${(analysis.warnings||[]).join(" ")}`.toLowerCase();
+  let vatMode = "unknown";
+  if (/(inc|incl|including)\b[^.]*vat|vat\s*inc|gross/.test(vatBlob)) vatMode = "inc";
+  else if (/(exc|excl|excluding|plus|\+)\s*vat|ex\s*vat|net\b/.test(vatBlob)) vatMode = "ex";
+  let totalExVat = null, totalIncVat = null;
+  if (netBeforeVat > 0) {
+    if (vatMode === "inc") { totalIncVat = netBeforeVat; totalExVat = netBeforeVat / (1 + VAT_RATE); }
+    else { // treat unknown as ex-VAT for the safe (higher) inc figure, but say so
+      totalExVat = netBeforeVat; totalIncVat = netBeforeVat * (1 + VAT_RATE);
+    }
+    if (vatMode === "unknown") {
+      warnings.push(`VAT basis not stated - showing ex-VAT £${totalExVat.toFixed(2)} and inc-VAT £${totalIncVat.toFixed(2)} (assumed the quote is ex-VAT). Confirm before approving.`);
+    }
+  }
+
   // Completeness score - verify against actual matched vs requested
   const requestedCount = requestedItems.length;
   const matchedCount = matched.filter(m => m.unitPrice && m.unitPrice !== "Not quoted" && m.unitPrice !== "-").length;
@@ -1028,6 +1100,10 @@ function validateAndFix(analysis, requestedItems) {
     overallVerdict,
     requiresReview,
     riskyPricedLines,
+    vatMode,
+    totalExVat: totalExVat !== null ? `£${totalExVat.toFixed(2)}` : null,
+    totalIncVat: totalIncVat !== null ? `£${totalIncVat.toFixed(2)}` : null,
+    _promptVersion: PROMPT_VERSION,
     _validated: true,
   };
 }
@@ -1069,9 +1145,10 @@ Before returning, silently re-read each line and check: does unitPrice multiplie
 Quote text:
 ${cleaned}
 
-Extract all pricing lines as JSON.`
+Extract all pricing lines as JSON.`,
+    [], 0, MONEY_MODELS
   );
-  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); }
+  try { return safeJson(raw); }
   catch { return { lines:[], error:"extraction_failed", raw }; }
 }
 
@@ -1135,9 +1212,10 @@ ${reqList}
 Extracted quote lines:
 ${lineList||"(no lines extracted)"}
 
-Match and return JSON.`
+Match and return JSON.`,
+    [], 0, MONEY_MODELS
   );
-  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); }
+  try { return safeJson(raw); }
   catch { return { matched:[], missing:requestedItems.map(i=>({item:i.description,reason:"matching_failed"})), error:"matching_failed" }; }
 }
 
@@ -1181,9 +1259,10 @@ Rules:
     `Data summary:
 ${JSON.stringify(summary,null,2)}
 
-Produce final analysis JSON.`
+Produce final analysis JSON.`,
+    [], 0, MONEY_MODELS
   );
-  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); }
+  try { return safeJson(raw); }
   catch { return { recommendation:"Analysis complete.", discounts:[], positives:[], warnings:[], vatNote:"Not stated", carriageCharge:"Not stated", leadTime:"Not stated" }; }
 }
 
@@ -1954,6 +2033,11 @@ async function omFindDatasheets(literature, onProgress) {
         try { return new URL(u).hostname.toLowerCase().replace(/[^a-z0-9]/g, "").includes(mk.slice(0, 6)); } catch { return false; }
       });
       if (onBrand) return onBrand;
+      // A manufacturer was named but nothing on their domain matched. For a
+      // compliance document a wrong datasheet is worse than none, so rather than
+      // attach a plausible-but-unrelated page, return blank (the caller marks the
+      // item "not found — add manually") unless a cited source is available.
+      return cites[0] || "";
     }
     return url || cites[0] || "";
   };
@@ -1972,6 +2056,7 @@ async function omFindDatasheets(literature, onProgress) {
         }
         if (url) {
           lit.url = url;
+          lit.autoFound = true; // web-sourced - surface a "verify" hint; not human-confirmed
           try { lit.source = new URL(url).hostname.replace(/^www\./, ""); } catch { lit.source = ""; }
         }
       } catch (e) { /* leave blank */ }
@@ -3126,8 +3211,8 @@ function invGBP(n, currency) {
 async function extractInvoice(input) {
   if (!aiBudgetOk()) return { error: AI_BUDGET_MSG };
   const sys = `You are reading a SUPPLIER INVOICE (or a delivery note) issued to a UK building/trades contractor. Extract the billing detail exactly as printed — never invent figures. Capture the supplier/merchant name, the invoice number, the invoice date, any purchase-order number quoted on it, any project/job reference quoted on it, and every line item with its description, quantity, unit price and line total. Also capture the net subtotal, the VAT amount and the gross total if shown. Money values must be plain numbers (no currency symbols, no thousands separators). If a value is not shown, use null. Return ONLY valid JSON, no markdown, in exactly this shape:
-{"supplier":"","invoiceNumber":"","invoiceDate":"","poNumber":"","jobRef":"","currency":"GBP","lines":[{"description":"","qty":number|null,"unitPrice":number|null,"lineTotal":number|null}],"subtotal":number|null,"vat":number|null,"total":number|null}
-Always return the JSON, even if some fields are blank.`;
+{"supplier":"","invoiceNumber":"","invoiceDate":"","poNumber":"","jobRef":"","currency":"GBP","lines":[{"description":"","qty":number|null,"unitPrice":number|null,"lineTotal":number|null}],"subtotal":number|null,"vat":number|null,"total":number|null,"lowQuality":false}
+If the document is too blurry, cropped or low-resolution to read the figures reliably, set "lowQuality" to true (still return whatever you can). Always return the JSON, even if some fields are blank.`;
   let text = "";
   try {
     if (typeof input === "string") {
@@ -3972,6 +4057,8 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const [activeReq,     setActiveReq]     = useState(null);
   const [approvedQuoteId, setApprovedQuoteId] = useState(null);
   const [approveConfirm, setApproveConfirm] = useState(null); // {qa} waiting for confirmation
+  const [reviewAck, setReviewAck] = useState(false); // A-03: must tick to approve a flagged quote
+  const [quickPOConfirm, setQuickPOConfirm] = useState(null); // A-01: {form, check} for a flagged Quick PO
   const [approveSuccess, setApproveSuccess] = useState(null); // {poNum, supplier, reqId} success state
   const [quoteInput,    setQuoteInput]    = useState("");
   const [quoteSupplierName, setQuoteSupplierName] = useState("");
@@ -4267,7 +4354,47 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     } catch(e){ showToast("Scan failed: "+e.message,"warn"); return null; }
   };
 
-  // Launch the guided Quick PO wizard as its own page (buyers/managers only).
+  // --- Quick PO validation (AI audit A-01) -------------------------------------
+// The phone-order path is the fastest, least-reviewed way money leaves the door,
+// yet it previously trusted the AI/typed numbers with none of the quote flow's
+// checks. This recomputes the total from the line items in CODE (never trusting
+// the model's arithmetic), sanity-bounds each price, and reports whether the
+// stated total and the computed total disagree - so a misheard "fifteen/fifty"
+// or a transposed figure is caught before it becomes an official PO. Pure &
+// deterministic so it is unit-tested.
+function validateQuickPO(form) {
+  const issues = [];
+  const lines = (form.items || []).filter(i => (i.description || "").trim());
+  let computed = 0, pricedLines = 0;
+  lines.forEach(i => {
+    const price = parsePrice(i.unitPrice);
+    const qty = parseFloat(i.quantity) || 0;
+    if (price !== null) {
+      if (price < 0.01) issues.push({ level: "hard", msg: `"${i.description.trim()}" priced at £${price} - please verify.` });
+      if (price > 50000) issues.push({ level: "hard", msg: `"${i.description.trim()}" at £${price.toFixed(2)} looks unusually high - please verify.` });
+      if (qty > 0) { computed += price * qty; pricedLines++; }
+    }
+  });
+  const stated = parsePrice(form.total);
+  const computedTotal = pricedLines > 0 ? Number(computed.toFixed(2)) : null;
+  // If we can compute a total from the lines AND a total was typed, they must agree.
+  let diverges = false;
+  if (computedTotal !== null && stated !== null && computedTotal > 0) {
+    const diff = Math.abs(stated - computedTotal);
+    if (diff > 0.02 && diff / Math.max(computedTotal, 0.01) > 0.02) { // >2% and >2p
+      diverges = true;
+      issues.push({ level: "hard", msg: `The total you entered (£${stated.toFixed(2)}) doesn't match the line items (£${computedTotal.toFixed(2)}). Check which is right.` });
+    }
+  }
+  if (stated !== null) {
+    if (stated < 0.01) issues.push({ level: "soft", msg: "The order total is zero - is that intended?" });
+    if (stated > 250000) issues.push({ level: "hard", msg: `The order total £${stated.toFixed(2)} is very large - please double-check.` });
+  }
+  const hardIssue = issues.some(i => i.level === "hard");
+  return { computedTotal, statedTotal: stated, diverges, issues, hardIssue };
+}
+
+// Launch the guided Quick PO wizard as its own page (buyers/managers only).
   function openQuickPO() {
     if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
     setQuickPO({ items:[{ description:"", quantity:"", unit:"", unitPrice:"" }], deliveryMethod:"direct", jobRefAuto:true });
@@ -4276,12 +4403,17 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
 
   // Quick PO - raise a purchase order directly from a phone-agreed price, skipping the RFQ/quote flow.
   // Buyers & Managers only. Skips manager approval (emergency). Logged as a direct/phone order.
-  async function handleQuickPO(form) {
+  async function handleQuickPO(form, ack=false) {
     if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
     const itemsValid = (form.items||[]).some(i => (i.description||"").trim());
     if (!itemsValid && !(form.summary||"").trim()) { showToast("Add at least one item or a description.","warn"); return; }
     const hasSupplier = (form.newSupplier && (form.newSupplierName||"").trim()) || (!form.newSupplier && form.supplierId);
     if (!hasSupplier) { showToast("Pick a supplier (or add one) before raising the PO.","warn"); return; }
+    // Deterministic money check (A-01): recompute the total in code and refuse to
+    // raise silently if something looks wrong. The buyer can still proceed after
+    // an explicit confirmation, but never by accident.
+    const poCheck = validateQuickPO(form);
+    if (poCheck.hardIssue && !ack) { setQuickPOConfirm({ form, check: poCheck }); return; }
     // Finalise the job ref at the moment of raising: auto = next in the shared sequence
     // (so it reverts/advances based on what's actually been committed by then); a manual
     // ref (used to link to an existing job) is respected as typed.
@@ -6707,9 +6839,9 @@ Example:
 1 box PTFE tape
 
 Rules:
-- Include every material item you can see, even if quantities are unclear
-- If quantity is not clear, use 1 as default
-- If unit is not clear, use "no" (number off)
+- Include every material item you can clearly see listed
+- Do NOT invent, infer or estimate quantities or dimensions that are not explicitly written (especially from drawings). If a quantity is not stated, still list the item but append " (qty unconfirmed)" to the description and use 1 as a placeholder
+- If a unit is not clear, use "no" (number off)
 - Do NOT include labour, costs, prices, or non-material items
 - Do NOT add any explanation or preamble — just the list`;
 
@@ -8528,7 +8660,7 @@ Rules:
                                   ):(
                                     <>
                                       {can.approvePO(myRole)
-                                        ? <Btn onClick={()=>setApproveConfirm(qa)} color="#15824F">Approve & generate PO</Btn>
+                                        ? <Btn onClick={()=>{setReviewAck(false);setApproveConfirm(qa);}} color="#15824F">Approve & generate PO</Btn>
                                         : <div style={{fontSize:12,color:"var(--text-tertiary)",padding:"8px 12px",background:"var(--bg-subtle)",borderRadius:"var(--radius-sm)"}}>A Buyer or Manager approves the PO</div>}
                                       <Btn outline onClick={()=>handleSaveDraftQuote(qa)}>Save to library</Btn>
                                     </>
@@ -8628,7 +8760,7 @@ Rules:
                                       {isApproved?(
                                         <span style={{fontSize:11,fontWeight:700,color:"var(--green-dark)",background:"var(--green-light)",borderRadius:6,padding:"6px 12px",display:"inline-block"}}>Approved</span>
                                       ):(
-                                        <button onClick={()=>setApproveConfirm(qa)} style={{fontSize:11,fontWeight:700,color:"white",background:"var(--green-dark)",border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer"}}>Approve</button>
+                                        <button onClick={()=>{setReviewAck(false);setApproveConfirm(qa);}} style={{fontSize:11,fontWeight:700,color:"white",background:"var(--green-dark)",border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer"}}>Approve</button>
                                       )}
                                     </td>
                                   );
@@ -11349,6 +11481,36 @@ Rules:
       )}
 
       {/* Modals */}
+      {quickPOConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+          <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:460,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
+            <div style={{textAlign:"center",marginBottom:18}}>
+              <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}>
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#C77D2E" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>
+              </div>
+              <div style={{fontSize:18,fontWeight:700,color:"var(--text-primary)",marginBottom:6}}>Check this order before raising</div>
+              <div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.6}}>This becomes an official PO sent to the supplier. Please confirm the figures are right.</div>
+            </div>
+            <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:"var(--radius-sm)",padding:"12px 14px",marginBottom:18}}>
+              {(quickPOConfirm.check.issues||[]).map((iss,ix)=>(
+                <div key={ix} style={{fontSize:12.5,color:"#9A5B16",lineHeight:1.5,display:"flex",gap:8,marginBottom:ix<quickPOConfirm.check.issues.length-1?7:0}}>
+                  <span style={{color:"#C77D2E",flexShrink:0}}>•</span><span>{iss.msg}</span>
+                </div>
+              ))}
+            </div>
+            {quickPOConfirm.check.computedTotal!=null&&(
+              <div style={{display:"flex",justifyContent:"space-between",gap:12,background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",padding:"12px 16px",marginBottom:20,fontSize:13}}>
+                <div><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>YOU ENTERED</div><div style={{fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{quickPOConfirm.check.statedTotal!=null?`£${quickPOConfirm.check.statedTotal.toFixed(2)}`:"—"}</div></div>
+                <div style={{textAlign:"right"}}><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>LINE ITEMS ADD UP TO</div><div style={{fontWeight:700,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}}>£{quickPOConfirm.check.computedTotal.toFixed(2)}</div></div>
+              </div>
+            )}
+            <div style={{display:"flex",gap:10}}>
+              <Btn outline onClick={()=>setQuickPOConfirm(null)}>Go back &amp; fix</Btn>
+              <Btn color="#C77D2E" onClick={()=>{const f=quickPOConfirm.form;setQuickPOConfirm(null);handleQuickPO(f,true);}}>Raise anyway</Btn>
+            </div>
+          </div>
+        </div>
+      )}
       {approveConfirm&&(
         <div style={{position:"fixed",inset:0,background:"rgba(20,20,18,0.55)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
           <div style={{background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",padding:"28px 32px",maxWidth:440,width:"100%",boxShadow:"var(--shadow-lg)",border:"1px solid var(--border)",animation:"scaleIn 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
@@ -11363,6 +11525,12 @@ Rules:
                 <span>This quote had items the AI wasn't fully sure about. Please confirm the prices and totals match the supplier's original quote before approving.</span>
               </div>
             )}
+            {approveConfirm.requiresReview&&(
+              <label style={{display:"flex",gap:9,alignItems:"flex-start",marginBottom:16,cursor:"pointer",fontSize:12.5,color:"var(--text-secondary)",lineHeight:1.5}}>
+                <input type="checkbox" checked={reviewAck} onChange={e=>setReviewAck(e.target.checked)} style={{marginTop:2,width:16,height:16,accentColor:"#15824F",flexShrink:0,cursor:"pointer"}}/>
+                <span>I've checked the flagged prices and totals against the supplier's quote and confirm they're correct.</span>
+              </label>
+            )}
             <div style={{background:"var(--bg-subtle)",borderRadius:"var(--radius-md)",padding:"14px 16px",marginBottom:20}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div><div style={{fontSize:11,color:"var(--text-muted)",marginBottom:3}}>SUPPLIER</div><div style={{fontSize:14,fontWeight:600,color:"var(--text-primary)"}}>{approveConfirm.supplierName||"—"}</div></div>
@@ -11372,8 +11540,8 @@ Rules:
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <Btn outline onClick={()=>setApproveConfirm(null)}>Cancel</Btn>
-              <Btn color="#15824F" onClick={()=>handleApprovePO(approveConfirm)}>Confirm approval</Btn>
+              <Btn outline onClick={()=>{setApproveConfirm(null);setReviewAck(false);}}>Cancel</Btn>
+              <Btn color="#15824F" disabled={approveConfirm.requiresReview&&!reviewAck} onClick={()=>{if(approveConfirm.requiresReview&&!reviewAck)return;handleApprovePO(approveConfirm);}}>Confirm approval</Btn>
             </div>
           </div>
         </div>
