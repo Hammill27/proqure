@@ -312,6 +312,276 @@ const EVENTS_KEY = "piq_email_events";
 const PLATFORM_BUCKET = "platform-email";
 const EVENTS_CAP = 200;
 
+// --- Unmatched-reply safety net (bug fix: intermittent dropped replies) -------
+// Root cause of drops: the reply token only reaches Supabase after the CLIENT
+// app pushes the updated request (debounced sync). A supplier replying within
+// seconds of the RFQ - or while the buyer's device is offline / backgrounded -
+// beats that push, the token scan finds nothing, and the old code returned 200
+// "not matched", permanently dropping the reply (Resend never redelivers after
+// a 200). Fix, in three layers:
+//   1. RETRY the match over ~24s inside this invocation (covers the race).
+//   2. DEAD-LETTER anything still unmatched into piq_unmatched_replies -
+//      nothing is ever silently lost.
+//   3. RE-FILE pending dead-letters on every subsequent inbound webhook, once
+//      the client's sync has landed. Attachments are refetched by emailId.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const DEADLETTER_KEY = "piq_unmatched_replies";
+const DEADLETTER_CAP = 50;
+const DEADLETTER_MAX_TRIES = 12;
+const DEADLETTER_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+
+async function loadDeadLetters() {
+  try {
+    const { data } = await supabase.from("proqure_data").select("value").eq("user_id", PLATFORM_BUCKET).eq("store_key", DEADLETTER_KEY).maybeSingle();
+    return Array.isArray(data && data.value) ? data.value : [];
+  } catch { return []; }
+}
+async function saveDeadLetters(list) {
+  try {
+    await supabase.from("proqure_data").upsert({ user_id: PLATFORM_BUCKET, store_key: DEADLETTER_KEY, value: list.slice(-DEADLETTER_CAP), updated_at: new Date().toISOString() }, { onConflict: "user_id,store_key" });
+  } catch (e) { console.error("api/inbound: dead-letter save failed", e && e.message); }
+}
+async function deadLetterAdd(entry) {
+  const list = await loadDeadLetters();
+  // Dedupe on emailId so a redelivered webhook can't double-store.
+  if (entry.emailId && list.some((e) => e && e.emailId === entry.emailId)) return;
+  list.push({ ...entry, ts: new Date().toISOString(), tries: 0 });
+  await saveDeadLetters(list);
+  console.warn("api/inbound: DEAD-LETTERED unmatched reply | kind", entry.kind, "| token", entry.token || entry.ordTok, "| from", entry.fromEmail);
+}
+
+// --- Order-reply match + file (module-level so dead-letter re-filing can reuse) ---
+async function findOrderHit(ordTok) {
+  const { data: oRows, error: oErr } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_orders");
+  if (oErr) { console.error("api/inbound: orders load error", oErr.message); return null; }
+  for (const row of (oRows || [])) {
+    const list = Array.isArray(row.value) ? row.value : [];
+    const ix = list.findIndex((o) => o && o.replyToken === ordTok);
+    if (ix !== -1) return { userId: row.user_id, ix, ordTok };
+  }
+  return null;
+}
+async function fileOrderReply(oHit, { emailId, fromEmail, subject, replyText }) {
+  const ordTok = oHit.ordTok;
+  // Re-read fresh immediately before writing so a concurrent edit isn't lost.
+  const { data: freshRow } = await supabase.from("proqure_data").select("value").eq("user_id", oHit.userId).eq("store_key", "piq_orders").maybeSingle();
+  const oList = Array.isArray(freshRow && freshRow.value) ? freshRow.value : [];
+  const oIx = oList.findIndex((o) => o && o.replyToken === ordTok);
+  if (oIx === -1) { console.warn("api/inbound: order vanished on re-read - token", ordTok); return false; }
+  const ord = { ...oList[oIx] };
+  // Idempotence: a redelivered webhook or a re-file racing the live path must not
+  // append the same reply twice. The emailId is stamped on first filing.
+  if (emailId && ord.supplierReply && ord.supplierReply.emailId === emailId) { console.log("api/inbound: order reply already filed (emailId dedupe)"); return true; }
+  const nowIso = new Date().toISOString();
+  const wasAlready = ord.status === "confirmed" || ord.status === "acknowledged" || ord.status === "delivered" || ord.status === "cancelled";
+  if (!wasAlready) { ord.status = "confirmed"; ord.confirmedAt = nowIso; }
+  ord.supplierReply = { ts: nowIso, from: fromEmail || "supplier", text: String(replyText || "").slice(0, 4000), ...(emailId ? { emailId } : {}) };
+  ord.activity = [...(Array.isArray(ord.activity) ? ord.activity : []), {
+    ts: nowIso,
+    action: wasAlready ? "Supplier replied" : "Order confirmed",
+    detail: wasAlready ? `Reply received from ${fromEmail || "supplier"}` : `Supplier replied by email \u2014 auto-confirmed (${fromEmail || "supplier"})`,
+    user: "supplier-reply",
+  }];
+  oList[oIx] = ord;
+  const { error: oUpErr } = await supabase.from("proqure_data").upsert({ user_id: oHit.userId, store_key: "piq_orders", value: oList, updated_at: nowIso }, { onConflict: "user_id,store_key" });
+  if (oUpErr) { console.error("api/inbound: order save error", oUpErr.message); return false; }
+  // Forward the reply to the buyer's inbox (from orders@, reply-to the supplier).
+  try {
+    const { data: st } = await supabase.from("proqure_data").select("value").eq("user_id", oHit.userId).eq("store_key", "piq_settings").maybeSingle();
+    const inbox = st && st.value && (st.value.replyToEmail || st.value.fromEmail);
+    if (inbox && RESEND_API_KEY) {
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_API_KEY}` },
+        body: JSON.stringify({
+          from: "ProQure <orders@proqure.co.uk>",
+          to: [inbox],
+          reply_to: fromEmail || undefined,
+          subject: `[ProQure] Order ${wasAlready ? "reply" : "confirmed"}: ${ord.poNumber || subject || ""}`,
+          text: `${fromEmail || "The supplier"} has replied to purchase order ${ord.poNumber || ""}${wasAlready ? "." : " \u2014 it has been marked as Confirmed in ProQure."}\n\n${replyText || ""}`,
+          html: notificationHtml({
+            title: wasAlready ? "Reply on your order" : "Order confirmed",
+            intro: `${fromEmail || "The supplier"} has replied to purchase order ${ord.poNumber || ""}${wasAlready ? ". A copy of the reply is below." : " \u2014 it has been automatically marked as Confirmed in ProQure. A copy of the reply is below."} Replying to this email goes straight to the supplier.`,
+            metaRows: [["PO number", ord.poNumber || ""], ["Supplier", ord.supplier || fromEmail || ""]],
+            replyText,
+          }),
+        }),
+      });
+    }
+  } catch (e) { console.error("api/inbound: order forward error", e && e.message); }
+  console.log("api/inbound: ORDER reply filed | po", ord.poNumber, "| confirmed:", !wasAlready, "| from", fromEmail);
+  return true;
+}
+
+// --- Quote-reply match + file (module-level so dead-letter re-filing can reuse) ---
+async function findQuoteTarget(token, fromEmail) {
+  const { data: rows, error } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_requests");
+  if (error) { console.error("api/inbound: load error", error.message); return null; }
+  // 1) Preferred: match the unique per-supplier reply token (q-<token>@...).
+  if (token) {
+    for (const row of (rows || [])) {
+      const requests = Array.isArray(row.value) ? row.value : [];
+      for (let ri = 0; ri < requests.length; ri++) {
+        const sentTo = (requests[ri] && requests[ri].sentTo) || [];
+        const si = sentTo.findIndex((s) => s && s.replyToken && s.replyToken === token);
+        if (si !== -1) return { target: { userId: row.user_id, requests, ri, si }, matchedBy: "token" };
+      }
+    }
+  }
+  // 2) Fallback: some mail clients reply to the visible From address instead of our
+  //    unique Reply-To, so the token is lost. Match the sender's email address against
+  //    a supplier we sent this job to - preferring a request still awaiting that
+  //    supplier's reply, then the most recent. Never guesses: only an exact email match.
+  if (fromEmail) {
+    let best = null;
+    for (const row of (rows || [])) {
+      const requests = Array.isArray(row.value) ? row.value : [];
+      for (let ri = 0; ri < requests.length; ri++) {
+        const sentTo = (requests[ri] && requests[ri].sentTo) || [];
+        for (let si = 0; si < sentTo.length; si++) {
+          const s = sentTo[si];
+          const addr = extractEmail((s && (s.email || s.contactEmail)) || "");
+          if (addr && addr === fromEmail) {
+            const sentAt = new Date(requests[ri].created || requests[ri].sentAt || 0).getTime();
+            const score = (s && s.replyReceivedAt ? 0 : 1e15) + sentAt;
+            if (!best || score > best.score) best = { userId: row.user_id, requests, ri, si, score };
+          }
+        }
+      }
+    }
+    if (best) return { target: best, matchedBy: "sender address" };
+  }
+  return null;
+}
+async function fileQuoteReply(target, { emailId, email, fromAddr, fromEmail, subject, replyText, matchedBy, attN }) {
+  const { userId, requests, ri, si } = target;
+
+  // Fetch attachments BEFORE the write so the slow network work (can be seconds)
+  // sits outside the read-modify-write window. On a re-file, `email` is null and
+  // the attachments are refetched from Resend by emailId.
+  const quoteAtts = await fetchQuoteAttachments(emailId, email);
+  const attCount = Number.isFinite(attN) ? attN : quoteAtts.length;
+
+  // Re-read this user's row FRESH immediately before writing. The scan above may be
+  // seconds old by now; if the user edited their requests in the app meanwhile, a
+  // write based on the stale copy would silently drop their change (or this reply).
+  // Re-locate the matched supplier entry in the fresh copy — by reply token first,
+  // then by request id + supplier email. If anything about the re-read fails, fall
+  // back to the original scanned copy so a reply is never lost.
+  let wRequests = requests, wRi = ri, wSi = si;
+  try {
+    const { data: freshRow } = await supabase.from("proqure_data")
+      .select("value").eq("user_id", userId).eq("store_key", "piq_requests").maybeSingle();
+    const fresh = Array.isArray(freshRow && freshRow.value) ? freshRow.value : null;
+    if (fresh) {
+      const origReq = requests[ri] || {};
+      const origSup = (origReq.sentTo || [])[si] || {};
+      const origTok = origSup.replyToken || null;
+      const origEmail = extractEmail(origSup.email || origSup.contactEmail || "");
+      let fri = -1, fsi = -1;
+      for (let i = 0; i < fresh.length && fri === -1; i++) {
+        const st = (fresh[i] && fresh[i].sentTo) || [];
+        for (let j = 0; j < st.length; j++) {
+          const s = st[j] || {};
+          const tokMatch = origTok && s.replyToken === origTok;
+          const idMatch = origReq.id != null && fresh[i].id === origReq.id &&
+            origEmail && extractEmail(s.email || s.contactEmail || "") === origEmail;
+          if (tokMatch || idMatch) { fri = i; fsi = j; break; }
+        }
+      }
+      if (fri !== -1) { wRequests = fresh; wRi = fri; wSi = fsi; }
+    }
+  } catch (e) { /* fall back to the scanned copy */ }
+
+  const sup = wRequests[wRi].sentTo[wSi];
+  // Idempotence: a redelivered webhook or a re-file racing the live path must not
+  // append the same reply twice. Filed emailIds are remembered on the entry.
+  if (emailId && Array.isArray(sup.filedEmailIds) && sup.filedEmailIds.includes(emailId)) {
+    console.log("api/inbound: quote reply already filed (emailId dedupe)"); return true;
+  }
+  const stamp = new Date().toISOString();
+  const header = `--- Reply from ${sup.name || fromAddr}${subject ? ` (re: ${subject})` : ""} received ${new Date().toLocaleString("en-GB")} ---\n`;
+  sup.quote = (sup.quote && sup.quote.trim() ? sup.quote + "\n\n" : "") + header + (replyText || "(no readable text in reply)");
+  sup.saved = true;
+  sup.replyReceivedAt = stamp;
+  if (emailId) sup.filedEmailIds = [...(Array.isArray(sup.filedEmailIds) ? sup.filedEmailIds : []), emailId].slice(-20);
+  if (quoteAtts.length) sup.attachments = [...(Array.isArray(sup.attachments) ? sup.attachments : []), ...quoteAtts];
+  const keptAtts = quoteAtts.filter(a => a.dataUrl).length;
+  wRequests[wRi].sentTo[wSi] = sup;
+  wRequests[wRi].activity = [
+    ...(wRequests[wRi].activity || []),
+    { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box${keptAtts ? ` with ${keptAtts} attachment${keptAtts === 1 ? "" : "s"}` : ""}${matchedBy !== "token" ? ` (matched by ${matchedBy})` : ""}`, user: "Inbound" },
+  ];
+
+  const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: wRequests, updated_at: stamp }, { onConflict: "user_id,store_key" });
+  if (upErr) { console.error("api/inbound: save error", upErr.message); return false; }
+  console.log("api/inbound: MATCHED & SAVED | user", userId, "| req", wRi, "| supplier", wSi, "| matchedBy", matchedBy);
+  await bumpStat(userId, { received: 1, receivedAttachments: attCount });
+  await pushEvent(userId, { type: "received", from: fromEmail, matchedBy, att: attCount });
+
+  // Notify the buying team that a quote landed. Server-side via proqure_notify
+  // (service role -> bypasses RLS); category "workflow" so buyers + managers see it.
+  // Deduped on the inbound email id so a redelivered webhook can't double-post.
+  try {
+    const jobRef = (wRequests[wRi] && wRequests[wRi].jobRef) || "";
+    await supabase.rpc("proqure_notify", {
+      p_company: userId,
+      p_type: "success",
+      p_category: "workflow",
+      p_title: `${sup.name || "A supplier"} replied to your RFQ`,
+      p_body: `Their quote has been added to the quote box${jobRef ? ` for ${jobRef}` : ""}.`,
+      p_dedupe: `workflow:reply:${emailId || (userId + ":" + wRi + ":" + wSi + ":" + stamp)}`,
+      p_cta_label: "Open ProQure",
+      p_cta_href: "https://app.proqure.co.uk",
+      p_meta: { kind: "supplier-reply", supplier: sup.name || null, jobRef: jobRef || null, matchedBy },
+    });
+  } catch (e) { console.warn("api/inbound: notify failed (non-fatal)", e && e.message); }
+
+  try {
+    const { data: sRows } = await supabase.from("proqure_data").select("value").eq("store_key", "piq_settings").eq("user_id", userId).limit(1);
+    const settings = (sRows && sRows[0]) ? sRows[0].value : null;
+    const inbox = settings && (settings.replyToEmail || settings.fromEmail);
+    if (inbox) await forwardCopy(inbox, sup.name, fromAddr, subject, replyText);
+  } catch (e) { console.warn("api/inbound: forward lookup failed", e && e.message); }
+  return true;
+}
+
+// --- Re-file pending dead-letters (self-healing) -------------------------------
+// Runs at the start of every inbound webhook: once the buyer's client has synced
+// the missing token/sentTo data to Supabase, a previously-unmatched reply files
+// exactly as if it had matched first time. Bounded to 3 attempts per invocation;
+// entries expire loudly after 14 days or 12 tries so nothing loops forever.
+async function refileDeadLetters() {
+  let list = await loadDeadLetters();
+  if (!list.length) return;
+  const now = Date.now();
+  const keep = [];
+  let processed = 0, changed = false;
+  for (const e of list) {
+    if (!e) { changed = true; continue; }
+    const age = now - new Date(e.ts || 0).getTime();
+    if (age > DEADLETTER_MAX_AGE_MS || (e.tries || 0) >= DEADLETTER_MAX_TRIES) {
+      console.error("api/inbound: dead-letter EXPIRED unfiled | kind", e.kind, "| from", e.fromEmail, "| subject", e.subject);
+      changed = true; continue;
+    }
+    if (processed >= 3) { keep.push(e); continue; }
+    processed++;
+    let filed = false;
+    try {
+      if (e.kind === "order" && e.ordTok) {
+        const oHit = await findOrderHit(e.ordTok);
+        if (oHit) filed = await fileOrderReply(oHit, { emailId: e.emailId, fromEmail: e.fromEmail, subject: e.subject, replyText: e.replyText });
+      } else if (e.kind === "quote") {
+        const found = await findQuoteTarget(e.token, e.fromEmail);
+        if (found) filed = await fileQuoteReply(found.target, { emailId: e.emailId, email: null, fromAddr: e.fromAddr || e.fromEmail, fromEmail: e.fromEmail, subject: e.subject, replyText: e.replyText, matchedBy: found.matchedBy + ", re-filed" });
+      }
+    } catch (err) { console.warn("api/inbound: re-file attempt failed", err && err.message); }
+    if (filed) { console.log("api/inbound: RE-FILED dead-lettered reply | kind", e.kind, "| from", e.fromEmail); changed = true; }
+    else { keep.push({ ...e, tries: (e.tries || 0) + 1 }); changed = true; }
+  }
+  if (changed) await saveDeadLetters(keep);
+}
+
 // Metadata-only observability writes. These never carry subjects or body/quote text —
 // only counts, the supplier address, a matched-by flag and an attachment count. They
 // must never block reply capture, so all errors are swallowed.
@@ -382,6 +652,10 @@ export default async function handler(req, res) {
     const subject = (email && email.subject) || data.subject || "";
     console.log("api/inbound: emailId", emailId, "| token", token, "| from", fromEmail, "| bodyLen", (replyText || "").length);
 
+    // Self-healing: before handling this email, try to re-file any replies that
+    // previously arrived faster than the app's sync (bounded; never throws).
+    try { await refileDeadLetters(); } catch (e) { console.warn("api/inbound: re-file pass failed (non-fatal)", e && e.message); }
+
     // --- Support-ticket replies (s-<token>@<capture-domain>) ---------------------
     // A customer replying to one of our support emails lands here. Match the token to
     // the ticket and append their message to the thread so it shows in the admin
@@ -426,187 +700,42 @@ export default async function handler(req, res) {
     const ordTok = extractOrderToken((email && email.to) || data.to);
     if (ordTok) {
       try {
-        const { data: oRows, error: oErr } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_orders");
-        if (oErr) { console.error("api/inbound: orders load error", oErr.message); return res.status(200).json({ ok: true }); }
+        const ctx = { emailId, fromEmail, subject, replyText };
         let oHit = null;
-        for (const row of (oRows || [])) {
-          const list = Array.isArray(row.value) ? row.value : [];
-          const ix = list.findIndex((o) => o && o.replyToken === ordTok);
-          if (ix !== -1) { oHit = { userId: row.user_id, ix }; break; }
+        for (let attempt = 0; attempt < 4 && !oHit; attempt++) {
+          if (attempt > 0) { await sleep(attempt === 1 ? 6000 : attempt === 2 ? 8000 : 10000); console.log("api/inbound: order match retry", attempt, "| token", ordTok); }
+          oHit = await findOrderHit(ordTok);
         }
-        if (!oHit) { console.warn("api/inbound: order reply not matched - token", ordTok, "from", fromEmail); return res.status(200).json({ ok: true, note: "order not matched" }); }
-        // Re-read fresh immediately before writing so a concurrent edit isn't lost.
-        const { data: freshRow } = await supabase.from("proqure_data").select("value").eq("user_id", oHit.userId).eq("store_key", "piq_orders").maybeSingle();
-        const oList = Array.isArray(freshRow && freshRow.value) ? freshRow.value : [];
-        const oIx = oList.findIndex((o) => o && o.replyToken === ordTok);
-        if (oIx === -1) { console.warn("api/inbound: order vanished on re-read - token", ordTok); return res.status(200).json({ ok: true }); }
-        const ord = { ...oList[oIx] };
-        const nowIso = new Date().toISOString();
-        const wasAlready = ord.status === "confirmed" || ord.status === "acknowledged" || ord.status === "delivered" || ord.status === "cancelled";
-        if (!wasAlready) { ord.status = "confirmed"; ord.confirmedAt = nowIso; }
-        ord.supplierReply = { ts: nowIso, from: fromEmail || "supplier", text: String(replyText || "").slice(0, 4000) };
-        ord.activity = [...(Array.isArray(ord.activity) ? ord.activity : []), {
-          ts: nowIso,
-          action: wasAlready ? "Supplier replied" : "Order confirmed",
-          detail: wasAlready ? `Reply received from ${fromEmail || "supplier"}` : `Supplier replied by email \u2014 auto-confirmed (${fromEmail || "supplier"})`,
-          user: "supplier-reply",
-        }];
-        oList[oIx] = ord;
-        const { error: oUpErr } = await supabase.from("proqure_data").upsert({ user_id: oHit.userId, store_key: "piq_orders", value: oList, updated_at: nowIso }, { onConflict: "user_id,store_key" });
-        if (oUpErr) { console.error("api/inbound: order save error", oUpErr.message); return res.status(200).json({ ok: true }); }
-        // Forward the reply to the buyer's inbox (from orders@, reply-to the supplier).
-        try {
-          const { data: st } = await supabase.from("proqure_data").select("value").eq("user_id", oHit.userId).eq("store_key", "piq_settings").maybeSingle();
-          const inbox = st && st.value && (st.value.replyToEmail || st.value.fromEmail);
-          if (inbox && RESEND_API_KEY) {
-            await fetch("https://api.resend.com/emails", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_API_KEY}` },
-              body: JSON.stringify({
-                from: "ProQure <orders@proqure.co.uk>",
-                to: [inbox],
-                reply_to: fromEmail || undefined,
-                subject: `[ProQure] Order ${wasAlready ? "reply" : "confirmed"}: ${ord.poNumber || subject || ""}`,
-                text: `${fromEmail || "The supplier"} has replied to purchase order ${ord.poNumber || ""}${wasAlready ? "." : " \u2014 it has been marked as Confirmed in ProQure."}\n\n${replyText || ""}`,
-                html: notificationHtml({
-                  title: wasAlready ? "Reply on your order" : "Order confirmed",
-                  intro: `${fromEmail || "The supplier"} has replied to purchase order ${ord.poNumber || ""}${wasAlready ? ". A copy of the reply is below." : " \u2014 it has been automatically marked as Confirmed in ProQure. A copy of the reply is below."} Replying to this email goes straight to the supplier.`,
-                  metaRows: [["PO number", ord.poNumber || ""], ["Supplier", ord.supplier || fromEmail || ""]],
-                  replyText,
-                }),
-              }),
-            });
-          }
-        } catch (e) { console.error("api/inbound: order forward error", e && e.message); }
-        console.log("api/inbound: ORDER reply filed | po", ord.poNumber, "| confirmed:", !wasAlready, "| from", fromEmail);
+        if (!oHit) {
+          console.warn("api/inbound: order reply not matched after retries - token", ordTok, "from", fromEmail);
+          await deadLetterAdd({ kind: "order", ordTok, fromEmail, subject, replyText: String(replyText || "").slice(0, 6000), emailId });
+          return res.status(200).json({ ok: true, note: "order not matched - dead-lettered" });
+        }
+        await fileOrderReply(oHit, ctx);
       } catch (e) { console.error("api/inbound: order handler error", e && e.message); }
       return res.status(200).json({ ok: true, order: true });
     }
 
-    const { data: rows, error } = await supabase.from("proqure_data").select("user_id,value").eq("store_key", "piq_requests");
-    if (error) { console.error("api/inbound: load error", error.message); return res.status(200).json({ ok: true }); }
-
-    // 1) Preferred: match the unique per-supplier reply token (q-<token>@...).
-    let target = null, matchedBy = "token";
-    if (token) {
-      for (const row of (rows || [])) {
-        const requests = Array.isArray(row.value) ? row.value : [];
-        for (let ri = 0; ri < requests.length; ri++) {
-          const sentTo = (requests[ri] && requests[ri].sentTo) || [];
-          const si = sentTo.findIndex((s) => s && s.replyToken && s.replyToken === token);
-          if (si !== -1) { target = { userId: row.user_id, requests, ri, si }; break; }
-        }
-        if (target) break;
-      }
+    // --- Supplier quote replies (q-<token>@<capture-domain>, or bare sender match) ---
+    // Retry the match over ~24s: a supplier replying within seconds of the RFQ can
+    // beat the app's debounced sync push of the reply token to Supabase. If it still
+    // doesn't match, dead-letter it — NEVER silently drop (the old behaviour: a 200
+    // "not matched" meant Resend never redelivered and the reply was lost for good).
+    let found = null;
+    for (let attempt = 0; attempt < 4 && !found; attempt++) {
+      if (attempt > 0) { await sleep(attempt === 1 ? 6000 : attempt === 2 ? 8000 : 10000); console.log("api/inbound: quote match retry", attempt, "| token", token, "| from", fromEmail); }
+      found = await findQuoteTarget(token, fromEmail);
     }
-    // 2) Fallback: some mail clients reply to the visible From address instead of our
-    //    unique Reply-To, so the token is lost. Match the sender's email address against
-    //    a supplier we sent this job to - preferring a request still awaiting that
-    //    supplier's reply, then the most recent. Never guesses: only an exact email match.
-    if (!target && fromEmail) {
-      let best = null;
-      for (const row of (rows || [])) {
-        const requests = Array.isArray(row.value) ? row.value : [];
-        for (let ri = 0; ri < requests.length; ri++) {
-          const sentTo = (requests[ri] && requests[ri].sentTo) || [];
-          for (let si = 0; si < sentTo.length; si++) {
-            const s = sentTo[si];
-            const addr = extractEmail((s && (s.email || s.contactEmail)) || "");
-            if (addr && addr === fromEmail) {
-              const sentAt = new Date(requests[ri].created || requests[ri].sentAt || 0).getTime();
-              const score = (s && s.replyReceivedAt ? 0 : 1e15) + sentAt;
-              if (!best || score > best.score) best = { userId: row.user_id, requests, ri, si, score };
-            }
-          }
-        }
-      }
-      if (best) { target = best; matchedBy = "sender address"; }
+    if (!found) {
+      console.warn("api/inbound: not matched after retries - token", token, "from", fromEmail);
+      await bumpStat(PLATFORM_BUCKET, { receivedUnmatched: 1 });
+      await pushEvent(PLATFORM_BUCKET, { type: "received-unmatched", from: fromEmail, att: attN });
+      await deadLetterAdd({ kind: "quote", token, fromEmail, fromAddr, subject, replyText: String(replyText || "").slice(0, 6000), emailId });
+      return res.status(200).json({ ok: true, note: "not matched - dead-lettered" });
     }
-    if (!target) { console.warn("api/inbound: not matched - token", token, "from", fromEmail); await bumpStat(PLATFORM_BUCKET, { receivedUnmatched: 1 }); await pushEvent(PLATFORM_BUCKET, { type: "received-unmatched", from: fromEmail, att: attN }); return res.status(200).json({ ok: true, note: "not matched" }); }
 
-    const { userId, requests, ri, si } = target;
-
-    // Fetch attachments BEFORE the write so the slow network work (can be seconds)
-    // sits outside the read-modify-write window.
-    const quoteAtts = await fetchQuoteAttachments(emailId, email);
-
-    // Re-read this user's row FRESH immediately before writing. The scan above may be
-    // seconds old by now; if the user edited their requests in the app meanwhile, a
-    // write based on the stale copy would silently drop their change (or this reply).
-    // Re-locate the matched supplier entry in the fresh copy — by reply token first,
-    // then by request id + supplier email. If anything about the re-read fails, fall
-    // back to the original scanned copy so a reply is never lost.
-    let wRequests = requests, wRi = ri, wSi = si;
-    try {
-      const { data: freshRow } = await supabase.from("proqure_data")
-        .select("value").eq("user_id", userId).eq("store_key", "piq_requests").maybeSingle();
-      const fresh = Array.isArray(freshRow && freshRow.value) ? freshRow.value : null;
-      if (fresh) {
-        const origReq = requests[ri] || {};
-        const origSup = (origReq.sentTo || [])[si] || {};
-        const origTok = origSup.replyToken || null;
-        const origEmail = extractEmail(origSup.email || origSup.contactEmail || "");
-        let fri = -1, fsi = -1;
-        for (let i = 0; i < fresh.length && fri === -1; i++) {
-          const st = (fresh[i] && fresh[i].sentTo) || [];
-          for (let j = 0; j < st.length; j++) {
-            const s = st[j] || {};
-            const tokMatch = origTok && s.replyToken === origTok;
-            const idMatch = origReq.id != null && fresh[i].id === origReq.id &&
-              origEmail && extractEmail(s.email || s.contactEmail || "") === origEmail;
-            if (tokMatch || idMatch) { fri = i; fsi = j; break; }
-          }
-        }
-        if (fri !== -1) { wRequests = fresh; wRi = fri; wSi = fsi; }
-      }
-    } catch (e) { /* fall back to the scanned copy */ }
-
-    const sup = wRequests[wRi].sentTo[wSi];
-    const stamp = new Date().toISOString();
-    const header = `--- Reply from ${sup.name || fromAddr}${subject ? ` (re: ${subject})` : ""} received ${new Date().toLocaleString("en-GB")} ---\n`;
-    sup.quote = (sup.quote && sup.quote.trim() ? sup.quote + "\n\n" : "") + header + (replyText || "(no readable text in reply)");
-    sup.saved = true;
-    sup.replyReceivedAt = stamp;
-    if (quoteAtts.length) sup.attachments = [...(Array.isArray(sup.attachments) ? sup.attachments : []), ...quoteAtts];
-    const keptAtts = quoteAtts.filter(a => a.dataUrl).length;
-    wRequests[wRi].sentTo[wSi] = sup;
-    wRequests[wRi].activity = [
-      ...(wRequests[wRi].activity || []),
-      { ts: stamp, action: "Supplier reply captured", detail: `${sup.name || fromAddr} replied - dropped into the quote box${keptAtts ? ` with ${keptAtts} attachment${keptAtts === 1 ? "" : "s"}` : ""}${matchedBy === "sender address" ? " (matched by sender address)" : ""}`, user: "Inbound" },
-    ];
-
-    const { error: upErr } = await supabase.from("proqure_data").upsert({ user_id: userId, store_key: "piq_requests", value: wRequests, updated_at: stamp }, { onConflict: "user_id,store_key" });
-    if (upErr) { console.error("api/inbound: save error", upErr.message); return res.status(200).json({ ok: true }); }
-    console.log("api/inbound: MATCHED & SAVED | user", userId, "| req", wRi, "| supplier", wSi);
-    await bumpStat(userId, { received: 1, receivedAttachments: attN });
-    await pushEvent(userId, { type: "received", from: fromEmail, matchedBy, att: attN });
-
-    // Notify the buying team that a quote landed. Server-side via proqure_notify
-    // (service role -> bypasses RLS); category "workflow" so buyers + managers see it.
-    // Deduped on the inbound email id so a redelivered webhook can't double-post.
-    try {
-      const jobRef = (wRequests[wRi] && wRequests[wRi].jobRef) || "";
-      await supabase.rpc("proqure_notify", {
-        p_company: userId,
-        p_type: "success",
-        p_category: "workflow",
-        p_title: `${sup.name || "A supplier"} replied to your RFQ`,
-        p_body: `Their quote has been added to the quote box${jobRef ? ` for ${jobRef}` : ""}.`,
-        p_dedupe: `workflow:reply:${emailId || (userId + ":" + wRi + ":" + wSi + ":" + stamp)}`,
-        p_cta_label: "Open ProQure",
-        p_cta_href: "https://app.proqure.co.uk",
-        p_meta: { kind: "supplier-reply", supplier: sup.name || null, jobRef: jobRef || null, matchedBy },
-      });
-    } catch (e) { console.warn("api/inbound: notify failed (non-fatal)", e && e.message); }
-
-    try {
-      const { data: sRows } = await supabase.from("proqure_data").select("value").eq("store_key", "piq_settings").eq("user_id", userId).limit(1);
-      const settings = (sRows && sRows[0]) ? sRows[0].value : null;
-      const inbox = settings && (settings.replyToEmail || settings.fromEmail);
-      if (inbox) await forwardCopy(inbox, sup.name, fromAddr, subject, replyText);
-    } catch (e) { console.warn("api/inbound: forward lookup failed", e && e.message); }
-
-    return res.status(200).json({ ok: true, matched: true });
+    const filed = await fileQuoteReply(found.target, { emailId, email, fromAddr, fromEmail, subject, replyText, matchedBy: found.matchedBy, attN });
+    return res.status(200).json({ ok: true, matched: filed });
   } catch (e) {
     console.error("api/inbound: handler error", e && e.message);
     return res.status(200).json({ ok: true });
