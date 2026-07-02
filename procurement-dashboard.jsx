@@ -4194,7 +4194,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
       // is written (fresh requests only - continue/revise keep their existing ref). This
       // guarantees the emailed ref and the saved record match, and picks up any refs other
       // people have committed since this draft was opened.
-      const refToUse = editingReqId ? jobRef : nextJobRef();
+      const refToUse = editingReqId ? jobRef : await allocJobRef();
       if (!editingReqId && refToUse !== jobRef) setJobRef(refToUse);
       const email = await generateRFQ(parsed.items, refToUse, settings.company, settings.contactName, settings.fromEmail, deliveryMethod, deliveryDate, altAddress, rfqDeadline, settings.siteAddress, collectFrom);
       setRfqEmail(email);
@@ -4276,7 +4276,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
 
   // Quick PO - raise a purchase order directly from a phone-agreed price, skipping the RFQ/quote flow.
   // Buyers & Managers only. Skips manager approval (emergency). Logged as a direct/phone order.
-  function handleQuickPO(form) {
+  async function handleQuickPO(form) {
     if (!can.raisePO(myRole)) { showToast("Only buyers and managers can raise a PO.","warn"); return; }
     const itemsValid = (form.items||[]).some(i => (i.description||"").trim());
     if (!itemsValid && !(form.summary||"").trim()) { showToast("Add at least one item or a description.","warn"); return; }
@@ -4285,7 +4285,8 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     // Finalise the job ref at the moment of raising: auto = next in the shared sequence
     // (so it reverts/advances based on what's actually been committed by then); a manual
     // ref (used to link to an existing job) is respected as typed.
-    const finalJobRef = form.jobRefAuto ? nextJobRef() : ((form.jobRef||"").trim() || nextJobRef());
+    const manualRef = (form.jobRef||"").trim();
+    const finalJobRef = form.jobRefAuto ? await allocJobRef() : (manualRef || await allocJobRef());
 
     // Resolve or create the supplier
     let supplier = null;
@@ -4590,11 +4591,11 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     showToast("Hire closed");
   }
 
-  function handleIssueToBuyer() {
+  async function handleIssueToBuyer() {
     if (!parsed || !(parsed.items||[]).length) { showToast("Add some materials first.","warn"); return; }
     const newId = `RFQ-${Date.now().toString().slice(-6)}`;
     // Finalise the job ref against the latest committed data at the moment of issue.
-    const finalRef = editingReqId ? (jobRef||"TBC") : nextJobRef();
+    const finalRef = editingReqId ? (jobRef||"TBC") : await allocJobRef();
     const r = {
       id: newId,
       pqRef: makePqRef(),
@@ -4872,6 +4873,29 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
     // one sequence and can never be handed the same number.
     scan(requests); scan(orders); scan(hires);
     return "JOB-" + yr + "-" + String(max+1).padStart(3,"0");
+  }
+
+  // Atomically allocate the next job reference from the SERVER so two people
+  // raising at the same moment (on different devices) can never be handed the
+  // same JOB-YYYY-NNN. The database function proqure_next_job_ref keeps a
+  // per-company, per-year counter and increments it under a row lock. We pass the
+  // local highest-used number as a floor so the counter bootstraps correctly from
+  // existing jobs. If the function isn't installed yet, or the network/RPC fails,
+  // we fall back to the local calculation - identical to today's behaviour - so
+  // nothing ever breaks; the worst case is simply the pre-existing tiny race.
+  async function allocJobRef() {
+    const local = nextJobRef();
+    try {
+      if (!supabase || !cloudUserId) return local;
+      const yr = new Date().getFullYear();
+      const m = String(local).match(new RegExp("^JOB-" + yr + "-(\\d+)$"));
+      const floor = m ? Math.max(0, parseInt(m[1], 10) - 1) : 0; // highest ref already used locally
+      const { data, error } = await supabase.rpc("proqure_next_job_ref", {
+        p_company_id: cloudUserId, p_year: yr, p_floor: floor,
+      });
+      if (error || !data) return local;
+      return String(data);
+    } catch { return local; }
   }
 
   function resetNewRequest() {
