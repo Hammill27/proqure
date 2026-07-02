@@ -3738,6 +3738,8 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   const [selSup,   setSelSup]   = useState([]);
   const [contactSel, setContactSel] = useState({}); // { [supplierId]: contactId } - which contact an RFQ goes to
   const [supSearch, setSupSearch] = useState("");    // searchable supplier picker (wizard)
+  const [showAllSup, setShowAllSup] = useState(false); // override the smart trade filter and list every supplier
+  const [itemSheet, setItemSheet] = useState(null);   // index of the item open in the mobile edit sheet (null = closed)
   const [editingReqId, setEditingReqId] = useState(null); // when set, the wizard is revising an existing request (re-send)
   const [newReqTab, setNewReqTab] = useState("new"); // "new" | "engineers" – entry tab on the New Request screen (buyer/manager)
   const [loading,  setLoading]  = useState(false);
@@ -4062,6 +4064,7 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   // Quote analysis state
   const [activeReq,     setActiveReq]     = useState(null);
   const [approvedQuoteId, setApprovedQuoteId] = useState(null);
+  const [showOtherQuotes, setShowOtherQuotes] = useState(false); // once approved: winner stays prominent, the rest sit behind a "view all" expander
   const [approveConfirm, setApproveConfirm] = useState(null); // {qa} waiting for confirmation
   const [reviewAck, setReviewAck] = useState(false); // A-03: must tick to approve a flagged quote
   const [quickPOConfirm, setQuickPOConfirm] = useState(null); // A-01: {form, check} for a flagged Quick PO
@@ -4148,7 +4151,9 @@ function ProQureApp({ session, companyId, memberships, onNeedMfa, onRechoose }) 
   // Searchable picker: when there's a search term, search across ALL suppliers
   // (name, trade, or any contact name/email); otherwise show the trade-filtered list.
   const supMatch = (s,q)=> (s.name||"").toLowerCase().includes(q) || (s.categories||[]).some(c=>(c||"").toLowerCase().includes(q)) || (s.contacts||[]).some(c=>(c.name||"").toLowerCase().includes(q)||(c.email||"").toLowerCase().includes(q));
-  const pickList = (()=>{ const q=supSearch.trim().toLowerCase(); return q ? suppliers.filter(s=>supMatch(s,q)) : filteredSup; })();
+  // "Show all" overrides the smart trade filter (user is never blocked by tagging);
+  // a search term always searches across ALL suppliers regardless of either mode.
+  const pickList = (()=>{ const q=supSearch.trim().toLowerCase(); if (q) return suppliers.filter(s=>supMatch(s,q)); return showAllSup ? suppliers : filteredSup; })();
   // Autocomplete suggestions (native datalists) drawn from past requests + supplier branches.
   const pastJobRefs = [...new Set((requests||[]).map(r=>r.jobRef).filter(Boolean))].slice(0,80);
   const pastSites = [...new Set((requests||[]).map(r=>r.site).filter(Boolean))].slice(0,80);
@@ -4877,7 +4882,7 @@ function validateQuickPO(form) {
         setStep(1);
         setRawInput(""); setParsed(null); setJobRef(""); setSite(""); setTrade("Plumbing");
         setNrStep(1); setNrTradePicked(false); setCfgStep(1); setSendConfirm(false);
-        setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
+        setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch(""); setShowAllSup(false); setItemSheet(null);
         setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline(""); setRequestNotes(""); setRequestBudget("");
         setView("dashboard");
       }});
@@ -4962,7 +4967,7 @@ function validateQuickPO(form) {
     const raw = (r.items||[]).map(i=>`${i.quantity} ${i.unit} of ${i.description}${i.notes?` (${i.notes})`:""}`).join(", ");
     setRawInput(raw);
     setParsed({ items: (r.items||[]).map(i=>({...i})), jobRef:r.jobRef||"", urgency:"standard" });
-    setSelSup([]); setContactSel({}); setSupSearch("");
+    setSelSup([]); setContactSel({}); setSupSearch(""); setShowAllSup(false); setItemSheet(null);
     setRfqEmail(""); setRfqDocs([]); setEmailRes(null);
     setNewReqTab("new");
     setStep(2); setCfgStep(1);
@@ -4982,7 +4987,7 @@ function validateQuickPO(form) {
     if (can.sendRFQ(myRole)) claimRequest(r.id, !!opts.force);
     const savedSet = savedQuoteSets.find(s=>s.reqId===r.id);
     setActiveReq(r);
-    if (savedSet) { setAllAnalyses(savedSet.analyses); setApprovedQuoteId(savedSet.approvedId); setExpandedQuote(savedSet.analyses[0]?._id||null); setQuoteViewMode("cards"); }
+    if (savedSet) { setAllAnalyses(savedSet.analyses); setApprovedQuoteId(savedSet.approvedId); setExpandedQuote(savedSet.analyses[0]?._id||null); setQuoteViewMode("cards"); setShowOtherQuotes(false); }
     else { setAllAnalyses([]); }
     setView("quotes");
   }
@@ -5066,7 +5071,7 @@ function validateQuickPO(form) {
     releaseRequest(editingReqId);
     setStep(1); setRawInput(""); setParsed(null); setJobRef(nextJobRef()); setSite(""); setTrade("Plumbing"); setEditingReqId(null);
     setNrStep(1); setNrTradePicked(false); setCfgStep(1); setSendConfirm(false);
-    setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch("");
+    setRfqEmail(""); setRfqDocs([]); setEmailRes(null); setSelSup([]); setContactSel({}); setSupSearch(""); setShowAllSup(false); setItemSheet(null);
     setDeliveryMethod("direct"); setDeliveryDate(""); setAltAddress(""); setCollectFrom(""); setRfqDeadline("");
     setRequestNotes(""); setRequestBudget(""); setNewReqTab("new");
     setInterim(""); setScanning(false);
@@ -5248,8 +5253,10 @@ function validateQuickPO(form) {
     setTimeout(()=>{ setActiveReq(null); setAllAnalyses([]); setExpandedQuote(null); }, 1200);
     logActivity("PO approved & generated",`${poNum} - ${sup?.name||"supplier"} - Est. ${analysis?.estimatedTotal||"-"} (${otherQuotes.length} other quote${otherQuotes.length!==1?"s":""} saved to library)`,{entity:"order",reqId:activeReq.id,jobRef:activeReq.jobRef});meter("posRaised");meter("posMaterials");
 
-    // Remove other quotes from the analysis view
-    setAllAnalyses([qa]);
+    // Keep ALL quotes in the analysis view (bug fix: previously only the winning
+    // card survived approval). The winner is shown first and prominent; the
+    // others collapse behind a "view other quotes" expander.
+    setShowOtherQuotes(false);
 
     const order = {
       id:poNum, reqId:activeReq.id,
@@ -6122,6 +6129,20 @@ ${settings.company||""}`;
     const t = setTimeout(pullMergeNow, 20000); // first catch-up shortly after load
     return () => { clearInterval(iv); clearTimeout(t); document.removeEventListener("visibilitychange", onVis); };
   }, [cloudUserId, pullMergeNow]);
+
+  // Manual "refresh now" (bug fix: replies shouldn't need a full URL reload).
+  // The 90s background pull + tab-focus pull do most of the work; this gives the
+  // user an explicit per-page refresh too. Spins while pulling, with a short
+  // minimum so the action visibly happened, then confirms with a toast.
+  const [manualSyncing, setManualSyncing] = useState(false);
+  const handleManualRefresh = useCallback(async () => {
+    if (manualSyncing) return;
+    setManualSyncing(true);
+    const started = Date.now();
+    try { await pullMergeNow(); } catch {}
+    const wait = Math.max(0, 700 - (Date.now() - started));
+    setTimeout(() => { setManualSyncing(false); showToast("Up to date"); }, wait);
+  }, [manualSyncing, pullMergeNow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Client hygiene matching the server RBAC: an engineer must not retain price/
   // cost data cached from a previous higher-privileged session (e.g. a role
@@ -7285,6 +7306,12 @@ Rules:
             })}
           </div>
           <div style={{padding:"14px 20px",borderTop:"1px solid var(--sidebar-border)"}}>
+            {cloudEnabled && cloudUserId && (
+            <button onClick={handleManualRefresh} disabled={manualSyncing} aria-label="Refresh data" title="Pull the latest replies and changes now" style={{width:"100%",display:"flex",alignItems:"center",gap:8,background:"transparent",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:manualSyncing?"default":"pointer",marginBottom:8,color:"var(--sidebar-text)",opacity:manualSyncing?0.7:1}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{animation:manualSyncing?"spin 0.8s linear infinite":"none"}}><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+              <span style={{fontSize:13,fontWeight:600}}>{manualSyncing?"Refreshing\u2026":"Refresh data"}</span>
+            </button>
+            )}
             {myCompanies.length > 1 && (
             <button onClick={()=>handleNav("companies")} aria-label="Companies" title="Switch company" style={{width:"100%",display:"flex",alignItems:"center",gap:8,background:"transparent",border:"1px solid var(--sidebar-border)",borderRadius:"var(--radius-sm)",padding:"9px 14px",cursor:"pointer",marginBottom:8,color:"var(--sidebar-text)"}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V7l7-4v18M19 21V11l-7-4"/></svg>
@@ -7984,8 +8011,8 @@ Rules:
                                   <tr key={i} style={{borderTop:"1px solid var(--border)"}}>
                                     <td style={{padding:"8px 12px",fontSize:12,color:"var(--text-muted)",fontFamily:"monospace"}}>{i+1}</td>
                                     <td style={{padding:"4px 6px",minWidth:160}}>
-                                      <input value={item.description||""} onChange={e=>updateItem("description",e.target.value)}
-                                        style={{...cellStyle,fontWeight:500}}
+                                      <GrowTextarea value={item.description||""} onChange={e=>updateItem("description",e.target.value)}
+                                        style={{...cellStyle,fontWeight:500,lineHeight:1.45}}
                                         onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--green-dark)",background:"var(--bg-subtle)"})}
                                         onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}/>
                                       {(()=>{ const m=stockMatchesFor(item.description, stock); if(!m.length) return null; const tq=m.reduce((s,x)=>s+(Number(x.qty)||0),0); const locs=[...new Set(m.map(x=>(x.location||"").trim()).filter(Boolean))]; return (
@@ -8013,17 +8040,24 @@ Rules:
                                       </select>
                                     </td>
                                     <td style={{padding:"4px 6px"}}>
-                                      <input value={item.notes||""} onChange={e=>updateItem("notes",e.target.value)}
+                                      <GrowTextarea value={item.notes||""} onChange={e=>updateItem("notes",e.target.value)}
                                         placeholder="Add note..."
-                                        style={{...cellStyle,color:"var(--text-secondary)",fontSize:12}}
+                                        style={{...cellStyle,color:"var(--text-secondary)",fontSize:12,lineHeight:1.45}}
                                         onFocus={e=>Object.assign(e.target.style,{border:"1px solid var(--border)",background:"var(--bg-subtle)"})}
                                         onBlur={e=>Object.assign(e.target.style,{border:"1px solid transparent",background:"transparent"})}/>
                                     </td>
                                     <td style={{padding:"4px 6px",width:30}}>
-                                      <button onClick={()=>setParsed(p=>({...p,items:p.items.filter((_,ii)=>ii!==i)}))}
-                                        style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",fontSize:14}}
-                                        onMouseEnter={e=>e.target.style.color="var(--red)"}
-                                        onMouseLeave={e=>e.target.style.color="var(--text-muted)"}>x</button>
+                                      {isMobile?(
+                                        <button onClick={()=>setItemSheet(i)} aria-label="Edit item" title="Edit item"
+                                          style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",padding:4}}>
+                                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                        </button>
+                                      ):(
+                                        <button onClick={()=>setParsed(p=>({...p,items:p.items.filter((_,ii)=>ii!==i)}))}
+                                          style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-muted)",fontSize:14}}
+                                          onMouseEnter={e=>e.target.style.color="var(--red)"}
+                                          onMouseLeave={e=>e.target.style.color="var(--text-muted)"}>x</button>
+                                      )}
                                     </td>
                                   </tr>
                                 );
@@ -8037,10 +8071,59 @@ Rules:
                         </button>
                       </div>
 
+                      {/* Mobile item edit sheet - full-width fields so nothing is cramped
+                          into the table's narrow columns on a phone. */}
+                      {itemSheet!=null&&parsed?.items?.[itemSheet]&&(()=>{
+                        const item = parsed.items[itemSheet];
+                        const upd = (field,val)=>setParsed(p=>({...p,items:p.items.map((it,ii)=>ii===itemSheet?{...it,[field]:val}:it)}));
+                        const fieldStyle = {width:"100%",boxSizing:"border-box",padding:"11px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:14,outline:"none",fontFamily:"inherit",background:"var(--bg-subtle)",color:"var(--text-primary)"};
+                        const lbl = {fontSize:11,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.04em",display:"block",marginBottom:5};
+                        return (
+                        <div style={{position:"fixed",inset:0,zIndex:1004,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                          <div onClick={()=>setItemSheet(null)} style={{position:"absolute",inset:0,background:"rgba(12,12,14,0.55)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)"}}/>
+                          <div style={{position:"relative",width:"100%",maxWidth:560,maxHeight:"85vh",overflowY:"auto",background:"var(--bg-card-solid)",borderRadius:"18px 18px 0 0",padding:"18px 18px calc(18px + env(safe-area-inset-bottom))",boxShadow:"var(--shadow-lg)",animation:"slideUp 0.25s cubic-bezier(0.16,1,0.3,1)"}}>
+                            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                              <div style={{fontSize:16,fontWeight:800,color:"var(--text-primary)"}}>Edit item {itemSheet+1}</div>
+                              <button onClick={()=>{setParsed(p=>({...p,items:p.items.filter((_,ii)=>ii!==itemSheet)}));setItemSheet(null);}}
+                                style={{display:"inline-flex",alignItems:"center",gap:6,background:"var(--red-light)",color:"var(--red)",border:"none",borderRadius:"var(--radius-sm)",padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                                Remove
+                              </button>
+                            </div>
+                            <div style={{marginBottom:12}}>
+                              <label style={lbl}>Description</label>
+                              <GrowTextarea value={item.description||""} onChange={e=>upd("description",e.target.value)} placeholder="What is the item?" style={{...fieldStyle,lineHeight:1.5,minHeight:44}}/>
+                            </div>
+                            <div style={{display:"flex",gap:10,marginBottom:12}}>
+                              <div style={{flex:"0 0 110px"}}>
+                                <label style={lbl}>Quantity</label>
+                                <input type="number" value={item.quantity||""} onChange={e=>upd("quantity",e.target.value)} style={{...fieldStyle,fontFamily:"'JetBrains Mono',monospace"}}/>
+                              </div>
+                              <div style={{flex:1}}>
+                                <label style={lbl}>Unit</label>
+                                <input value={item.unit||""} onChange={e=>upd("unit",e.target.value)} placeholder="pcs, m, box..." style={fieldStyle}/>
+                              </div>
+                            </div>
+                            <div style={{marginBottom:12}}>
+                              <label style={lbl}>Category</label>
+                              <select value={item.category||"General"} onChange={e=>upd("category",e.target.value)} style={{...fieldStyle,cursor:"pointer"}}>
+                                {["Plumbing","HVAC","Electrical","Mechanical","Ventilation","Gas","General"].map(cat=>(<option key={cat} value={cat}>{cat}</option>))}
+                              </select>
+                            </div>
+                            <div style={{marginBottom:16}}>
+                              <label style={lbl}>Note for suppliers</label>
+                              <GrowTextarea value={item.notes||""} onChange={e=>upd("notes",e.target.value)} placeholder="Brand, spec, finish, anything that matters..." style={{...fieldStyle,lineHeight:1.5,minHeight:44,fontSize:13,color:"var(--text-secondary)"}}/>
+                            </div>
+                            <button onClick={()=>setItemSheet(null)} style={{width:"100%",background:"linear-gradient(135deg,var(--green),var(--green-dark))",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"13px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Done</button>
+                          </div>
+                        </div>
+                        );
+                      })()}
+
                       {/* Request notes */}
                       <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"14px 16px"}}>
                         <div style={{fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:8}}>Request notes (optional)</div>
-                        <textarea value={requestNotes} onChange={e=>setRequestNotes(e.target.value)} placeholder="Any special instructions, access notes, or additional context for suppliers..." style={{width:"100%",height:60,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",resize:"none",fontFamily:"inherit",lineHeight:1.6}}></textarea>
+                        <GrowTextarea value={requestNotes} onChange={e=>setRequestNotes(e.target.value)} placeholder="Any special instructions, access notes, or additional context for suppliers..." style={{width:"100%",minHeight:60,padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:12,outline:"none",fontFamily:"inherit",lineHeight:1.6}}/>
                       </div>
                     </>
                   )}
@@ -8093,7 +8176,15 @@ Rules:
                   {/* ---- Sub-step 4: Suppliers (buyer/manager) OR issue-to-buyer summary (engineer) ---- */}
                   {cfgStep===4&&can.sendRFQ(myRole)&&(
                     <div style={{background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-md)",padding:"16px"}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)",marginBottom:10}}>Suppliers to receive RFQ <span style={{color:"var(--text-secondary)",fontWeight:400}}>({trade})</span></div>
+                      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
+                        <div style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>Suppliers to receive RFQ <span style={{color:"var(--text-secondary)",fontWeight:400}}>({showAllSup&&_tradeSup.length>0?"all suppliers":trade})</span></div>
+                        {/* Never lock the user to the trade filter: one tap lists everyone. Only shown when the filter is actually narrowing the list. */}
+                        {!supSearch.trim()&&_tradeSup.length>0&&_tradeSup.length<suppliers.length&&(
+                          <button onClick={()=>setShowAllSup(p=>!p)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontSize:12,fontWeight:600,color:"var(--green-dark)",textDecoration:"underline",textUnderlineOffset:2}}>
+                            {showAllSup?`Show ${trade} only (${_tradeSup.length})`:`Show all suppliers (${suppliers.length})`}
+                          </button>
+                        )}
+                      </div>
                       {_tradeSup.length===0&&suppliers.length>0&&<div style={{fontSize:12,color:"var(--text-secondary)",marginBottom:10,padding:"8px 12px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)"}}>No suppliers tagged "{trade}" yet, so all your suppliers are shown. Tag suppliers by trade on the Suppliers page to filter this list automatically.</div>}
                       {suppliers.length>6&&(
                         <input value={supSearch} onChange={e=>setSupSearch(e.target.value)} placeholder="Search suppliers by name, trade or contact..." style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",fontSize:13,outline:"none",marginBottom:10}}/>
@@ -8307,8 +8398,8 @@ Rules:
                   const ready = inWindow.filter(r=>isReady(r) && !isPassed(r));
                   const passed = inWindow.filter(isPassed);
                   const awaiting = inWindow.filter(r=>!isReady(r) && !isPassed(r));
-                  const openReq = (r)=>{ const qs=savedQuoteSets.find(s=>s.reqId===r.id); setActiveReq(r); setAllAnalyses(qs?.analyses||[]); setApprovedQuoteId(qs?.approvedId||null); setExpandedQuote(null); setQuoteViewMode("cards"); };
-                  const openSet = (qs)=>{ const req = requests.find(r=>r.id===qs.reqId) || { id:qs.reqId, jobRef:qs.jobRef, trade:qs.trade, site:qs.site||"", items:qs.items||[], sentTo:[], status:qs.status==="approved"?"approved":"received" }; setActiveReq(req); setAllAnalyses(qs.analyses); setApprovedQuoteId(qs.approvedId); setExpandedQuote(qs.analyses[0]?._id||null); setQuoteViewMode("cards"); window.scrollTo({top:0,behavior:"smooth"}); };
+                  const openReq = (r)=>{ const qs=savedQuoteSets.find(s=>s.reqId===r.id); setActiveReq(r); setAllAnalyses(qs?.analyses||[]); setApprovedQuoteId(qs?.approvedId||null); setExpandedQuote(null); setQuoteViewMode("cards"); setShowOtherQuotes(false); };
+                  const openSet = (qs)=>{ const req = requests.find(r=>r.id===qs.reqId) || { id:qs.reqId, jobRef:qs.jobRef, trade:qs.trade, site:qs.site||"", items:qs.items||[], sentTo:[], status:qs.status==="approved"?"approved":"received" }; setActiveReq(req); setAllAnalyses(qs.analyses); setApprovedQuoteId(qs.approvedId); setExpandedQuote(qs.analyses[0]?._id||null); setQuoteViewMode("cards"); setShowOtherQuotes(false); window.scrollTo({top:0,behavior:"smooth"}); };
                   const pill = (bg,color,txt)=>(<span style={{fontSize:10.5,fontWeight:700,padding:"2px 9px",borderRadius:99,background:bg,color}}>{txt}</span>);
                   const rowPill = (r)=>{ const c=counts(r); if(isPassed(r)) return pill("var(--red-light)","var(--red)","Deadline passed"); if(c.tot>0&&c.inn>=c.tot) return pill("var(--green-light)","var(--green-deep)","Quotes in - ready"); if(c.inn>0) return pill("rgba(8,145,178,0.12)","#0891B2",`Quotes ${c.inn}/${c.tot}`); return pill("var(--amber-light)","var(--amber)","Awaiting replies"); };
                   const meter = (r)=>{ const c=counts(r); if(c.tot===0) return null; return (<div style={{display:"flex",gap:2,marginTop:6}}>{Array.from({length:c.tot}).map((_,k)=>(<div key={k} style={{height:3,flex:1,borderRadius:2,background:k<c.inn?"var(--green-dark)":"var(--bg-subtle2)",maxWidth:22}}/>))}</div>); };
@@ -8600,7 +8691,10 @@ Rules:
                           })}
                         </div>
                       )}
-                      {quoteViewMode==="cards"&&allAnalyses.map((qa,qi)=>{
+                      {quoteViewMode==="cards"&&(approvedQuoteId?[...allAnalyses].sort((a,b)=>(b._id===approvedQuoteId?1:0)-(a._id===approvedQuoteId?1:0)):allAnalyses).map((qa,qi)=>{
+                        // Once a quote is approved the winner leads; the others stay
+                        // available but collapsed until "View other quotes" is tapped.
+                        if(approvedQuoteId&&qa._id!==approvedQuoteId&&!showOtherQuotes) return null;
                         const vMap = {
                           excellent:{bg:"var(--green-light)",  border:"var(--green-dark)", text:"var(--green-deep)", label:"Excellent"},
                           good:     {bg:"var(--indigo-light)", border:"var(--indigo)",     text:"var(--indigo)",     label:"Good"},
@@ -8612,7 +8706,13 @@ Rules:
                         const sc = qa.completeness>=80?"var(--green-dark)":qa.completeness>=60?"var(--amber)":"var(--red)";
                         const isApproved = approvedQuoteId===qa._id;
                         return(
-                          <div key={qa._id||qi} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",borderTop:`3px solid ${vc.border}`,overflow:"hidden",boxShadow:isOpen?"var(--shadow-md)":"var(--shadow-sm)",transition:"box-shadow 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
+                          <div key={qa._id||qi} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:`1px solid ${isApproved?"var(--green-dark)":"var(--border)"}`,borderTop:isApproved?"none":`3px solid ${vc.border}`,overflow:"hidden",boxShadow:isOpen?"var(--shadow-md)":"var(--shadow-sm)",transition:"box-shadow 0.2s cubic-bezier(0.16,1,0.3,1)"}}>
+                            {isApproved&&(
+                              <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 18px",background:"linear-gradient(135deg,var(--green),var(--green-dark))",color:"white",fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase"}}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                Winning quote &middot; PO issued
+                              </div>
+                            )}
                             <div onClick={()=>setExpandedQuote(isOpen?null:qa._id)} style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",background:isOpen?vc.bg:"var(--bg-card-solid)",transition:"background 0.2s"}}>
                               <div style={{width:46,height:46,borderRadius:"50%",background:`conic-gradient(${sc} ${qa.completeness*3.6}deg, var(--bg-subtle2) 0deg)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                                 <div style={{width:34,height:34,borderRadius:"50%",background:"var(--bg-card-solid)",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -8621,11 +8721,16 @@ Rules:
                               </div>
                               <div style={{flex:1,minWidth:0}}>
                                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
-                                  <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)"}}>{qa.supplierName}</span>
+                                  <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em",color:"var(--text-primary)"}}>{qa.supplierName}</span>
                                   <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99,background:vc.bg,color:vc.text}}>{vc.label}</span>
-                                  {isApproved&&<span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Approved</span>}
                                 </div>
                                 <div style={{fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{qa.recommendation}</div>
+                                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                                  {qa.leadTime&&<span style={{fontSize:10.5,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--bg-subtle)",border:"1px solid var(--border)",color:"var(--text-secondary)"}}>Lead: {qa.leadTime}</span>}
+                                  {qa.carriageCharge&&<span style={{fontSize:10.5,fontWeight:600,padding:"2px 8px",borderRadius:99,background:qa.carriageCharge==="Free"?"var(--green-light)":"var(--bg-subtle)",border:"1px solid var(--border)",color:qa.carriageCharge==="Free"?"var(--green-deep)":"var(--text-secondary)"}}>Carriage: {qa.carriageCharge}</span>}
+                                  {(qa.matched?.length>0)&&<span style={{fontSize:10.5,fontWeight:600,padding:"2px 8px",borderRadius:99,background:"var(--bg-subtle)",border:"1px solid var(--border)",color:"var(--text-secondary)"}}>{qa.matched.length} item{qa.matched.length!==1?"s":""} priced</span>}
+                                  {(qa.missing?.length>0)&&<span style={{fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--amber-light)",border:"1px solid var(--amber)",color:"var(--amber)"}}>{qa.missing.length} not quoted</span>}
+                                </div>
                               </div>
                               <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
                                 {qa.estimatedTotal&&qa.estimatedTotal!=="Not calculated"&&(
@@ -8760,6 +8865,15 @@ Rules:
                           </div>
                         );
                       })}
+
+                      {/* Once approved: the other quotes stay one tap away, tidily */}
+                      {quoteViewMode==="cards"&&approvedQuoteId&&allAnalyses.length>1&&(
+                        <button onClick={()=>setShowOtherQuotes(p=>!p)}
+                          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"11px 16px",marginBottom:10,background:"var(--bg-subtle)",border:"1px dashed var(--border)",borderRadius:"var(--radius-lg)",cursor:"pointer",fontSize:12.5,fontWeight:700,color:"var(--text-secondary)"}}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{transform:showOtherQuotes?"rotate(180deg)":"none",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
+                          {showOtherQuotes?"Hide the other quotes":`View the other ${allAnalyses.length-1} quote${allAnalyses.length-1!==1?"s":""}`}
+                        </button>
+                      )}
 
                       {/* SIDE-BY-SIDE COMPARISON VIEW */}
                       {quoteViewMode==="compare"&&(
@@ -11467,6 +11581,15 @@ Rules:
 
       </div>
 
+      {/* Mobile per-page refresh — floats just above the bottom tab bar, bottom-left,
+          so the latest replies/changes can be pulled without a full URL reload. */}
+      {isMobile && !kbOpen && cloudEnabled && cloudUserId && (
+        <button onClick={handleManualRefresh} disabled={manualSyncing} aria-label="Refresh data" title="Pull the latest replies and changes now"
+          style={{position:"fixed",left:14,bottom:(bottomNavH||68)+14,zIndex:99,width:44,height:44,borderRadius:"50%",background:"var(--bg-card-solid)",border:"1px solid var(--border)",boxShadow:"var(--shadow-md, 0 4px 14px rgba(0,0,0,0.18))",display:"flex",alignItems:"center",justifyContent:"center",cursor:manualSyncing?"default":"pointer",opacity:manualSyncing?0.75:1}}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" style={{animation:manualSyncing?"spin 0.8s linear infinite":"none"}}><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        </button>
+      )}
+
       {/* Mobile bottom bar */}
       {isMobile&&(
         <div ref={bottomNavRef} style={{position:"fixed",bottom:0,left:0,right:0,height:"auto",minHeight:68,paddingBottom:"env(safe-area-inset-bottom)",background:"var(--bottombar-bg)",borderTop:"1px solid var(--sidebar-border)",display:kbOpen?"none":"flex",alignItems:"center",justifyContent:"space-around",zIndex:100}}>
@@ -13921,6 +14044,19 @@ function LaunchOverlay() {
 // --- Success overlay: replays the ProQure mark build, confirms the action with a
 // message, then hands back to the dashboard. Used after an RFQ is sent / a list is
 // issued, so the moment feels like a crisp app transition rather than a toast. ---
+// Auto-growing single-field textarea: starts at one line and expands with its
+// content, so long item descriptions / notes are never cramped into a one-line
+// input (the old behaviour, especially painful on mobile).
+function GrowTextarea({ value, onChange, style, ...rest }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+  }, [value]);
+  return <textarea ref={ref} rows={1} value={value} onChange={onChange}
+    style={{ resize:"none", overflow:"hidden", boxSizing:"border-box", display:"block", ...style }} {...rest} />;
+}
+
 function RequestSuccessOverlay({ message, onReveal, onDone }) {
   const reduce = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const [out, setOut] = useState(false);
