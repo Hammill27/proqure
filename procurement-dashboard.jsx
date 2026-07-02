@@ -1637,6 +1637,12 @@ function captureReplyAddress(token) {
 // Support-ticket reply capture: customer replies to s-<token>@<capture-domain> land on
 // the same api/inbound.js webhook and are matched back to the ticket by replyToken.
 // Returns null when capture is disabled, so the email simply has no Reply-To.
+// Purchase-order reply capture: a supplier replying to o-<token>@<capture-domain>
+// lands on api/inbound.js, which matches the token to the exact order and marks it
+// Confirmed automatically (the manual button stays for phone confirmations).
+function captureOrderAddress(token) {
+  return INBOUND_CAPTURE_DOMAIN ? `o-${token}@${INBOUND_CAPTURE_DOMAIN}` : null;
+}
 function captureSupportAddress(token) {
   return INBOUND_CAPTURE_DOMAIN ? `s-${token}@${INBOUND_CAPTURE_DOMAIN}` : null;
 }
@@ -1759,11 +1765,11 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   const W = 210, M = 18;
 
   // -- Deep navy header bar --
-  doc.setFillColor(15,23,42);
+  doc.setFillColor(20,26,23);
   doc.rect(0,0,W,42,"F");
 
   // Accent stripe
-  doc.setFillColor(59,130,246);
+  doc.setFillColor(21,130,79);
   doc.rect(0,42,W,3,"F");
 
   // Company & PO title
@@ -1771,16 +1777,16 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   doc.setFont("helvetica","bold"); doc.setFontSize(22);
   doc.text("PURCHASE ORDER", M, 18);
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
-  doc.setTextColor(148,163,184);
+  doc.setTextColor(154,162,156);
   doc.text(company||"Your Company", M, 27);
-  doc.text("Powered by ProQure", M, 33);
+  { doc.setTextColor(154,162,156); doc.text("Powered by ", M, 33); const _pw=doc.getTextWidth("Powered by "); doc.setFont("helvetica","bold"); doc.setTextColor(255,255,255); doc.text("Pro", M+_pw, 33); const _pw2=doc.getTextWidth("Pro"); doc.setTextColor(38,184,115); doc.text("Qure", M+_pw+_pw2, 33); doc.setFont("helvetica","normal"); }
 
   // PO number & date - right aligned
   doc.setTextColor(255,255,255);
   doc.setFont("helvetica","bold"); doc.setFontSize(11);
   doc.text(poNumber, W-M, 18, {align:"right"});
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
-  doc.setTextColor(148,163,184);
+  doc.setTextColor(154,162,156);
   doc.text(`Issued: ${date}`, W-M, 27, {align:"right"});
 
   // -- Optional company logo (top-left of body, aspect-preserved, never fatal) --
@@ -1793,23 +1799,23 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   }
   // -- Info boxes --
   // Box backgrounds
-  doc.setFillColor(248,250,252); doc.roundedRect(M, y, 80, 32, 2, 2, "F");
-  doc.setFillColor(248,250,252); doc.roundedRect(M+86, y, 80, 32, 2, 2, "F");
+  doc.setFillColor(244,247,244); doc.roundedRect(M, y, 80, 32, 2, 2, "F");
+  doc.setFillColor(244,247,244); doc.roundedRect(M+86, y, 80, 32, 2, 2, "F");
 
   // Supplier box
-  doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
+  doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(122,130,124);
   doc.text("SUPPLIER", M+4, y+7);
-  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(15,23,42);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(20,26,23);
   doc.text(supplier?.name||"-", M+4, y+14);
-  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(71,85,105);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(92,100,94);
   doc.text(supplier?.email||"-", M+4, y+20);
 
   // Job box
-  doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
+  doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(122,130,124);
   doc.text("JOB DETAILS", M+90, y+7);
-  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(15,23,42);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(20,26,23);
   doc.text(`Ref: ${jobRef||"TBC"}`, M+90, y+14);
-  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(71,85,105);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(92,100,94);
   doc.text(site||"-", M+90, y+20);
   if(contactName) doc.text(`Contact: ${contactName}`, M+90, y+26);
 
@@ -1817,25 +1823,25 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
 
   // -- Delivery / collection + invoice band --
   if (deliveryText || requiredBy || invoiceEmail) {
-    doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
+    doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(122,130,124);
     doc.text("DELIVERY / COLLECTION", M, y);
-    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(15,23,42);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(20,26,23);
     const dlines = doc.splitTextToSize(String(deliveryText||"To be confirmed"), 118);
     doc.text(dlines.slice(0,2), M, y+5);
-    if (requiredBy) { doc.setTextColor(100,116,139); doc.setFontSize(8); doc.text(`Required by: ${requiredBy}`, M, y+5+(dlines.length>1?5:5)); }
+    if (requiredBy) { doc.setTextColor(122,130,124); doc.setFontSize(8); doc.text(`Required by: ${requiredBy}`, M, y+5+(dlines.length>1?5:5)); }
     if (invoiceEmail) {
-      doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
+      doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(122,130,124);
       doc.text("SEND INVOICES TO", W-M-62, y);
-      doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(15,23,42);
+      doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(20,26,23);
       doc.text(doc.splitTextToSize(String(invoiceEmail),60), W-M-62, y+5);
     }
     y += 18;
   }
 
   // -- Table header --
-  doc.setFillColor(15,23,42);
+  doc.setFillColor(20,26,23);
   doc.rect(M, y, W-M*2, 10, "F");
-  doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(148,163,184);
+  doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(154,162,156);
   doc.text("#",    M+3,  y+6.5);
   doc.text("DESCRIPTION", M+12, y+6.5);
   doc.text("QTY",  122,  y+6.5);
@@ -1853,53 +1859,53 @@ async function generatePO({ poNumber, jobRef, site, supplier, items, analysis, c
   rows.forEach((row,idx) => {
     if (y > 255) { doc.addPage(); y = 20; }
     // Alternating rows
-    doc.setFillColor(...(idx%2===0?[255,255,255]:[248,250,252]));
+    doc.setFillColor(...(idx%2===0?[255,255,255]:[246,249,246]));
     doc.rect(M, y, W-M*2, 9, "F");
     // Left border accent on even rows
-    if(idx%2===0){ doc.setFillColor(59,130,246); doc.rect(M,y,1,9,"F"); }
+    if(idx%2===0){ doc.setFillColor(21,130,79); doc.rect(M,y,1,9,"F"); }
 
     const price = parseFloat((row.quotedPrice||"").replace(/[^0-9.]/g,""))||0;
     const qty   = row.requestedQty||0;
     const line  = price&&qty ? `£${(price*qty).toFixed(2)}` : "TBC";
     if (line!=="TBC") grandTotal += price*qty;
 
-    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(71,85,105);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(92,100,94);
     doc.text(String(idx+1), M+3, y+6);
-    doc.setTextColor(15,23,42); doc.setFont("helvetica","normal");
+    doc.setTextColor(20,26,23); doc.setFont("helvetica","normal");
     doc.text(String(row.item||"").slice(0,50), M+12, y+6);
-    doc.setTextColor(71,85,105);
+    doc.setTextColor(92,100,94);
     doc.text(String(qty), 122, y+6);
     doc.text(String(row.requestedUnit||""), 136, y+6);
-    doc.setFont("helvetica","bold"); doc.setTextColor(15,23,42);
+    doc.setFont("helvetica","bold"); doc.setTextColor(20,26,23);
     doc.text(row.quotedPrice||"TBC", 152, y+6);
-    doc.setTextColor(59,130,246);
+    doc.setTextColor(38,184,115);
     doc.text(line, W-M, y+6, {align:"right"});
     y += 9;
   });
 
   // -- Total bar --
   y += 4;
-  doc.setFillColor(15,23,42);
+  doc.setFillColor(20,26,23);
   doc.rect(M, y, W-M*2, 12, "F");
   doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(255,255,255);
   doc.text("TOTAL DUE", M+3, y+8);
-  doc.setTextColor(59,130,246);
+  doc.setTextColor(38,184,115);
   const _ov = totalOverride!=null ? parseFloat(String(totalOverride).replace(/[^0-9.]/g,"")) : 0;
   const shownTotal = grandTotal ? `£${grandTotal.toFixed(2)}` : (_ov ? `£${_ov.toFixed(2)}` : "TBC");
   doc.text(shownTotal, W-M, y+8, {align:"right"});
   y += 20;
 
   // -- VAT note --
-  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(100,116,139);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(122,130,124);
   doc.text("All prices shown exclude VAT unless otherwise stated.", M, y);
   y += 10;
 
   // -- Footer --
-  doc.setDrawColor(226,232,240); doc.setLineWidth(0.3);
+  doc.setDrawColor(224,229,224); doc.setLineWidth(0.3);
   doc.line(M, 275, W-M, 275);
-  doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(148,163,184);
+  doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(154,162,156);
   doc.text(`${company||"Your Company"}  ·  ${contactEmail||""}  ·  PO ${poNumber}`, M, 280);
-  doc.text("Generated by ProQure - AI-powered procurement for trades", W-M, 280, {align:"right"});
+  doc.text("Commercial in confidence  \u00B7  Powered by ProQure", W-M, 280, {align:"right"});
 
   if (output === "base64")  return doc.output("datauristring").split(",")[1];
   if (output === "datauri")  return doc.output("datauristring");
@@ -5442,16 +5448,21 @@ ${settings.company||""}`;
       if (b64) attachments = [{ filename:`PO-${order.poNumber}.pdf`, content:b64 }];
     } catch(e) { /* PDF is best-effort; email still sends */ }
 
+    // Reply capture (auto-confirm): route the supplier's reply through the capture
+    // domain so the system can flip this order to Confirmed the moment they answer.
+    // Falls back to the buyer's own inbox exactly as before if capture is disabled.
+    const oTok = makeReplyToken();
+    const oCapture = captureOrderAddress(oTok);
     try {
       const res = await fetch("/api/send-email", {
         method:"POST",
         headers:{"Content-Type":"application/json", ...(await authHeaders())},
-        body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:s.replyTo||undefined};})(), company_id: cloudUserId, to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings), ...(attachments?{attachments}:{}) })
+        body: JSON.stringify({ ...(()=>{const s=buildSender("orders",settings);return {from:s.from, reply_to:(oCapture||s.replyTo)||undefined};})(), company_id: cloudUserId, to:[order.supplierEmail], subject, text:body, html:buildEmailHtml(body, settings), ...(attachments?{attachments}:{}) })
       });
       const d = await res.json();
       if (res.ok && d.success) {
         const entry = { ts:new Date().toISOString(), action:"Order sent to supplier", detail:`Sent to ${order.supplierEmail}`, user:settings.contactName||"You" };
-        setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"sent",sentAt:new Date().toISOString(),activity:[...(o.activity||[]),entry]}:o));
+        setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"sent",sentAt:new Date().toISOString(),...(oCapture?{replyToken:oTok}:{}),activity:[...(o.activity||[]),entry]}:o));
         showToast(`Order sent to ${order.supplier}`);
         logActivity("Order sent",`${order.poNumber} emailed to ${order.supplier}`,{entity:"order",jobRef:order.jobRef});
       } else {
