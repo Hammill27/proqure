@@ -8298,12 +8298,9 @@ Rules:
                   );
                   return (
                     <div>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:12,marginBottom:16}}>
-                        <div>
-                          <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Quotes</h1>
-                          <p style={{fontSize:13.5,color:"var(--text-secondary)",marginTop:4}}>Requests out for pricing - compare supplier quotes and approve the best.</p>
-                        </div>
-                        <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>New request</button>
+                      <div style={{marginBottom:16}}>
+                        <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Quotes</h1>
+                        <p style={{fontSize:13.5,color:"var(--text-secondary)",marginTop:4}}>Requests out for pricing - compare supplier quotes and approve the best.</p>
                       </div>
                       {quotesTab==="active"&&(ready.length>0||passed.length>0)&&(
                         <div style={{display:"flex",gap:9,flexWrap:"wrap",marginBottom:18}}>
@@ -8322,8 +8319,7 @@ Rules:
                           <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
                             <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="mail" size={34} color="var(--text-tertiary)"/></div>
                             <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:4}}>No quotes in progress</div>
-                            <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:16}}>When you send an RFQ from a request, it shows up here to compare and approve.</div>
-                            <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 22px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
+                            <div style={{fontSize:12.5,color:"var(--text-secondary)"}}>When you send an RFQ from a request, it shows up here to compare and approve.</div>
                           </div>
                         ):(
                           <div>
