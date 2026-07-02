@@ -5480,6 +5480,7 @@ ${settings.company||""}`;
     : [];
   const tourSteps = [...tourBase, tourRoleStep, ...tourManageStep];
   const [quoteViewMode, setQuoteViewMode] = useState("cards");
+  const [quotesTab, setQuotesTab] = useState("active"); // quotes inbox: active | completed
   const [marginPct, setMarginPct] = useState(0);
   const [reqFilterStatus, setReqFilterStatus] = useState("all");
   const [reqFilterTrade, setReqFilterTrade] = useState("all");
@@ -8234,103 +8235,138 @@ Rules:
         )}
 
         {view==="quotes"&&(
-          <div style={{display:"flex",gap:20,alignItems:"flex-start",animation:"fadeIn 0.25s ease",minHeight:"60vh"}}>
-
-            {/* Left sidebar - request selector */}
-            {!isMobile&&(
-              <div style={{width:220,flexShrink:0,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:"var(--shadow-sm)",position:"sticky",top:16}}>
-                <div style={{padding:"14px 16px",borderBottom:"1px solid var(--border)",fontSize:12,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Requests</div>
-                {visibleRequests.filter(r=>r.status==="pending"||r.status==="received").length===0?(
-                  <div style={{padding:"20px 16px",fontSize:12,color:"var(--text-tertiary)",textAlign:"center"}}>No active requests</div>
-                ):(
-                  <div>
-                    {visibleRequests.filter(r=>r.status==="pending"||r.status==="received").map(r=>{
-                      const quotesIn = (r.sentTo||[]).filter(s=>s.saved).length;
-                      const quotesTotal = (r.sentTo||[]).length;
-                      const isActive = activeReq?.id===r.id;
-                      return(
-                        <button key={r.id} onClick={()=>{const qs=savedQuoteSets.find(s=>s.reqId===r.id);setActiveReq(r);setAllAnalyses(qs?.analyses||[]);setApprovedQuoteId(qs?.approvedId||null);setExpandedQuote(null);}}
-                          style={{width:"100%",textAlign:"left",background:isActive?"var(--green-mint)":"transparent",border:"none",borderLeft:isActive?"3px solid var(--green-dark)":"3px solid transparent",padding:"12px 16px",cursor:"pointer",borderBottom:"1px solid var(--border)",transition:"all 0.15s"}}>
-                          <div style={{fontSize:12,fontWeight:700,color:isActive?"var(--green-dark)":"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2}}>{r.id}</div>
-                          <div style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.jobRef}</div>
-                          <div style={{fontSize:10,color:"var(--text-tertiary)"}}>{quotesIn}/{quotesTotal} quotes</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
+          <div style={{animation:"fadeIn 0.25s ease",minHeight:"60vh"}}>
 
             {/* Main area */}
             <div style={{flex:1,minWidth:0}}>
               {!activeReq?(
                 <>
-                <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
-                  <div style={{fontSize:14,color:"var(--text-secondary)",marginBottom:16}}>Select a request to start analysing quotes</div>
-                  {visibleRequests.filter(r=>r.status==="pending"||r.status==="received").length===0&&(
-                    <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
-                  )}
-                  {isMobile&&requests.filter(r=>r.status==="pending"||r.status==="received").length>0&&(
-                    <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:400,margin:"0 auto"}}>
-                      {requests.filter(r=>r.status==="pending"||r.status==="received").map(r=>(
-                        <button key={r.id} onClick={()=>{const qs=savedQuoteSets.find(s=>s.reqId===r.id);setActiveReq(r);setAllAnalyses(qs?.analyses||[]);setApprovedQuoteId(qs?.approvedId||null);}} style={{textAlign:"left",padding:"12px 16px",background:"var(--bg-subtle)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",cursor:"pointer"}}>
-                          <div style={{fontSize:13,fontWeight:700,color:"var(--text-primary)",fontFamily:"monospace"}}>{r.id}</div>
-                          <div style={{fontSize:12,color:"var(--text-secondary)"}}>{r.jobRef} · {r.site}</div>
-                        </button>
-                      ))}
+                {(() => {
+                  const inWindow = visibleRequests.filter(r=>r.status==="pending"||r.status==="received");
+                  const dl = (r)=> r.rfqDeadline ? Math.ceil((new Date(r.rfqDeadline).getTime()-Date.now())/86400000) : null;
+                  const counts = (r)=>({ inn:(r.sentTo||[]).filter(s=>s.saved).length, tot:(r.sentTo||[]).length });
+                  const isReady = (r)=>{ const c=counts(r); return (c.tot>0 && c.inn>=c.tot) || r.status==="received"; };
+                  const isPassed = (r)=>{ const d=dl(r); return d!==null && d<0; };
+                  const ready = inWindow.filter(r=>isReady(r) && !isPassed(r));
+                  const passed = inWindow.filter(isPassed);
+                  const awaiting = inWindow.filter(r=>!isReady(r) && !isPassed(r));
+                  const openReq = (r)=>{ const qs=savedQuoteSets.find(s=>s.reqId===r.id); setActiveReq(r); setAllAnalyses(qs?.analyses||[]); setApprovedQuoteId(qs?.approvedId||null); setExpandedQuote(null); setQuoteViewMode("cards"); };
+                  const openSet = (qs)=>{ const req = requests.find(r=>r.id===qs.reqId) || { id:qs.reqId, jobRef:qs.jobRef, trade:qs.trade, site:qs.site||"", items:qs.items||[], sentTo:[], status:qs.status==="approved"?"approved":"received" }; setActiveReq(req); setAllAnalyses(qs.analyses); setApprovedQuoteId(qs.approvedId); setExpandedQuote(qs.analyses[0]?._id||null); setQuoteViewMode("cards"); window.scrollTo({top:0,behavior:"smooth"}); };
+                  const pill = (bg,color,txt)=>(<span style={{fontSize:10.5,fontWeight:700,padding:"2px 9px",borderRadius:99,background:bg,color}}>{txt}</span>);
+                  const rowPill = (r)=>{ const c=counts(r); if(isPassed(r)) return pill("var(--red-light)","var(--red)","Deadline passed"); if(c.tot>0&&c.inn>=c.tot) return pill("var(--green-light)","var(--green-deep)","Quotes in - ready"); if(c.inn>0) return pill("rgba(8,145,178,0.12)","#0891B2",`Quotes ${c.inn}/${c.tot}`); return pill("var(--amber-light)","var(--amber)","Awaiting replies"); };
+                  const meter = (r)=>{ const c=counts(r); if(c.tot===0) return null; return (<div style={{display:"flex",gap:2,marginTop:6}}>{Array.from({length:c.tot}).map((_,k)=>(<div key={k} style={{height:3,flex:1,borderRadius:2,background:k<c.inn?"var(--green-dark)":"var(--bg-subtle2)",maxWidth:22}}/>))}</div>); };
+                  const Row = ({r,onClick,children})=>(
+                    <div onClick={onClick} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)",cursor:"pointer",marginBottom:8,transition:"transform .15s,box-shadow .15s"}}
+                      onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
+                      onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
+                      {children}
                     </div>
-                  )}
-                </div>
-
-                {savedQuoteSets.length>0&&(
-                  <div style={{marginTop:20}}>
-                    <div style={{fontSize:13,fontWeight:700,color:"var(--text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Saved quote analyses</div>
-                    {savedQuoteSets.map(qs=>{
-                      const approved = qs.analyses.find(a=>a._id===qs.approvedId);
-                      const best = approved || [...qs.analyses].sort((a,b)=>(b.completeness||0)-(a.completeness||0))[0];
-                      const openFull = ()=>{
-                        const req = requests.find(r=>r.id===qs.reqId) || {
-                          id:qs.reqId, jobRef:qs.jobRef, trade:qs.trade, site:qs.site||"",
-                          items:qs.items||[], sentTo:[], status:qs.status==="approved"?"approved":"received"
-                        };
-                        setActiveReq(req);
-                        setAllAnalyses(qs.analyses);
-                        setApprovedQuoteId(qs.approvedId);
-                        setExpandedQuote(qs.analyses[0]?._id||null);
-                        setQuoteViewMode("cards");
-                        window.scrollTo({top:0,behavior:"smooth"});
-                      };
-                      return(
-                        <div key={qs.id} style={{marginBottom:10,background:"var(--bg-card-solid)",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)",overflow:"hidden",boxShadow:"var(--shadow-sm)",transition:"box-shadow 0.2s,transform 0.2s"}}
-                          onMouseEnter={e=>{e.currentTarget.style.boxShadow="var(--shadow-md)";e.currentTarget.style.transform="translateY(-1px)";}}
-                          onMouseLeave={e=>{e.currentTarget.style.boxShadow="var(--shadow-sm)";e.currentTarget.style.transform="translateY(0)";}}>
-                          <div onClick={openFull} style={{padding:"15px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer"}}>
-                            <div style={{width:42,height:42,borderRadius:12,background:qs.status==="approved"?"linear-gradient(135deg,#1E9E63,#15824F)":"var(--bg-subtle2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                              <Icon name={qs.status==="approved"?"check_circle":"search"} size={21} color={qs.status==="approved"?"white":"var(--text-secondary)"}/>
-                            </div>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
-                                <span style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{qs.jobRef||qs.reqId}</span>
-                                {qs.status==="approved"
-                                  ?<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--green-light)",color:"var(--green-deep)"}}>Approved</span>
-                                  :<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>Analysed</span>}
-                              </div>
-                              <div style={{fontSize:12,color:"var(--text-secondary)"}}>{qs.trade} &middot; {qs.analyses.length} quote{qs.analyses.length!==1?"s":""}{best?` &middot; best: ${best.supplierName} (${best.completeness||0}%)`:""}</div>
-                            </div>
-                            <div style={{textAlign:"right",flexShrink:0}}>
-                              {best&&best.estimatedTotal&&<div style={{fontSize:14,fontWeight:800,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}} className="num">{best.estimatedTotal}</div>}
-                              <div style={{fontSize:10,color:"var(--text-muted)"}}>{new Date(qs.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"})}</div>
-                            </div>
-                            <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0,fontSize:12,fontWeight:600,color:"var(--green-dark)"}}>
-                              View<Icon name="arrow_right" size={15} color="var(--green-dark)"/>
-                            </div>
-                          </div>
+                  );
+                  const reqRow = (r)=>{ const c=counts(r); const d=dl(r); return (
+                    <Row key={r.id} r={r} onClick={()=>openReq(r)}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+                          <span style={{fontSize:13.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{r.jobRef||r.id}</span>
+                          {rowPill(r)}
+                          <span style={{fontSize:10.5,fontWeight:700,padding:"2px 9px",borderRadius:99,background:"var(--indigo-light)",color:"var(--indigo)"}}>{r.trade}</span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.site||"Site TBC"} &middot; {(r.items||[]).length} items &middot; {c.tot} supplier{c.tot!==1?"s":""}</div>
+                        {meter(r)}
+                      </div>
+                      <div style={{textAlign:"right",flexShrink:0,minWidth:74}}>
+                        {d!==null && d>=0 && <div style={{fontSize:10.5,color:"var(--text-tertiary)"}}>Due {new Date(r.rfqDeadline).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</div>}
+                        <div style={{fontSize:10.5,color:"var(--text-muted)",marginTop:2}}>{relTime(lastActivityTs ? lastActivityTs(r) : r.updatedAt)}</div>
+                      </div>
+                      <Icon name="arrow_right" size={16} color="var(--text-tertiary)"/>
+                    </Row>
+                  ); };
+                  const group = (title,arr,accent)=> arr.length===0?null:(
+                    <div style={{marginBottom:18}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,margin:"4px 2px 10px"}}>
+                        <span style={{fontSize:11,fontWeight:700,color:accent||"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.07em"}}>{title}</span>
+                        <span style={{fontSize:10.5,fontWeight:700,color:"var(--text-tertiary)",background:"var(--bg-subtle2)",borderRadius:99,padding:"1px 8px"}}>{arr.length}</span>
+                      </div>
+                      {arr.map(reqRow)}
+                    </div>
+                  );
+                  const chip = (label,n,color)=> n===0?null:(
+                    <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 13px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:99,boxShadow:"var(--shadow-sm)"}}>
+                      <span style={{width:8,height:8,borderRadius:99,background:color}}/>
+                      <span style={{fontSize:12,fontWeight:700,color:"var(--text-primary)"}}>{n}</span>
+                      <span style={{fontSize:12,color:"var(--text-secondary)"}}>{label}</span>
+                    </div>
+                  );
+                  return (
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:12,marginBottom:16}}>
+                        <div>
+                          <h1 style={{fontSize:28,fontWeight:800,letterSpacing:"-0.03em",margin:0,color:"var(--text-primary)"}}>Quotes</h1>
+                          <p style={{fontSize:13.5,color:"var(--text-secondary)",marginTop:4}}>Requests out for pricing - compare supplier quotes and approve the best.</p>
+                        </div>
+                        <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>New request</button>
+                      </div>
+                      {quotesTab==="active"&&(ready.length>0||passed.length>0)&&(
+                        <div style={{display:"flex",gap:9,flexWrap:"wrap",marginBottom:18}}>
+                          {chip("ready to review",ready.length,"var(--green-dark)")}
+                          {chip("awaiting replies",awaiting.length,"var(--amber)")}
+                          {chip("deadline passed",passed.length,"var(--red)")}
+                        </div>
+                      )}
+                      <div style={{display:"flex",gap:4,marginBottom:18,borderBottom:"1px solid var(--border)"}}>
+                        {[["active",`Active (${inWindow.length})`],["completed",`Completed (${savedQuoteSets.length})`]].map(([k,lab])=>(
+                          <button key={k} onClick={()=>setQuotesTab(k)} style={{background:"transparent",border:"none",borderBottom:quotesTab===k?"2px solid var(--green-dark)":"2px solid transparent",color:quotesTab===k?"var(--green-dark)":"var(--text-secondary)",fontSize:13,fontWeight:700,padding:"8px 14px",cursor:"pointer",marginBottom:-1}}>{lab}</button>
+                        ))}
+                      </div>
+                      {quotesTab==="active"?(
+                        inWindow.length===0?(
+                          <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"48px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)"}}>
+                            <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Icon name="mail" size={34} color="var(--text-tertiary)"/></div>
+                            <div style={{fontSize:14,fontWeight:700,color:"var(--text-primary)",marginBottom:4}}>No quotes in progress</div>
+                            <div style={{fontSize:12.5,color:"var(--text-secondary)",marginBottom:16}}>When you send an RFQ from a request, it shows up here to compare and approve.</div>
+                            <button onClick={()=>{setView("new");resetNewRequest();}} style={{background:"linear-gradient(135deg,#1E9E63,#15824F)",color:"white",border:"none",borderRadius:"var(--radius-sm)",padding:"10px 22px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Create a request</button>
+                          </div>
+                        ):(
+                          <div>
+                            {group("Needs attention",[...passed,...ready],"var(--amber)")}
+                            {group("Awaiting replies",awaiting)}
+                          </div>
+                        )
+                      ):(
+                        savedQuoteSets.length===0?(
+                          <div style={{background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 32px",textAlign:"center",boxShadow:"var(--shadow-sm)",fontSize:13,color:"var(--text-secondary)"}}>Analysed quotes will be saved here.</div>
+                        ):(
+                          <div>
+                            {savedQuoteSets.map(qs=>{
+                              const approved = qs.analyses.find(a=>a._id===qs.approvedId);
+                              const best = approved || [...qs.analyses].sort((a,b)=>(b.completeness||0)-(a.completeness||0))[0];
+                              return (
+                                <div key={qs.id} onClick={()=>openSet(qs)} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",background:"var(--bg-card-solid)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-sm)",cursor:"pointer",marginBottom:8,transition:"transform .15s,box-shadow .15s"}}
+                                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="var(--shadow-md)";}}
+                                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="var(--shadow-sm)";}}>
+                                  <div style={{width:40,height:40,borderRadius:11,background:qs.status==="approved"?"linear-gradient(135deg,#1E9E63,#15824F)":"var(--bg-subtle2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                                    <Icon name={qs.status==="approved"?"check_circle":"search"} size={20} color={qs.status==="approved"?"white":"var(--text-secondary)"}/>
+                                  </div>
+                                  <div style={{flex:1,minWidth:0}}>
+                                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                                      <span style={{fontSize:13.5,fontWeight:700,color:"var(--text-primary)",fontFamily:"'JetBrains Mono',monospace"}}>{qs.jobRef||qs.reqId}</span>
+                                      {qs.status==="approved"?pill("var(--green-light)","var(--green-deep)","Approved"):pill("var(--indigo-light)","var(--indigo)","Analysed")}
+                                    </div>
+                                    <div style={{fontSize:11.5,color:"var(--text-secondary)",marginTop:3}}>{qs.trade} &middot; {qs.analyses.length} quote{qs.analyses.length!==1?"s":""}{best?` &middot; best: ${best.supplierName} (${best.completeness||0}%)`:""}</div>
+                                  </div>
+                                  <div style={{textAlign:"right",flexShrink:0}}>
+                                    {best&&best.estimatedTotal&&<div style={{fontSize:13.5,fontWeight:800,color:"var(--green-dark)",fontFamily:"'JetBrains Mono',monospace"}} className="num">{best.estimatedTotal}</div>}
+                                    <div style={{fontSize:10,color:"var(--text-muted)"}}>{new Date(qs.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"})}</div>
+                                  </div>
+                                  <Icon name="arrow_right" size={16} color="var(--text-tertiary)"/>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  );
+                })()}
                 </>
               ):(
                 <div>
